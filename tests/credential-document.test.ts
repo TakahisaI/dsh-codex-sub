@@ -164,6 +164,30 @@ describe('credential document codec', () => {
     })
   })
 
+  it('rejects staged document accessors without invoking them', () => {
+    const document = makeDocument()
+    let invoked = false
+    const input = Object.defineProperty(
+      { schemaVersion: document.schemaVersion, provider: document.provider },
+      'credential',
+      {
+        enumerable: true,
+        get() {
+          invoked = true
+          return document.credential
+        },
+      },
+    )
+
+    const error = expectInvalid(() => decodeCredentialDocumentValue(input))
+
+    expect(invoked).toBe(false)
+    expect(error.safeDetails).toEqual({
+      reason: 'document_json',
+      jsonReason: 'accessor_property',
+    })
+  })
+
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
     'rejects invalid expiry %s',
     (expiresAt) => {
@@ -208,6 +232,21 @@ describe('credential document codec', () => {
     expect(stringError.safeDetails).toEqual({
       reason: 'provider_data',
       jsonReason: 'string_too_long',
+    })
+  })
+
+  it('rejects an aliased oversized provider array before cloning or serialization', () => {
+    const shared = 'x'.repeat(MAX_PROVIDER_DATA_STRING_LENGTH)
+    const values = Array.from(
+      { length: MAX_PROVIDER_DATA_ARRAY_LENGTH + 1 },
+      () => shared,
+    )
+
+    const error = expectInvalid(() => decodeCredentialDocumentValue(makeDocument({ values })))
+
+    expect(error.safeDetails).toEqual({
+      reason: 'provider_data',
+      jsonReason: 'array_too_long',
     })
   })
 

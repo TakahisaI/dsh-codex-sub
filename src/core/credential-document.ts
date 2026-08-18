@@ -3,7 +3,6 @@ import { CodexError, isCodexError } from './errors.js'
 import {
   utf8ByteLength,
   validateJsonObject,
-  validateJsonValue,
 } from './json.js'
 import type { JsonObject, JsonValue } from './json.js'
 
@@ -71,16 +70,60 @@ function jsonFailureReason(error: unknown): string | undefined {
   return typeof reason === 'string' ? reason : undefined
 }
 
-function isJsonObject(value: unknown): value is JsonObject {
-  return value !== null && typeof value === 'object' && !Array.isArray(value)
+function readExactObject(
+  value: unknown,
+  expectedKeys: readonly string[],
+  fieldsReason: 'document_fields' | 'credential_fields',
+): Readonly<Record<string, unknown>> {
+  if (value === null || typeof value !== 'object') {
+    invalidDocument(fieldsReason)
+  }
+
+  try {
+    if (Array.isArray(value)) {
+      invalidDocument(fieldsReason)
+    }
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) {
+      invalidDocument('document_json', undefined, 'invalid_prototype')
+    }
+
+    const ownKeys = Reflect.ownKeys(value)
+    if (ownKeys.some((key) => typeof key === 'symbol')) {
+      invalidDocument('document_json', undefined, 'symbol_property')
+    }
+    const stringKeys = ownKeys as string[]
+    if (
+      stringKeys.length !== expectedKeys.length
+      || !expectedKeys.every((key) => stringKeys.includes(key))
+    ) {
+      invalidDocument(fieldsReason)
+    }
+
+    const fields: Record<string, unknown> = Object.create(null) as Record<string, unknown>
+    for (const key of expectedKeys) {
+      const descriptor = Object.getOwnPropertyDescriptor(value, key)
+      if (descriptor === undefined) {
+        invalidDocument(fieldsReason)
+      }
+      if (!descriptor.enumerable) {
+        invalidDocument('document_json', undefined, 'non_enumerable_property')
+      }
+      if (!('value' in descriptor)) {
+        invalidDocument('document_json', undefined, 'accessor_property')
+      }
+      fields[key] = descriptor.value
+    }
+    return Object.freeze(fields)
+  } catch (error) {
+    if (isCodexError(error)) {
+      throw error
+    }
+    invalidDocument('document_json', error, 'object_inspection')
+  }
 }
 
-function hasExactKeys(value: JsonObject, expected: readonly string[]): boolean {
-  const actual = Object.keys(value)
-  return actual.length === expected.length && expected.every((key) => Object.hasOwn(value, key))
-}
-
-function assertValidToken(value: JsonValue | undefined): asserts value is string {
+function assertValidToken(value: unknown): asserts value is string {
   if (typeof value !== 'string') {
     invalidDocument('token_type')
   }
@@ -92,19 +135,24 @@ function assertValidToken(value: JsonValue | undefined): asserts value is string
   }
 }
 
-function normalizeProviderData(value: JsonValue | undefined): JsonObject {
-  if (value === undefined || !isJsonObject(value)) {
+function normalizeProviderData(value: unknown): JsonObject {
+  if (value === null || typeof value !== 'object') {
     invalidDocument('provider_data')
   }
 
-  for (const key of SHADOWED_PROVIDER_DATA_KEYS) {
-    if (Object.hasOwn(value, key)) {
-      invalidDocument('provider_data_shadow')
-    }
+  let isArray: boolean
+  try {
+    isArray = Array.isArray(value)
+  } catch (error) {
+    invalidDocument('provider_data', error, 'object_inspection')
+  }
+  if (isArray) {
+    invalidDocument('provider_data')
   }
 
+  let normalized: JsonObject
   try {
-    return validateJsonObject(value, {
+    normalized = validateJsonObject(value, {
       maxArrayLength: MAX_PROVIDER_DATA_ARRAY_LENGTH,
       maxBytes: MAX_PROVIDER_DATA_BYTES,
       maxDepth: MAX_PROVIDER_DATA_DEPTH,
@@ -114,47 +162,58 @@ function normalizeProviderData(value: JsonValue | undefined): JsonObject {
   } catch (error) {
     invalidDocument('provider_data', error, jsonFailureReason(error))
   }
+
+  for (const key of SHADOWED_PROVIDER_DATA_KEYS) {
+    if (Object.hasOwn(normalized, key)) {
+      invalidDocument('provider_data_shadow')
+    }
+  }
+  return normalized
+}
+
+function encodeNormalizedDocument(document: CodexCredentialDocument): string {
+  let encoded: string
+  try {
+    encoded = JSON.stringify({
+      schemaVersion: document.schemaVersion,
+      provider: document.provider,
+      credential: {
+        accessToken: document.credential.accessToken,
+        refreshToken: document.credential.refreshToken,
+        expiresAt: document.credential.expiresAt,
+        providerData: document.credential.providerData,
+      },
+    })
+  } catch (error) {
+    invalidDocument('document_json', error, 'serialization')
+  }
+
+  if (utf8ByteLength(encoded) > MAX_CREDENTIAL_DOCUMENT_BYTES) {
+    invalidDocument('max_bytes')
+  }
+  return encoded
 }
 
 export function decodeCredentialDocumentValue(value: unknown): CodexCredentialDocument {
-  let validated: JsonValue
-  try {
-    validated = validateJsonValue(value, {
-      maxArrayLength: MAX_CREDENTIAL_DOCUMENT_BYTES,
-      maxBytes: MAX_CREDENTIAL_DOCUMENT_BYTES,
-      maxDepth: MAX_PROVIDER_DATA_DEPTH + 16,
-      maxKeys: MAX_CREDENTIAL_DOCUMENT_BYTES,
-      maxStringLength: MAX_CREDENTIAL_DOCUMENT_BYTES,
-    })
-  } catch (error) {
-    const reason = jsonFailureReason(error)
-    if (reason === 'max_bytes' || reason === 'string_too_long') {
-      invalidDocument('max_bytes', error)
-    }
-    invalidDocument('document_json', error, reason)
-  }
-
-  if (!isJsonObject(validated) || !hasExactKeys(validated, DOCUMENT_KEYS)) {
-    invalidDocument('document_fields')
-  }
-  if (validated['schemaVersion'] !== CREDENTIAL_SCHEMA_VERSION) {
+  const documentFields = readExactObject(value, DOCUMENT_KEYS, 'document_fields')
+  if (documentFields['schemaVersion'] !== CREDENTIAL_SCHEMA_VERSION) {
     invalidDocument('schema_version')
   }
-  if (validated['provider'] !== PROVIDER_ID) {
+  if (documentFields['provider'] !== PROVIDER_ID) {
     invalidDocument('provider')
   }
 
-  const credential = validated['credential']
-  if (!isJsonObject(credential) || !hasExactKeys(credential, CREDENTIAL_KEYS)) {
-    invalidDocument('credential_fields')
-  }
-
-  const accessToken = credential['accessToken']
-  const refreshToken = credential['refreshToken']
+  const credentialFields = readExactObject(
+    documentFields['credential'],
+    CREDENTIAL_KEYS,
+    'credential_fields',
+  )
+  const accessToken = credentialFields['accessToken']
+  const refreshToken = credentialFields['refreshToken']
   assertValidToken(accessToken)
   assertValidToken(refreshToken)
 
-  const expiresAt = credential['expiresAt']
+  const expiresAt = credentialFields['expiresAt']
   if (typeof expiresAt !== 'number' || !Number.isSafeInteger(expiresAt) || expiresAt <= 0) {
     invalidDocument('expires_at')
   }
@@ -166,10 +225,12 @@ export function decodeCredentialDocumentValue(value: unknown): CodexCredentialDo
       accessToken,
       refreshToken,
       expiresAt,
-      providerData: normalizeProviderData(credential['providerData']),
+      providerData: normalizeProviderData(credentialFields['providerData']),
     }),
   }
-  return Object.freeze(document)
+  const normalized = Object.freeze(document)
+  encodeNormalizedDocument(normalized)
+  return normalized
 }
 
 export function decodeCredentialDocument(serialized: string): CodexCredentialDocument {
@@ -190,20 +251,5 @@ export function decodeCredentialDocument(serialized: string): CodexCredentialDoc
 }
 
 export function encodeCredentialDocument(value: unknown): string {
-  const document = decodeCredentialDocumentValue(value)
-  const encoded = JSON.stringify({
-    schemaVersion: document.schemaVersion,
-    provider: document.provider,
-    credential: {
-      accessToken: document.credential.accessToken,
-      refreshToken: document.credential.refreshToken,
-      expiresAt: document.credential.expiresAt,
-      providerData: document.credential.providerData,
-    },
-  })
-
-  if (utf8ByteLength(encoded) > MAX_CREDENTIAL_DOCUMENT_BYTES) {
-    invalidDocument('max_bytes')
-  }
-  return encoded
+  return encodeNormalizedDocument(decodeCredentialDocumentValue(value))
 }

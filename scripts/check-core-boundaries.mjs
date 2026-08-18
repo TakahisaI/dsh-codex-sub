@@ -2,23 +2,11 @@ import { readdir, readFile } from 'node:fs/promises'
 import { extname, join, relative } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import ts from 'typescript'
+
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const coreRoot = join(repositoryRoot, 'src', 'core')
-const staticImportPattern = /\b(?:import|export)\s+(?:type\s+)?(?:[^'"]*?\s+from\s+)?['"]([^'"]+)['"]/gu
-const dynamicImportPattern = /\bimport\s*\(\s*['"]([^'"]+)['"]\s*\)/gu
-const requirePattern = /\brequire\s*\(\s*['"]([^'"]+)['"]\s*\)/gu
-
-function importSpecifiers(source) {
-  const specifiers = new Set()
-  for (const pattern of [staticImportPattern, dynamicImportPattern, requirePattern]) {
-    for (const match of source.matchAll(pattern)) {
-      if (match[1] !== undefined) {
-        specifiers.add(match[1])
-      }
-    }
-  }
-  return specifiers
-}
+const sourceExtensions = new Set(['.ts', '.mts', '.cts'])
 
 function isForbiddenCoreImport(specifier) {
   return specifier === 'fs'
@@ -32,19 +20,91 @@ function isForbiddenCoreImport(specifier) {
     || specifier.startsWith('react/')
 }
 
+function stringLiteralValue(node) {
+  return node && ts.isStringLiteralLike(node) ? node.text : undefined
+}
+
+function sourceFacts(source, filename) {
+  const sourceFile = ts.createSourceFile(
+    filename,
+    source,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.getScriptKindFromFileName(filename),
+  )
+  const specifiers = new Set()
+  let hasDefaultExport = false
+
+  function addSpecifier(node) {
+    const specifier = stringLiteralValue(node)
+    if (specifier !== undefined) {
+      specifiers.add(specifier)
+    }
+  }
+
+  function visit(node) {
+    if (ts.isImportDeclaration(node) || ts.isExportDeclaration(node)) {
+      addSpecifier(node.moduleSpecifier)
+    } else if (
+      ts.isImportEqualsDeclaration(node)
+      && ts.isExternalModuleReference(node.moduleReference)
+    ) {
+      addSpecifier(node.moduleReference.expression)
+    } else if (ts.isImportTypeNode(node) && ts.isLiteralTypeNode(node.argument)) {
+      addSpecifier(node.argument.literal)
+    } else if (ts.isCallExpression(node)) {
+      const isDynamicImport = node.expression.kind === ts.SyntaxKind.ImportKeyword
+      const isRequire = ts.isIdentifier(node.expression) && node.expression.text === 'require'
+      if (isDynamicImport || isRequire) {
+        addSpecifier(node.arguments[0])
+      }
+    }
+
+    if (ts.isExportAssignment(node) && !node.isExportEquals) {
+      hasDefaultExport = true
+    }
+    if (
+      ts.canHaveModifiers(node)
+      && ts.getModifiers(node)?.some((modifier) => modifier.kind === ts.SyntaxKind.DefaultKeyword)
+    ) {
+      hasDefaultExport = true
+    }
+    if (
+      ts.isExportDeclaration(node)
+      && node.exportClause
+      && ts.isNamedExports(node.exportClause)
+      && node.exportClause.elements.some((element) => element.name.text === 'default')
+    ) {
+      hasDefaultExport = true
+    }
+
+    ts.forEachChild(node, visit)
+  }
+
+  visit(sourceFile)
+  return { hasDefaultExport, specifiers }
+}
+
 const policyExamples = [
-  ["import { readFile } from 'fs/promises'", 'fs/promises'],
-  ["import 'node:fs'", 'node:fs'],
-  ["import '@deepseek-ai/dsh-llm'", '@deepseek-ai/dsh-llm'],
-  ["const provider = await import('@earendil-works/pi-ai')", '@earendil-works/pi-ai'],
-  ["import fs = require('node:fs/promises')", 'node:fs/promises'],
-  ["export * from 'react/jsx-runtime'", 'react/jsx-runtime'],
+  ["import /* filesystem */ 'node:fs'", 'fixture.ts', 'node:fs'],
+  ["import { readFile } from /* filesystem */ 'node:fs'", 'fixture.mts', 'node:fs'],
+  ["await import('node:fs', {})", 'fixture.cts', 'node:fs'],
+  ["import fs = require('node:fs/promises')", 'fixture.ts', 'node:fs/promises'],
+  ["type Fs = import('fs/promises').FileHandle", 'fixture.ts', 'fs/promises'],
+  ["import '@deepseek-ai/dsh-llm'", 'fixture.ts', '@deepseek-ai/dsh-llm'],
+  ["export * from 'react/jsx-runtime'", 'fixture.ts', 'react/jsx-runtime'],
 ]
 
-for (const [source, expected] of policyExamples) {
-  const found = importSpecifiers(source)
-  if (!found.has(expected) || !isForbiddenCoreImport(expected)) {
+for (const [source, filename, expected] of policyExamples) {
+  const facts = sourceFacts(source, filename)
+  if (!facts.specifiers.has(expected) || !isForbiddenCoreImport(expected)) {
     throw new Error(`Core boundary checker self-test failed for ${expected}`)
+  }
+}
+
+for (const source of ['export default {}', 'export default class Example {}', 'export { value as default }']) {
+  if (!sourceFacts(source, 'fixture.ts').hasDefaultExport) {
+    throw new Error('Core boundary checker self-test failed for a default export')
   }
 }
 
@@ -56,7 +116,7 @@ async function sourceFiles(directory) {
     const path = join(directory, entry.name)
     if (entry.isDirectory()) {
       files.push(...await sourceFiles(path))
-    } else if (entry.isFile() && extname(entry.name) === '.ts') {
+    } else if (entry.isFile() && sourceExtensions.has(extname(entry.name))) {
       files.push(path)
     }
   }
@@ -67,12 +127,13 @@ async function sourceFiles(directory) {
 const violations = []
 for (const path of await sourceFiles(coreRoot)) {
   const source = await readFile(path, 'utf8')
-  for (const specifier of importSpecifiers(source)) {
+  const facts = sourceFacts(source, path)
+  for (const specifier of facts.specifiers) {
     if (isForbiddenCoreImport(specifier)) {
       violations.push(`${relative(repositoryRoot, path)} (forbidden import: ${specifier})`)
     }
   }
-  if (/\bexport\s+default\b/u.test(source)) {
+  if (facts.hasDefaultExport) {
     violations.push(`${relative(repositoryRoot, path)} (default export)`)
   }
 }

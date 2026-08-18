@@ -38,6 +38,7 @@ export type JsonValidationFailureReason =
   | 'unsupported_type'
 
 interface ValidationState {
+  bytes: number
   keys: number
   readonly active: WeakSet<object>
   readonly limits: JsonValidationLimits
@@ -80,6 +81,50 @@ function validateString(value: string, state: ValidationState): string {
   return value
 }
 
+function jsonStringByteLength(value: string): number {
+  let bytes = 2
+  for (let index = 0; index < value.length; index += 1) {
+    const codeUnit = value.charCodeAt(index)
+    if (codeUnit === 0x22 || codeUnit === 0x5c) {
+      bytes += 2
+    } else if (
+      codeUnit === 0x08
+      || codeUnit === 0x09
+      || codeUnit === 0x0a
+      || codeUnit === 0x0c
+      || codeUnit === 0x0d
+    ) {
+      bytes += 2
+    } else if (codeUnit < 0x20) {
+      bytes += 6
+    } else if (codeUnit <= 0x7f) {
+      bytes += 1
+    } else if (codeUnit <= 0x7ff) {
+      bytes += 2
+    } else if (codeUnit >= 0xd800 && codeUnit <= 0xdbff) {
+      const next = value.charCodeAt(index + 1)
+      if (next >= 0xdc00 && next <= 0xdfff) {
+        bytes += 4
+        index += 1
+      } else {
+        bytes += 6
+      }
+    } else if (codeUnit >= 0xdc00 && codeUnit <= 0xdfff) {
+      bytes += 6
+    } else {
+      bytes += 3
+    }
+  }
+  return bytes
+}
+
+function consumeBytes(state: ValidationState, amount: number): void {
+  if (amount > state.limits.maxBytes - state.bytes) {
+    invalidJson('max_bytes')
+  }
+  state.bytes += amount
+}
+
 function enterContainer(value: object, depth: number, state: ValidationState): void {
   if (depth > state.limits.maxDepth) {
     invalidJson('max_depth')
@@ -101,6 +146,7 @@ function visitArray(value: unknown[], depth: number, state: ValidationState): Js
 
   enterContainer(value, depth, state)
   try {
+    consumeBytes(state, 1)
     const ownKeys = Reflect.ownKeys(value)
     for (const key of ownKeys) {
       if (typeof key === 'symbol') {
@@ -117,6 +163,9 @@ function visitArray(value: unknown[], depth: number, state: ValidationState): Js
 
     const output: JsonValue[] = []
     for (let index = 0; index < value.length; index += 1) {
+      if (index > 0) {
+        consumeBytes(state, 1)
+      }
       const descriptor = Object.getOwnPropertyDescriptor(value, String(index))
       if (descriptor === undefined) {
         invalidJson('sparse_array')
@@ -126,6 +175,7 @@ function visitArray(value: unknown[], depth: number, state: ValidationState): Js
       }
       output.push(visit(descriptor.value, depth + 1, state))
     }
+    consumeBytes(state, 1)
     return Object.freeze(output) as JsonValue[]
   } finally {
     leaveContainer(value, state)
@@ -165,10 +215,16 @@ function visitObject(value: object, depth: number, state: ValidationState): Json
     }
 
     entries.sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
+    consumeBytes(state, 1)
     const output = Object.create(null) as JsonObject
-    for (const [key, entryValue] of entries) {
+    for (const [index, [key, entryValue]] of entries.entries()) {
+      if (index > 0) {
+        consumeBytes(state, 1)
+      }
+      consumeBytes(state, jsonStringByteLength(key) + 1)
       output[key] = visit(entryValue, depth + 1, state)
     }
+    consumeBytes(state, 1)
     return Object.freeze(output)
   } finally {
     leaveContainer(value, state)
@@ -176,16 +232,24 @@ function visitObject(value: object, depth: number, state: ValidationState): Json
 }
 
 function visit(value: unknown, depth: number, state: ValidationState): JsonValue {
-  if (value === null || typeof value === 'boolean') {
+  if (value === null) {
+    consumeBytes(state, 4)
+    return value
+  }
+  if (typeof value === 'boolean') {
+    consumeBytes(state, value ? 4 : 5)
     return value
   }
   if (typeof value === 'string') {
-    return validateString(value, state)
+    const validated = validateString(value, state)
+    consumeBytes(state, jsonStringByteLength(validated))
+    return validated
   }
   if (typeof value === 'number') {
     if (!Number.isFinite(value)) {
       invalidJson('invalid_number')
     }
+    consumeBytes(state, JSON.stringify(value).length)
     return value
   }
   if (Array.isArray(value)) {
@@ -208,13 +272,10 @@ export function validateJsonValue(
   const limits = resolveLimits(limitOverrides)
   const validated = visit(value, 0, {
     active: new WeakSet<object>(),
+    bytes: 0,
     keys: 0,
     limits,
   })
-  const encoded = JSON.stringify(validated)
-  if (utf8ByteLength(encoded) > limits.maxBytes) {
-    invalidJson('max_bytes')
-  }
   return validated
 }
 
