@@ -1,8 +1,16 @@
+import { Console } from 'node:console'
 import { randomUUID } from 'node:crypto'
+import { Writable } from 'node:stream'
+import { format, inspect } from 'node:util'
 
 import { describe, expect, it } from 'vitest'
 
-import { CODEX_ERROR_CODES, CodexError, isCodexError } from '../src/core/errors.js'
+import {
+  CODEX_ERROR_CODES,
+  CodexError,
+  getCodexErrorCause,
+  isCodexError,
+} from '../src/core/errors.js'
 
 describe('CodexError', () => {
   it('carries a stable code and frozen safe details', () => {
@@ -19,13 +27,31 @@ describe('CodexError', () => {
 
   it('does not serialize or print an internal cause', () => {
     const sentinel = `ACCESS_SENTINEL_${randomUUID()}`
+    const cause = new Error(sentinel)
     const error = new CodexError('Authentication failed.', 'CODEX_AUTH_LOGIN_FAILED', {
-      cause: new Error(sentinel),
+      cause,
       safeDetails: { phase: 'login' },
     })
-    const printable = [String(error), error.stack ?? '', JSON.stringify(error)].join('\n')
+    let consoleOutput = ''
+    const output = new Writable({
+      write(chunk, _encoding, callback) {
+        consoleOutput += String(chunk)
+        callback()
+      },
+    })
+    new Console({ stdout: output, stderr: output }).error(error)
+    const printable = [
+      String(error),
+      error.stack ?? '',
+      JSON.stringify(error),
+      inspect(error),
+      format(error),
+      consoleOutput,
+    ].join('\n')
 
-    expect(error.cause).toBeInstanceOf(Error)
+    expect(Object.hasOwn(error, 'cause')).toBe(false)
+    expect(error.cause).toBeUndefined()
+    expect(getCodexErrorCause(error)).toBe(cause)
     expect(printable).not.toContain(sentinel)
   })
 

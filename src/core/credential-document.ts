@@ -35,6 +35,7 @@ export type CodexCredentialDocument = CodexCredentialDocumentV1
 
 export type CredentialDocumentFailureReason =
   | 'credential_fields'
+  | 'document_json'
   | 'document_fields'
   | 'empty_token'
   | 'expires_at'
@@ -44,13 +45,30 @@ export type CredentialDocumentFailureReason =
   | 'provider_data'
   | 'provider_data_shadow'
   | 'schema_version'
+  | 'token_type'
   | 'token_too_long'
 
-function invalidDocument(reason: CredentialDocumentFailureReason, cause?: unknown): never {
+function invalidDocument(
+  reason: CredentialDocumentFailureReason,
+  cause?: unknown,
+  jsonReason?: string,
+): never {
+  const safeDetails: Record<string, JsonValue> = { reason }
+  if (jsonReason !== undefined) {
+    safeDetails['jsonReason'] = jsonReason
+  }
   throw new CodexError('Credential document is invalid.', 'CODEX_AUTH_STORAGE_INVALID', {
     cause,
-    safeDetails: { reason },
+    safeDetails,
   })
+}
+
+function jsonFailureReason(error: unknown): string | undefined {
+  if (!isCodexError(error)) {
+    return undefined
+  }
+  const reason = error.safeDetails?.['reason']
+  return typeof reason === 'string' ? reason : undefined
 }
 
 function isJsonObject(value: unknown): value is JsonObject {
@@ -63,7 +81,10 @@ function hasExactKeys(value: JsonObject, expected: readonly string[]): boolean {
 }
 
 function assertValidToken(value: JsonValue | undefined): asserts value is string {
-  if (typeof value !== 'string' || value.length === 0) {
+  if (typeof value !== 'string') {
+    invalidDocument('token_type')
+  }
+  if (value.length === 0) {
     invalidDocument('empty_token')
   }
   if (value.length > MAX_CREDENTIAL_TOKEN_LENGTH) {
@@ -91,10 +112,7 @@ function normalizeProviderData(value: JsonValue | undefined): JsonObject {
       maxStringLength: MAX_PROVIDER_DATA_STRING_LENGTH,
     })
   } catch (error) {
-    if (isCodexError(error)) {
-      invalidDocument('provider_data', error)
-    }
-    throw error
+    invalidDocument('provider_data', error, jsonFailureReason(error))
   }
 }
 
@@ -102,17 +120,18 @@ export function decodeCredentialDocumentValue(value: unknown): CodexCredentialDo
   let validated: JsonValue
   try {
     validated = validateJsonValue(value, {
-      maxArrayLength: MAX_PROVIDER_DATA_ARRAY_LENGTH,
+      maxArrayLength: MAX_CREDENTIAL_DOCUMENT_BYTES,
       maxBytes: MAX_CREDENTIAL_DOCUMENT_BYTES,
-      maxDepth: MAX_PROVIDER_DATA_DEPTH + 3,
-      maxKeys: MAX_PROVIDER_DATA_KEYS + DOCUMENT_KEYS.length + CREDENTIAL_KEYS.length,
-      maxStringLength: MAX_CREDENTIAL_TOKEN_LENGTH,
+      maxDepth: MAX_PROVIDER_DATA_DEPTH + 16,
+      maxKeys: MAX_CREDENTIAL_DOCUMENT_BYTES,
+      maxStringLength: MAX_CREDENTIAL_DOCUMENT_BYTES,
     })
   } catch (error) {
-    if (isCodexError(error)) {
-      invalidDocument('provider_data', error)
+    const reason = jsonFailureReason(error)
+    if (reason === 'max_bytes' || reason === 'string_too_long') {
+      invalidDocument('max_bytes', error)
     }
-    throw error
+    invalidDocument('document_json', error, reason)
   }
 
   if (!isJsonObject(validated) || !hasExactKeys(validated, DOCUMENT_KEYS)) {

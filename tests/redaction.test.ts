@@ -47,6 +47,51 @@ describe('redaction helpers', () => {
     expect(input.nested.accessToken).toBe(access)
   })
 
+  it('redacts serialized credential documents and PKCE material', () => {
+    const access = `ACCESS_SENTINEL_${randomUUID()}`
+    const refresh = `REFRESH_SENTINEL_${randomUUID()}`
+    const verifier = `VERIFIER_SENTINEL_${randomUUID()}`
+    const challenge = `CHALLENGE_SENTINEL_${randomUUID()}`
+    const serialized = JSON.stringify({
+      schemaVersion: 1,
+      provider: 'openai-codex',
+      credential: {
+        accessToken: access,
+        refreshToken: refresh,
+        expiresAt: 1_900_000_000_000,
+        providerData: {
+          code_verifier: verifier,
+          codeChallenge: challenge,
+        },
+      },
+    })
+    const redacted = redactText(serialized)
+
+    for (const sentinel of [access, refresh, verifier, challenge]) {
+      expect(redacted).not.toContain(sentinel)
+    }
+    expect(JSON.parse(redacted)).toEqual({
+      schemaVersion: 1,
+      provider: 'openai-codex',
+      credential: {
+        accessToken: REDACTED_VALUE,
+        refreshToken: REDACTED_VALUE,
+        expiresAt: 1_900_000_000_000,
+        providerData: {
+          code_verifier: REDACTED_VALUE,
+          codeChallenge: REDACTED_VALUE,
+        },
+      },
+    })
+    expect(redactJsonValue({
+      code_verifier: verifier,
+      pkceChallenge: challenge,
+    })).toEqual({
+      code_verifier: REDACTED_VALUE,
+      pkceChallenge: REDACTED_VALUE,
+    })
+  })
+
   it('redacts secret-bearing headers and token-like values in other headers', () => {
     const access = `ACCESS_SENTINEL_${randomUUID()}`
     const code = `CODE_SENTINEL_${randomUUID()}`
