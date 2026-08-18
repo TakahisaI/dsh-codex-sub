@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto'
+import { format, inspect } from 'node:util'
 
 import { describe, expect, it } from 'vitest'
 
@@ -31,7 +32,13 @@ function makeDocument(providerData: JsonObject = {}): CodexCredentialDocument {
 }
 
 function printableError(error: CodexError): string {
-  return [String(error), error.stack ?? '', JSON.stringify(error)].join('\n')
+  return [
+    String(error),
+    error.stack ?? '',
+    JSON.stringify(error),
+    inspect(error),
+    format(error),
+  ].join('\n')
 }
 
 function expectInvalid(operation: () => unknown, sentinels: readonly string[] = []): CodexError {
@@ -127,19 +134,58 @@ describe('credential document codec', () => {
   it('rejects empty, oversized, and non-string tokens without leaking them', () => {
     const document = makeDocument()
     const sentinel = `REFRESH_SENTINEL_${randomUUID()}`
+    const oversizedToken = `${sentinel}${'x'.repeat(
+      MAX_CREDENTIAL_TOKEN_LENGTH + 1 - sentinel.length,
+    )}`
 
-    expectInvalid(() => decodeCredentialDocumentValue({
+    const empty = expectInvalid(() => decodeCredentialDocumentValue({
       ...document,
       credential: { ...document.credential, accessToken: '' },
     }))
-    expectInvalid(() => decodeCredentialDocumentValue({
+    const oversized = expectInvalid(() => decodeCredentialDocumentValue({
       ...document,
-      credential: { ...document.credential, refreshToken: sentinel.repeat(MAX_CREDENTIAL_TOKEN_LENGTH) },
+      credential: { ...document.credential, refreshToken: oversizedToken },
     }), [sentinel])
-    expectInvalid(() => decodeCredentialDocumentValue({
+    const wrongType = expectInvalid(() => decodeCredentialDocumentValue({
       ...document,
       credential: { ...document.credential, accessToken: 42 },
     }))
+
+    expect(empty.safeDetails).toEqual({ reason: 'empty_token' })
+    expect(oversized.safeDetails).toEqual({ reason: 'token_too_long' })
+    expect(wrongType.safeDetails).toEqual({ reason: 'token_type' })
+  })
+
+  it('preserves the JSON validation reason without mislabeling provider data', () => {
+    const error = expectInvalid(() => decodeCredentialDocumentValue(new Date()))
+    expect(error.safeDetails).toEqual({
+      reason: 'document_json',
+      jsonReason: 'invalid_prototype',
+    })
+  })
+
+  it('rejects staged document accessors without invoking them', () => {
+    const document = makeDocument()
+    let invoked = false
+    const input = Object.defineProperty(
+      { schemaVersion: document.schemaVersion, provider: document.provider },
+      'credential',
+      {
+        enumerable: true,
+        get() {
+          invoked = true
+          return document.credential
+        },
+      },
+    )
+
+    const error = expectInvalid(() => decodeCredentialDocumentValue(input))
+
+    expect(invoked).toBe(false)
+    expect(error.safeDetails).toEqual({
+      reason: 'document_json',
+      jsonReason: 'accessor_property',
+    })
   })
 
   it.each([0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1])(
@@ -180,9 +226,28 @@ describe('credential document codec', () => {
     expectInvalid(() => decodeCredentialDocumentValue(makeDocument({
       values: Array.from({ length: MAX_PROVIDER_DATA_ARRAY_LENGTH + 1 }, () => null),
     })))
-    expectInvalid(() => decodeCredentialDocumentValue(makeDocument({
+    const stringError = expectInvalid(() => decodeCredentialDocumentValue(makeDocument({
       value: 'x'.repeat(MAX_PROVIDER_DATA_STRING_LENGTH + 1),
     })))
+    expect(stringError.safeDetails).toEqual({
+      reason: 'provider_data',
+      jsonReason: 'string_too_long',
+    })
+  })
+
+  it('rejects an aliased oversized provider array before cloning or serialization', () => {
+    const shared = 'x'.repeat(MAX_PROVIDER_DATA_STRING_LENGTH)
+    const values = Array.from(
+      { length: MAX_PROVIDER_DATA_ARRAY_LENGTH + 1 },
+      () => shared,
+    )
+
+    const error = expectInvalid(() => decodeCredentialDocumentValue(makeDocument({ values })))
+
+    expect(error.safeDetails).toEqual({
+      reason: 'provider_data',
+      jsonReason: 'array_too_long',
+    })
   })
 
   it('rejects an encoded candidate whose combined fields exceed 64 KiB', () => {
@@ -202,7 +267,9 @@ describe('credential document codec', () => {
       },
     }
 
-    const error = expectInvalid(() => encodeCredentialDocument(document))
-    expect(error.code).toBe('CODEX_AUTH_STORAGE_INVALID')
+    const valueError = expectInvalid(() => decodeCredentialDocumentValue(document))
+    const encodeError = expectInvalid(() => encodeCredentialDocument(document))
+    expect(valueError.safeDetails).toEqual({ reason: 'max_bytes' })
+    expect(encodeError.safeDetails).toEqual({ reason: 'max_bytes' })
   })
 })

@@ -98,6 +98,40 @@ describe('JSON-safe validation', () => {
     expectInvalid(() => validateJsonValue('éé', { maxBytes: 5 }))
   })
 
+  it('enforces the byte limit cumulatively before cloning the full value', () => {
+    const shared = 'x'.repeat(64)
+    const input = Array.from({ length: 1_024 }, () => shared)
+
+    const error = expectInvalid(() => validateJsonValue(input, {
+      maxArrayLength: input.length,
+      maxBytes: 256,
+      maxStringLength: shared.length,
+    }))
+
+    expect(error.safeDetails).toEqual({ reason: 'max_bytes' })
+  })
+
+  it.each([
+    null,
+    true,
+    -0,
+    'quote" slash\\ controls\b\t\n\f\r\u0000',
+    'ASCII é 😀 \ud800',
+    [1, 'two', false],
+    { nested: { value: 'é' }, list: [null] },
+  ])('matches JSON.stringify byte accounting for %j', (value) => {
+    const encodedBytes = utf8ByteLength(JSON.stringify(value))
+    const canonical = canonicalStringifyJson(value, { maxBytes: encodedBytes })
+
+    expect(utf8ByteLength(canonical)).toBe(encodedBytes)
+    if (encodedBytes > 1) {
+      const error = expectInvalid(() => canonicalStringifyJson(value, {
+        maxBytes: encodedBytes - 1,
+      }))
+      expect(error.safeDetails).toEqual({ reason: 'max_bytes' })
+    }
+  })
+
   it('rejects invalid validation limits', () => {
     const error = expectInvalid(() => validateJsonValue(null, { maxDepth: -1 }))
     expect(error.safeDetails).toEqual({ reason: 'invalid_limit' })

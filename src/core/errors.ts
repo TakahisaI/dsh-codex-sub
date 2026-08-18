@@ -18,15 +18,22 @@ export interface CodexErrorOptions {
   readonly safeDetails?: Readonly<Record<string, JsonValue>>
 }
 
+const internalCauses = new WeakMap<CodexError, unknown>()
+
 export class CodexError extends Error {
   readonly code: CodexErrorCode
   readonly safeDetails?: Readonly<Record<string, JsonValue>>
 
   constructor(message: string, code: CodexErrorCode, options?: CodexErrorOptions) {
-    super(message, options && 'cause' in options ? { cause: options.cause } : undefined)
+    // Native Error.cause is rendered by util.inspect and console.error. Keep the
+    // original failure out of generic logging while retaining it for internal adapters.
+    super(message)
     this.name = 'CodexError'
     this.code = code
 
+    if (options && 'cause' in options) {
+      internalCauses.set(this, options.cause)
+    }
     if (options?.safeDetails !== undefined) {
       this.safeDetails = Object.freeze({ ...options.safeDetails })
     }
@@ -35,4 +42,8 @@ export class CodexError extends Error {
 
 export function isCodexError(value: unknown): value is CodexError {
   return value instanceof CodexError
+}
+
+export function getCodexErrorCause(error: CodexError): unknown {
+  return internalCauses.get(error)
 }

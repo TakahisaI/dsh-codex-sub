@@ -4,8 +4,15 @@ export const REDACTED_VALUE = '[REDACTED]' as const
 
 const BEARER_PATTERN = /(\bBearer\s+)[^\s,;]+/giu
 const JWT_PATTERN = /\b[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/gu
-const QUERY_SECRET_PATTERN = /([?&](?:access[_-]?token|refresh[_-]?token|id[_-]?token|code|authorization[_-]?code|oauth[_-]?code|account[_-]?(?:id|identifier)|chatgpt[_-]?account[_-]?id)=)([^&#\s]*)/giu
-const ASSIGNMENT_SECRET_PATTERN = /((?:access[_-]?token|refresh[_-]?token|id[_-]?token|bearer[_-]?token|authorization[_-]?code|oauth[_-]?code|account[_-]?(?:id|identifier)|chatgpt[_-]?account[_-]?id)\s*[:=]\s*)(["']?)([^"'\s,;&}]+)\2/giu
+const SENSITIVE_TEXT_KEY_PATTERN = '(?:access[_-]?token|refresh[_-]?token|id[_-]?token|bearer[_-]?token|authorization[_-]?code|oauth[_-]?code|account[_-]?(?:id|identifier)|chatgpt[_-]?account[_-]?id|code[_-]?(?:verifier|challenge)|pkce[_-]?(?:verifier|challenge))'
+const QUERY_SECRET_PATTERN = new RegExp(
+  `([?&](?:code|${SENSITIVE_TEXT_KEY_PATTERN})=)([^&#\\s]*)`,
+  'giu',
+)
+const ASSIGNMENT_SECRET_PATTERN = new RegExp(
+  `((?:"${SENSITIVE_TEXT_KEY_PATTERN}"|'${SENSITIVE_TEXT_KEY_PATTERN}'|${SENSITIVE_TEXT_KEY_PATTERN})\\s*[:=]\\s*)(["']?)([^"'\\s,;&}]+)\\2`,
+  'giu',
+)
 
 const SENSITIVE_KEYS = new Set([
   'access',
@@ -17,10 +24,14 @@ const SENSITIVE_KEYS = new Set([
   'bearertoken',
   'chatgptaccountid',
   'clientsecret',
+  'codechallenge',
+  'codeverifier',
   'credential',
   'devicecode',
   'idtoken',
   'oauthcode',
+  'pkcechallenge',
+  'pkceverifier',
   'refresh',
   'refreshtoken',
   'token',
