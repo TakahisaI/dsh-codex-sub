@@ -15,6 +15,19 @@ env:
   TRUSTED_PUBLISHING_NPM_VERSION: 11.15.0
 
 jobs:
+  release-ref:
+    name: Verify release ref
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require protected main
+        env:
+          RELEASE_REF: ${{ github.ref }}
+        run: |
+          if [ "$RELEASE_REF" != "refs/heads/main" ]; then
+            echo "Release workflow must run from protected main." >&2
+            exit 1
+          fi
+
   source-checks:
     name: Source checks (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
@@ -26,8 +39,8 @@ jobs:
           - 24
           - 26
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node }}
       - run: corepack enable
@@ -36,18 +49,20 @@ jobs:
 
   candidate:
     name: Build candidate artifact
-    needs: source-checks
+    needs:
+      - release-ref
+      - source-checks
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
       - run: node scripts/release-artifact.mjs create --directory "$RUNNER_TEMP/release-artifact"
-      - uses: actions/upload-artifact@v6
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6.0.0
         with:
           name: dsh-codex-sub-unpublished
           path: ${{ runner.temp }}/release-artifact/
@@ -75,13 +90,13 @@ jobs:
           - os: macos-latest
             node: 26
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: ${{ matrix.node }}
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: dsh-codex-sub-unpublished
           path: ${{ runner.temp }}/release-artifact
@@ -99,11 +114,11 @@ jobs:
     needs: candidate-install
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
-      - uses: actions/download-artifact@v7
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
         with:
           name: dsh-codex-sub-unpublished
           path: ${{ runner.temp }}/release-artifact

@@ -70,6 +70,11 @@ candidate once; every packed-install job downloads, validates, and installs the 
 repacking. Its final candidate-ready job is the boundary before manual approval and still never
 publishes. See ADR 0013.
 
+The verification workflow accepts manual dispatch only from `refs/heads/main`. A dedicated
+`release-ref` job always runs and fails explicitly for any other branch or tag; candidate
+construction depends on that job rather than using a skippable job condition. Every third-party
+GitHub Action is pinned to a reviewed full commit SHA.
+
 Do not rename that file until the maintainer has accepted or replaced ADR 0011's bootstrap
 decision. Rename it to `.github/workflows/release.yml` before the first public
 metadata commit so that commit can pass the release-state gate. Keep the enabled workflow limited
@@ -78,14 +83,17 @@ publish command until the first package exists and its trusted publisher can be 
 
 After those decisions, the intended release sequence is:
 
-1. create a release branch;
+1. create a release metadata branch and open a PR to protected `main`;
 2. confirm the committed MIT license and accept or replace ADR 0011;
 3. rename the reviewed release gate to `.github/workflows/release.yml` without adding a publish
    command;
 4. update version, `private`, compatibility data, changelog, and limitations;
-5. confirm that `publishConfig` forces public access and the `alpha` dist-tag;
-6. run `pnpm install --frozen-lockfile` and the complete check matrix;
-7. run the release gate so it builds one tarball, records its SHA-256, and verifies those same bytes
+5. confirm that `publishConfig` forces the public npm registry, public access, and the `alpha`
+   dist-tag;
+6. run `pnpm install --frozen-lockfile` and the complete check matrix, then merge the reviewed
+   metadata commit into protected `main`;
+7. dispatch the release gate from that exact `main` commit so it builds one tarball, records its
+   SHA-256, and verifies those same bytes
    on Linux and macOS across every supported Node line;
 8. download that workflow artifact and install the exact tarball into a clean DSH profile;
 9. complete required manual smoke against that tarball and record its SHA-256;

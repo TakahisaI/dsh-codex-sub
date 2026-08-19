@@ -37,6 +37,11 @@ release workflow's final candidate-ready job also verifies the same artifact and
 publication command. A later approval or publish job must depend on those jobs and consume that
 workflow artifact without running a build or pack command.
 
+The release workflow may construct that artifact only when manually dispatched from protected
+`main`. An executing `release-ref` job fails for every other ref, and the candidate job depends on
+both that guard and source checks. Pin every third-party Action to a reviewed full commit SHA so the
+workflow implementation used by the candidate cannot move under an unchanged repository commit.
+
 Run the packed-install gate on Ubuntu and macOS for Node 22.19, 24, and 26. A supported Node or OS
 combination without a blocking matrix entry is a release-state defect. Derive the expected matrix
 from `compatibility.json` and check both workflow files mechanically.
@@ -66,3 +71,5 @@ unaccepted and the package does not exist in the registry.
   every non-producer job, the exact verification-only job set, the enabled/disabled workflow rename,
   and the pre-bootstrap prohibition on publication, npm registry credentials at any workflow scope,
   or any permission beyond a required workflow-level canonical `contents: read` block.
+- Pure fixtures exercise the private-development and public-Alpha release-state branches before the
+  first metadata transition, and the package metadata fixes publication to the public npm registry.

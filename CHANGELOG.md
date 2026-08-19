@@ -13,5 +13,7 @@
 - Hardened release contracts for alternate matrix syntax, direct repacks in any non-producer job,
   exact verification job topology, registry credential plumbing at every workflow scope, and
   premature publication permissions.
+- Protected-main release-ref verification, full-SHA GitHub Actions pins, public-registry metadata,
+  and fixture-tested private/public release-state transitions.
 
 The first public version has not been tagged or published.

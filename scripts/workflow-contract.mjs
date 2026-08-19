@@ -3,6 +3,13 @@ const PLATFORM_RUNNERS = Object.freeze({
   linux: 'ubuntu-latest',
 })
 const RELEASE_ARTIFACT_NAME = 'dsh-codex-sub-unpublished'
+export const PINNED_ACTIONS = Object.freeze({
+  checkout: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
+  dependencyReview: 'actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294',
+  downloadArtifact: 'actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131',
+  setupNode: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
+  uploadArtifact: 'actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f',
+})
 
 function invariant(condition, message) {
   if (!condition) {
@@ -199,6 +206,28 @@ function count(text, pattern) {
   return text.split(pattern).length - 1
 }
 
+function assertPinnedActions(workflow, label) {
+  const pins = Object.values(PINNED_ACTIONS)
+  invariant(
+    pins.every((pin) => /^[^@\s]+@[0-9a-f]{40}$/u.test(pin)),
+    'Reviewed action pins must use full commit SHAs.',
+  )
+  const allowed = new Set(Object.values(PINNED_ACTIONS))
+  const actions = [...workflow.matchAll(
+    /^\s*(?:-\s*)?(?:uses|'uses'|"uses")\s*:\s*(\S+?)(?:\s+#.*)?$/gmu,
+  )]
+    .map((match) => match[1])
+  invariant(
+    !/^\s*-\s*\{[^\n}]*?(?:uses|'uses'|"uses")\s*:/mu.test(workflow),
+    `${label} actions must use block-style reviewed full commit SHAs.`,
+  )
+  invariant(actions.length > 0, `${label} contained no actions.`)
+  invariant(
+    actions.every((action) => action !== undefined && allowed.has(action)),
+    `${label} actions must use reviewed full commit SHAs.`,
+  )
+}
+
 function assertMatrix(job, expected, label) {
   const actual = matrixCells(job).sort()
   const sortedExpected = [...expected].sort()
@@ -215,7 +244,7 @@ function assertArtifactProducer(job, label) {
     `${label} must create the candidate exactly once.`,
   )
   invariant(
-    count(job, 'actions/upload-artifact@v6') === 1,
+    count(job, PINNED_ACTIONS.uploadArtifact) === 1,
     `${label} must upload exactly one workflow artifact.`,
   )
   invariant(
@@ -251,7 +280,7 @@ function assertArtifactConsumer(job, expected, label) {
   assertMatrix(job, expected, label)
   invariant(/^    needs: candidate$/mu.test(job), `${label} must depend on the candidate job.`)
   invariant(
-    count(job, 'actions/download-artifact@v7') === 1,
+    count(job, PINNED_ACTIONS.downloadArtifact) === 1,
     `${label} must download the candidate artifact exactly once per cell.`,
   )
   invariant(
@@ -269,7 +298,7 @@ function assertArtifactConsumer(job, expected, label) {
 function assertArtifactFinalizer(job, label) {
   invariant(/^    needs: candidate-install$/mu.test(job), `${label} must depend on candidate-install.`)
   invariant(
-    count(job, 'actions/download-artifact@v7') === 1,
+    count(job, PINNED_ACTIONS.downloadArtifact) === 1,
     `${label} must download the candidate artifact exactly once.`,
   )
   invariant(
@@ -281,6 +310,34 @@ function assertArtifactFinalizer(job, label) {
     `${label} must verify the downloaded candidate exactly once.`,
   )
   assertNoArtifactMutation(job, label)
+}
+
+function assertNoReleaseGateOverride(job, label) {
+  invariant(
+    !/^\s*(?:-\s*)?(?:(?:if|continue-on-error)|'(?:if|continue-on-error)'|"(?:if|continue-on-error)")\s*:/mu.test(job),
+    `${label} must not skip or ignore the protected-main gate.`,
+  )
+}
+
+function assertReleaseRefGuard(job) {
+  assertNoReleaseGateOverride(job, 'Release ref verification')
+  invariant(
+    /^          RELEASE_REF:\s*\$\{\{ github\.ref \}\}\s*$/mu.test(job),
+    'Release ref verification must read github.ref explicitly.',
+  )
+  invariant(
+    job.includes('if [ "$RELEASE_REF" != "refs/heads/main" ]; then')
+      && job.includes('exit 1'),
+    'Release ref verification must fail outside protected main.',
+  )
+}
+
+function assertReleaseCandidateDependencies(job) {
+  assertNoReleaseGateOverride(job, 'Release candidate job')
+  invariant(
+    job.includes('    needs:\n      - release-ref\n      - source-checks\n'),
+    'Release candidate job must depend on source-checks and release-ref.',
+  )
 }
 
 function assertReadOnlyWorkflowPermissions(workflow, label) {
@@ -334,6 +391,8 @@ function assertNonPublishingWorkflow(workflow, label) {
 
 export function validateWorkflowContracts({ ciWorkflow, compatibility, releaseWorkflow }) {
   const expected = expectedPackedInstallMatrix(compatibility)
+  assertPinnedActions(ciWorkflow, 'CI workflow')
+  assertPinnedActions(releaseWorkflow, 'Release workflow')
   assertExactJobSet(
     ciWorkflow,
     ['candidate', 'check', 'dependency-review', 'packed-install'],
@@ -341,14 +400,17 @@ export function validateWorkflowContracts({ ciWorkflow, compatibility, releaseWo
   )
   assertExactJobSet(
     releaseWorkflow,
-    ['candidate', 'candidate-install', 'candidate-ready', 'source-checks'],
+    ['candidate', 'candidate-install', 'candidate-ready', 'release-ref', 'source-checks'],
     'Release workflow',
   )
   assertArtifactProducer(jobBody(ciWorkflow, 'candidate'), 'CI candidate job')
   assertArtifactConsumer(jobBody(ciWorkflow, 'packed-install'), expected, 'CI')
   assertOnlyProducerMutatesArtifact(ciWorkflow, 'candidate', 'CI')
   assertNonPublishingWorkflow(ciWorkflow, 'CI workflow')
-  assertArtifactProducer(jobBody(releaseWorkflow, 'candidate'), 'Release candidate job')
+  assertReleaseRefGuard(jobBody(releaseWorkflow, 'release-ref'))
+  const releaseCandidate = jobBody(releaseWorkflow, 'candidate')
+  assertReleaseCandidateDependencies(releaseCandidate)
+  assertArtifactProducer(releaseCandidate, 'Release candidate job')
   assertArtifactConsumer(
     jobBody(releaseWorkflow, 'candidate-install'),
     expected,

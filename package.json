@@ -14,6 +14,7 @@
   "homepage": "https://github.com/TakahisaI/dsh-codex-sub#readme",
   "publishConfig": {
     "access": "public",
+    "registry": "https://registry.npmjs.org/",
     "tag": "alpha"
   },
   "type": "module",
