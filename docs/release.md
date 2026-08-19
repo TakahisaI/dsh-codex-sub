@@ -14,13 +14,17 @@ Direct GitHub dependency installation is not supported initially. It requires an
 
 - Start at `0.1.0-alpha.0`.
 - Use the npm `alpha` dist-tag.
+- Move `alpha` to each newly approved prerelease, while leaving npm's bootstrap-created `latest`
+  tag on `0.1.0-alpha.0` until the first stable release.
+- Recommend only an explicit `@alpha` install during prerelease development; do not present an
+  untagged install as the current Alpha.
 - Plugin versions are independent of DSH versions.
 - Every release notes the exact verified DSH/pi-ai combination.
 - A DSH or pi-ai compatibility update normally increments the plugin patch prerelease.
 
 The first published version is `0.1.0-alpha.0`. Release-candidate notes and package metadata may
 exist before a later publication, but a tag or staged registry artifact is created only after every
-publication prerequisite is complete.
+publication prerequisite is complete. ADR 0014 records the post-bootstrap dist-tag policy.
 
 ## Initial publication record
 
@@ -63,6 +67,11 @@ registry access. The workflow builds the candidate once; every packed-install jo
 validates, and installs the same bytes without repacking. The candidate-ready job verifies that
 artifact again before the only OIDC-capable job may stage those exact bytes. See ADR 0013.
 
+The workflow uses one repository-specific concurrency group with cancellation disabled. A second
+manual dispatch waits for the in-progress release instead of cancelling it or racing another
+candidate through staging. The workflow contract rejects a missing, renamed, duplicated, nested,
+flow-style, or cancellation-enabled concurrency declaration.
+
 The workflow-level permission remains `contents: read`. Only `stage-publish` receives
 `id-token: write`. npm trusts this repository and the exact `release.yml` filename, and grants that
 relationship only `createStagedPackage`. The job installs and verifies npm `11.15.0`, downloads and
@@ -103,6 +112,11 @@ The release sequence for every later Alpha is:
 12. fetch the registry artifact into a clean profile, compare its checksum, and repeat the
     signed-out packed-install checks;
 13. record the final provenance and release evidence.
+
+Before and after approval, inspect the registry dist-tags. For an Alpha, only `alpha` may move to
+the new version; `latest` remains on `0.1.0-alpha.0`. The first stable release may move `latest`
+after its own review and release gates. Do not delete, overwrite, or republish an existing version
+to alter this policy.
 
 The staging job must depend on the candidate-install boundary and download its workflow artifact.
 Rebuilding or repacking after verification invalidates the release evidence. Approval remains

@@ -7,7 +7,8 @@ provider as a normal DSH model route using ChatGPT subscription authentication.
 > credential document codec, the secure package-owned file vault, pi-ai OAuth integration, and the
 > native DSH LLM provider route, plus the package CLI, offline diagnostics, and packed-install
 > release gates. `0.1.0-alpha.0` is published to npm under the `alpha` dist-tag and has a matching
-> GitHub prerelease.
+> GitHub prerelease. `0.1.0-alpha.1` is the next reviewed release candidate and is not published
+> yet.
 
 ## Product contract
 
@@ -153,3 +154,6 @@ inspect and approve each staged package with two-factor authentication. Release 
 secret-free manual-smoke template are available under
 [`docs/releases/`](https://github.com/TakahisaI/dsh-codex-sub/tree/main/docs/releases) and
 [`docs/alpha-smoke-record.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/alpha-smoke-record.md).
+Release runs are serialized and never cancel an in-progress candidate. During prereleases, the
+explicit `alpha` tag moves to the newest approved Alpha while npm's bootstrap-created `latest` tag
+remains on `0.1.0-alpha.0`; installation documentation therefore always uses `@alpha`.

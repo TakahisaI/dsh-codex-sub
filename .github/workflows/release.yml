@@ -7,6 +7,10 @@ name: Verify and stage release candidate
 on:
   workflow_dispatch:
 
+concurrency:
+  group: dsh-codex-sub-release
+  cancel-in-progress: false
+
 permissions:
   contents: read
 

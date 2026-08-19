@@ -2,11 +2,17 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.1 (release candidate)
+
 ### Changed
 
 - Finalized the first Alpha's exact-artifact publication record.
 - Restricted later releases to OIDC staging of the verified workflow artifact followed by separate
   maintainer approval with two-factor authentication.
+- Serialized release workflow runs without cancelling an in-progress candidate.
+- Documented the post-bootstrap npm dist-tag policy for prereleases and the first stable release.
+
+This candidate has not been staged or published.
 
 ## 0.1.0-alpha.0
 

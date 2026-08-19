@@ -48,6 +48,9 @@ The release workflow may construct that artifact only when manually dispatched f
 `main`. An executing `release-ref` job fails for every other ref, and the candidate job depends on
 both that guard and source checks. Pin every third-party Action to a reviewed full commit SHA so the
 workflow implementation used by the candidate cannot move under an unchanged repository commit.
+Serialize release runs in one repository-specific workflow concurrency group and disable
+in-progress cancellation. A later dispatch waits instead of cancelling or racing the candidate
+whose artifact and staged-package identity are being reviewed.
 
 Run the packed-install gate on Ubuntu and macOS for Node 22.19, 24, and 26. A supported Node or OS
 combination without a blocking matrix entry is a release-state defect. Derive the expected matrix
@@ -81,5 +84,7 @@ separately approved interactive bootstrap used only for the first complete Alpha
   every non-producer job, the exact workflow job set, the enabled/disabled workflow transition,
   and rejection of direct publication, automated staged-package approval, npm registry credentials
   at any workflow scope, or OIDC permission outside the staging job.
+- The topology contract also fixes release concurrency and rejects cancellation-enabled, missing,
+  duplicate, nested, or alternate-form declarations.
 - Pure fixtures preserve coverage of the legacy private-development and current public-Alpha
   release-state branches, and the package metadata fixes publication to the public npm registry.

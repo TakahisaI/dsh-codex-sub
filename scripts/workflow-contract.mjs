@@ -325,6 +325,35 @@ function permissionDeclarations(workflow) {
     .filter(({ line }) => /^\s*(?:permissions|'permissions'|"permissions")\s*:/u.test(line))
 }
 
+function concurrencyDeclarations(workflow) {
+  return workflow.split(/\r?\n/u)
+    .map((line, index) => ({ index, line }))
+    .filter(({ line }) => /^\s*(?:concurrency|'concurrency'|"concurrency")\s*:/u.test(line))
+}
+
+function assertSerializedReleaseWorkflow(workflow) {
+  const declarations = concurrencyDeclarations(workflow)
+  invariant(
+    declarations.length === 1 && indentation(declarations[0]?.line ?? '') === 0,
+    'Release workflow must serialize runs without cancelling an in-progress release.',
+  )
+  const declaration = declarations[0]
+  invariant(
+    declaration !== undefined && declaration.line === 'concurrency:',
+    'Release workflow must serialize runs without cancelling an in-progress release.',
+  )
+
+  const lines = workflow.split(/\r?\n/u)
+  const end = blockEnd(lines, declaration.index + 1, 0)
+  const entries = lines.slice(declaration.index + 1, end).filter(isContent)
+  invariant(
+    entries.length === 2
+      && entries[0] === '  group: dsh-codex-sub-release'
+      && entries[1] === '  cancel-in-progress: false',
+    'Release workflow must serialize runs without cancelling an in-progress release.',
+  )
+}
+
 function assertPermissionBlock(workflow, declaration, expectedEntries, label) {
   const lines = workflow.split(/\r?\n/u)
   const parentIndent = indentation(declaration.line)
@@ -571,6 +600,7 @@ export function validateWorkflowContracts({
   assertNoCheckoutOverrides(ciWorkflow, 'CI workflow')
   assertNoCheckoutOverrides(releaseWorkflow, 'Release workflow')
   assertNoRegistryCredentials(releaseWorkflow)
+  assertSerializedReleaseWorkflow(releaseWorkflow)
   assertExactJobSet(
     ciWorkflow,
     ['candidate', 'check', 'dependency-review', 'packed-install'],

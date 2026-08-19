@@ -28,6 +28,10 @@ function isReleaseCandidate(text) {
     && !text.includes('Draft only.')
 }
 
+function isReleaseNotesForVersion(text, version) {
+  return text.startsWith(`# ${version} release notes\n`)
+}
+
 export function validateReleaseState({
   bootstrapReleaseRecord,
   ciWorkflow,
@@ -38,6 +42,7 @@ export function validateReleaseState({
   licenseExists,
   npmBootstrapDecision,
   packageJson,
+  postBootstrapDistTagsDecision,
   releaseNotes,
   releaseWorkflow,
   securityPolicy,
@@ -57,6 +62,10 @@ export function validateReleaseState({
       'The npm bootstrap decision must be accepted before publication is enabled.',
     )
     invariant(
+      postBootstrapDistTagsDecision.includes('- Status: accepted'),
+      'The post-bootstrap dist-tag decision must be accepted before another Alpha is prepared.',
+    )
+    invariant(
       /^\d+\.\d+\.\d+-alpha\.\d+$/u.test(packageJson.version),
       'A public package version must be an explicit Alpha prerelease.',
     )
@@ -69,12 +78,15 @@ export function validateReleaseState({
       'A public package requires the reviewed release workflow to be enabled once.',
     )
     invariant(
-      typeof bootstrapReleaseRecord === 'string' && isFinalReleaseRecord(bootstrapReleaseRecord),
+      typeof bootstrapReleaseRecord === 'string'
+        && isReleaseNotesForVersion(bootstrapReleaseRecord, '0.1.0-alpha.0')
+        && isFinalReleaseRecord(bootstrapReleaseRecord),
       'The first Alpha release record must retain its final exact-artifact evidence.',
     )
     invariant(
       releaseNotes.exists
         && typeof releaseNotes.text === 'string'
+        && isReleaseNotesForVersion(releaseNotes.text, packageJson.version)
         && (isFinalReleaseRecord(releaseNotes.text) || isReleaseCandidate(releaseNotes.text)),
       `Reviewed release notes are missing for ${String(packageJson.version)}.`,
     )

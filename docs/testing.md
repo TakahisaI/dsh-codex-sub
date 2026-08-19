@@ -256,12 +256,13 @@ package build or repack. The release-state check derives the exact six-cell matr
 Unit tests reject relative or symbolic-link tarballs, oversized compressed files, allowlist drift,
 duplicate archive paths, extra artifact entries, checksum or filename mismatch, stdout or stderr
 capture overflow, missing or extra matrix cells in block or flow style, and rebuilds or direct
-repacks in artifact-consumer, candidate-ready, and any later jobs. Archive tests also use highly
-compressible fixtures to exceed the 2 MiB per-entry, 512 KiB README, 64 KiB manifest, and 8 MiB
-aggregate extracted-content budgets. Packaged README tests reject inline or reference-style
-relative links whose targets are omitted from the tarball. The CI and release contracts allow only
-the exact expected job set. CI requires canonical block-form `contents: read` in every permission
-block. The release workflow requires one read-only workflow default and exactly one job-local block
+repacks in artifact-consumer, candidate-ready, and any later jobs. Pure size checks cover the 2 MiB
+per-entry and 64 KiB manifest limits. Real archive tests use highly compressible fixtures to exceed
+the 512 KiB README and 8 MiB aggregate extracted-content budgets. Packaged README tests reject
+inline or reference-style relative links whose targets are omitted from the tarball. The CI and
+release contracts allow only the exact expected job set. CI requires canonical block-form
+`contents: read` in every permission block. The release workflow requires one read-only workflow
+default and exactly one job-local block
 containing `contents: read` plus `id-token: write`; that block must belong to the staging job.
 Quoted, flow, inline-comment, workflow-wide OIDC, and `write-all` variants fail closed. The release
 workflow rejects direct publication, automatic staged-package approval or rejection, and npm
@@ -276,7 +277,9 @@ operating-system archive and artifact clients.
 The workflow contract also requires every third-party Action, including a named step whose
 `uses:` key is on the following line, to match a reviewed full commit SHA. It rejects checkout ref
 or repository overrides and conditional or ignored protected-main guards before candidate
-construction or staging.
+construction or staging. The release workflow must also use the exact repository-specific
+concurrency group with `cancel-in-progress: false`; missing, duplicate, nested, alternate-form, or
+cancellation-enabled declarations fail closed.
 The enabled release gate has an always-executed `release-ref` job that compares `github.ref` with
 `refs/heads/main`; candidate construction must depend on both that guard and source checks, and the
 staging job must depend on the post-matrix candidate-ready boundary. Pure release-state fixtures

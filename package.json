@@ -1,6 +1,6 @@
 {
   "name": "dsh-codex-sub",
-  "version": "0.1.0-alpha.0",
+  "version": "0.1.0-alpha.1",
   "description": "ChatGPT subscription authentication and OpenAI Codex models for DeepSeek Harness.",
   "private": false,
   "license": "MIT",

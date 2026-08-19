@@ -291,6 +291,26 @@ describe('workflow release evidence', () => {
     expect(() => validateWorkflowContracts(inputs)).not.toThrow()
   })
 
+  it('serializes releases without cancelling a candidate already in progress', async () => {
+    const inputs = await repositoryInputs()
+    const canonical = 'concurrency:\n  group: dsh-codex-sub-release\n  cancel-in-progress: false'
+    const cases = [
+      '',
+      'concurrency:\n  group: another-release\n  cancel-in-progress: false',
+      'concurrency:\n  group: dsh-codex-sub-release\n  cancel-in-progress: true',
+      'concurrency: { group: dsh-codex-sub-release, cancel-in-progress: false }',
+      '"concurrency":\n  group: dsh-codex-sub-release\n  cancel-in-progress: false',
+      `${canonical}\n\n  concurrency: nested-release`,
+    ]
+    for (const replacement of cases) {
+      const releaseWorkflow = inputs.releaseWorkflow.replace(canonical, replacement)
+      expect(releaseWorkflow).not.toBe(inputs.releaseWorkflow)
+      expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(
+        'Release workflow must serialize runs without cancelling an in-progress release.',
+      )
+    }
+  })
+
   it('rejects a missing supported matrix cell', async () => {
     const inputs = await repositoryInputs()
     const releaseWorkflow = inputs.releaseWorkflow.replace(
@@ -662,27 +682,31 @@ describe('workflow release evidence', () => {
 
 describe('release state transitions', () => {
   async function repositoryFixture() {
+    const packageText = await readFile(new URL('../package.json', import.meta.url), 'utf8')
+    const packageJson = JSON.parse(packageText)
     const [
+      bootstrapReleaseRecord,
       ciWorkflow,
       compatibilityText,
       issueConfig,
       npmBootstrapDecision,
-      packageText,
+      postBootstrapDistTagsDecision,
       releaseNotesText,
       releaseWorkflow,
       securityPolicy,
     ] = await Promise.all([
+      readFile(new URL('../docs/releases/0.1.0-alpha.0.md', import.meta.url), 'utf8'),
       readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
       readFile(new URL('../compatibility.json', import.meta.url), 'utf8'),
       readFile(new URL('../.github/ISSUE_TEMPLATE/config.yml', import.meta.url), 'utf8'),
       readFile(new URL('../docs/decisions/0011-npm-trusted-publishing-bootstrap.md', import.meta.url), 'utf8'),
-      readFile(new URL('../package.json', import.meta.url), 'utf8'),
-      readFile(new URL('../docs/releases/0.1.0-alpha.0.md', import.meta.url), 'utf8'),
+      readFile(new URL('../docs/decisions/0014-post-bootstrap-dist-tags.md', import.meta.url), 'utf8'),
+      readFile(new URL(`../docs/releases/${String(packageJson.version)}.md`, import.meta.url), 'utf8'),
       readReleaseWorkflow(),
       readFile(new URL('../SECURITY.md', import.meta.url), 'utf8'),
     ])
     return {
-      bootstrapReleaseRecord: releaseNotesText,
+      bootstrapReleaseRecord,
       ciWorkflow,
       compatibility: JSON.parse(compatibilityText),
       disabledWorkflowExists: false,
@@ -690,7 +714,8 @@ describe('release state transitions', () => {
       issueConfig,
       licenseExists: true,
       npmBootstrapDecision,
-      packageJson: JSON.parse(packageText),
+      packageJson,
+      postBootstrapDistTagsDecision,
       releaseNotes: { exists: true, text: releaseNotesText },
       releaseWorkflow,
       securityPolicy,
@@ -772,7 +797,20 @@ describe('release state transitions', () => {
     expect(() => validateReleaseState({
       ...fixture,
       releaseNotes: { exists: true, text: '> Draft only. Publication pending.' },
-    })).toThrow('Reviewed release notes are missing for 0.1.0-alpha.0.')
+    })).toThrow(`Reviewed release notes are missing for ${String(fixture.packageJson.version)}.`)
+  })
+
+  it('requires the post-bootstrap dist-tag decision to remain accepted', async () => {
+    const fixture = await publicAlphaFixture()
+    expect(() => validateReleaseState({
+      ...fixture,
+      postBootstrapDistTagsDecision: fixture.postBootstrapDistTagsDecision.replace(
+        '- Status: accepted',
+        '- Status: proposed',
+      ),
+    })).toThrow(
+      'The post-bootstrap dist-tag decision must be accepted before another Alpha is prepared.',
+    )
   })
 
   it('accepts reviewed notes for the next unpublished Alpha without weakening the first record', async () => {
@@ -790,5 +828,16 @@ describe('release state transitions', () => {
       ...fixture,
       bootstrapReleaseRecord: '> Release candidate. This version has not been published.',
     })).toThrow('The first Alpha release record must retain its final exact-artifact evidence.')
+  })
+
+  it('rejects release notes copied from a different version', async () => {
+    const fixture = await publicAlphaFixture()
+    expect(() => validateReleaseState({
+      ...fixture,
+      releaseNotes: {
+        exists: true,
+        text: '# 0.1.0-alpha.0 release notes\n\n> Release candidate. This version has not been published.',
+      },
+    })).toThrow(`Reviewed release notes are missing for ${String(fixture.packageJson.version)}.`)
   })
 })

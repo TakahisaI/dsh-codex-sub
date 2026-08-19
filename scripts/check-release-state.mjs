@@ -14,6 +14,7 @@ const requiredSupportFiles = [
   'docs/alpha-smoke-record.md',
   'docs/decisions/0011-npm-trusted-publishing-bootstrap.md',
   'docs/decisions/0013-single-release-artifact.md',
+  'docs/decisions/0014-post-bootstrap-dist-tags.md',
   'docs/dependency-licenses.md',
   'docs/known-limitations.ja.md',
   'docs/known-limitations.md',
@@ -50,6 +51,9 @@ const packageJson = JSON.parse(await readText('package.json'))
 const npmBootstrapDecision = await readText(
   'docs/decisions/0011-npm-trusted-publishing-bootstrap.md',
 )
+const postBootstrapDistTagsDecision = await readText(
+  'docs/decisions/0014-post-bootstrap-dist-tags.md',
+)
 const enabledWorkflow = await exists('.github/workflows/release.yml')
 const disabledWorkflow = await exists('.github/workflows/release.yml.disabled')
 const securityPolicy = await readText('SECURITY.md')
@@ -82,6 +86,7 @@ validateReleaseState({
   licenseExists: await exists('LICENSE'),
   npmBootstrapDecision,
   packageJson,
+  postBootstrapDistTagsDecision,
   releaseNotes: { exists: releaseNotesExists, text: releaseNotesText },
   releaseWorkflow,
   securityPolicy,
