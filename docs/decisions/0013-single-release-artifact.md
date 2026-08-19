@@ -60,5 +60,9 @@ unaccepted and the package does not exist in the registry.
 - Archive validation uses the platform `tar` program already present on supported Linux and macOS
   runners; Windows remains outside the first-Alpha support boundary.
 - The blocking packed-install matrix grows from four to six jobs.
-- Unit tests cover bounded path, archive-list, checksum, capture-overflow, and workflow-topology
-  rejection paths without generating credentials or making network requests.
+- Unit tests cover bounded path, archive-list, checksum, stdout/stderr capture-overflow, and
+  workflow-topology rejection paths without generating credentials or making network requests.
+  The topology contract includes block- and flow-style matrix entries, rebuild/repack rejection in
+  every non-producer job, the exact verification-only job set, the enabled/disabled workflow rename,
+  and the pre-bootstrap prohibition on publication, npm registry credentials at any workflow scope,
+  or any permission beyond a required workflow-level canonical `contents: read` block.

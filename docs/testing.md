@@ -162,8 +162,9 @@ Build and pack the package, then inspect the tarball.
 Release validation creates the candidate tarball once. Every platform job uses
 `test:packed-install -- --package-tarball <absolute-path>` so the driver validates and installs the
 downloaded bytes without rebuilding or repacking the package. The probe remains locally generated
-test instrumentation. A capture that reaches its stdout/stderr limit fails the gate because an
-incomplete transcript cannot prove that secret sentinels stayed out of output. See ADR 0013.
+test instrumentation. A capture that exceeds its stdout/stderr limit fails the gate because an
+incomplete transcript cannot prove that secret sentinels stayed out of output. A complete capture
+whose final byte exactly meets the limit remains valid. See ADR 0013.
 
 The tarball should contain only intended runtime files and documentation. It must not contain:
 
@@ -253,9 +254,17 @@ package build or repack. The release-state check derives the exact six-cell matr
 `compatibility.json` and rejects drift in either active CI or the disabled release workflow.
 
 Unit tests reject relative or symbolic-link tarballs, oversized files, allowlist drift, duplicate
-archive paths, extra artifact entries, checksum or filename mismatch, capture overflow, missing
-matrix cells, and rebuilds inside artifact-consumer jobs. The active CI handoff remains the
-cross-platform integration proof for the operating-system archive and artifact clients.
+archive paths, extra artifact entries, checksum or filename mismatch, stdout or stderr capture
+overflow, missing or extra matrix cells in block or flow style, and rebuilds or direct repacks in
+artifact-consumer, candidate-ready, and any later jobs. The CI and release contracts allow only the
+exact expected job set and require exactly one workflow-level, canonical block-form `contents: read`
+permission. Every permission block rejects `id-token`, `write-all`, quoted, flow, and inline-comment
+variants. The verification-only release workflow also rejects publication and npm registry
+credential plumbing anywhere in the file, including workflow-level environment variables, relative
+or absolute `.npmrc` references, and npm/pnpm login commands. Tests locate either the disabled or
+enabled release-workflow filename so the activation rename cannot bypass or break this gate. The
+active CI handoff remains the cross-platform integration proof for the operating-system archive and
+artifact clients.
 
 Windows is not a first-alpha target because the current vault cannot verify owner-only ACLs there.
 
