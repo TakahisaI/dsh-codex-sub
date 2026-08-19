@@ -60,14 +60,15 @@ class FixtureAdapter extends LlmAdapter {
     return Object.freeze({ id: provider, name: PROVIDER_DISPLAY_NAME })
   }
 
+  // This catalog fixture describes the single openai-codex route exercised by the successful mount.
   override async listModels(_provider: string): Promise<readonly LlmModelInfo[]> {
     return Object.freeze([this.#model])
   }
 
-  override async resolveModel(provider: string, _model: string): Promise<LlmResolvedModelInfo> {
+  override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     return Object.freeze({
       provider,
-      id: FIXTURE_MODEL_ID,
+      id: model,
       name: FIXTURE_MODEL_NAME,
     })
   }
