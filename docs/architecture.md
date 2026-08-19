@@ -148,6 +148,14 @@ Responsibilities:
 - register exactly one provider route;
 - report route collisions clearly.
 
+The adapter stream is deliberately one provider attempt. In an ordinary DSH agent session, the
+Host's `dsh-llm-retry` policy may repeat a transient failure at the durable request-error boundary.
+At the pinned DSH version those attempts remain inside one open turn and step, with separate
+`llm/retry` records; failed chunks are log-only and only a successful assembled
+`assistant/message` can make a tool call executable. Each repeated provider attempt resolves a
+fresh request-scoped OAuth result exactly once. Direct `ctx.llm.stream()` consumers receive no
+automatic retry. See ADR 0015.
+
 The request-auth provider wrapper adds an api-key-style explicit override to the provider's auth
 surface while preserving its OAuth capability. pi-ai requires an auth method to report configured
 before applying a request override, so that method returns a fixed internal marker. The wrapper's

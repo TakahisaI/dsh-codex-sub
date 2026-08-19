@@ -131,6 +131,13 @@ The fixed provider profile uses the pi-ai catalog, DSH's normal retry policy, an
 idle timeout. Unsupported reasoning effort and content combinations remain DSH/pi-ai failures; the
 plugin does not clamp or discard them.
 
+`CodexDshAdapter.stream()` is a single provider attempt. The package exposes the retry policy but
+does not install or execute a retry loop. When the Host loads DSH's retry plugin, every eligible
+repeat calls `resolveRequestAuth()` once again, while failed partial output remains outside derived
+message history and tool acceptance. At the pinned DSH version the durable retry records stay in
+the same turn and step. Status-bearing 429/5xx and recognized transport/timeout failures use DSH's
+finite normal policy; an unclassified overload remains a bounded, non-retried `PI_AI_ERROR`.
+
 ## 8. Error shape
 
 ```ts
