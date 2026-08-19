@@ -41,12 +41,15 @@ Adapt pi-ai's published `AuthInteraction` structurally inside `src/piai/**` and 
 rendering in `src/cli/**`. Validate every displayed destination with the platform URL parser and
 allow only HTTPS URLs without username or password. Print validated authorization URLs and device
 codes only as ephemeral interactive output; never place them in reports or persistence. Do not open
-a browser automatically. Read `secret` and `manual_code` prompts with a non-echoing input path,
-render `select` prompts as numbered choices, and propagate the combined interaction/prompt abort
-signal to every pending read.
+a browser automatically. Before login, reject an explicit `PI_OAUTH_CALLBACK_HOST` unless it is the
+loopback literal `127.0.0.1` or `::1`; the configured value never enters output. Read `secret` and
+`manual_code` prompts with a non-echoing input path, render `select` prompts as numbered choices,
+and propagate the combined interaction/prompt abort signal to every pending read.
 
 Never print caught objects, stacks, causes, or arbitrary provider data. Expected project failures
 print only their stable code and safe fixed message; unexpected failures use one fixed message.
+When pi-ai wraps a project credential-conversion failure during login, retain the safe
+`CODEX_UPSTREAM_PROTOCOL` classification rather than reducing it to a generic login failure.
 
 ## Consequences
 
