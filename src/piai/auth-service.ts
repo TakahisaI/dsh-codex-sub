@@ -26,6 +26,9 @@ import { PiAiCredentialStore } from './credential-store.js'
 
 export const DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 30_000
 
+const OAUTH_CALLBACK_HOST_ENVIRONMENT_VARIABLE = 'PI_OAUTH_CALLBACK_HOST'
+const SAFE_OAUTH_CALLBACK_HOSTS = new Set(['127.0.0.1', '::1'])
+
 const NO_AMBIENT_AUTH_CONTEXT: AuthContext = Object.freeze({
   async env(_name: string): Promise<undefined> {
     return undefined
@@ -118,13 +121,25 @@ function throwIfAborted(signal?: AbortSignal): void {
   }
 }
 
-function storageErrorFromModels(error: unknown): CodexError | undefined {
+function assertSafeOAuthCallbackHost(): void {
+  const configuredHost = process.env[OAUTH_CALLBACK_HOST_ENVIRONMENT_VARIABLE]
+  if (configuredHost !== undefined && !SAFE_OAUTH_CALLBACK_HOSTS.has(configuredHost)) {
+    throw loginFailed('callback_host')
+  }
+}
+
+function projectErrorFromModels(error: unknown): CodexError | undefined {
   if (!(error instanceof ModelsError) || error.code !== 'auth') {
     return undefined
   }
   const cause = error.cause
   return isCodexError(cause)
-    && (cause.code === 'CODEX_AUTH_STORAGE_INVALID' || cause.code === 'CODEX_AUTH_STORAGE_INSECURE')
+    && (
+      cause.code === 'CODEX_AUTH_LOGIN_FAILED'
+      || cause.code === 'CODEX_AUTH_STORAGE_INVALID'
+      || cause.code === 'CODEX_AUTH_STORAGE_INSECURE'
+      || cause.code === 'CODEX_UPSTREAM_PROTOCOL'
+    )
     ? cause
     : undefined
 }
@@ -348,6 +363,7 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
 
   async login(interaction: unknown, signal?: AbortSignal): Promise<void> {
     throwIfAborted(signal)
+    assertSafeOAuthCallbackHost()
     let normalizedInteraction: AuthInteraction | undefined
     try {
       normalizedInteraction = normalizeInteraction(interaction, signal)
@@ -368,9 +384,9 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
       ) {
         throw error
       }
-      const storageError = storageErrorFromModels(error)
-      if (storageError !== undefined) {
-        throw storageError
+      const projectError = projectErrorFromModels(error)
+      if (projectError !== undefined) {
+        throw projectError
       }
       throw loginFailed('oauth', error)
     }

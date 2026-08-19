@@ -212,8 +212,21 @@ When installed in a profile, the expected invocation is:
 dsh plugin --profile web exec dsh-codex-sub login
 ```
 
-`login` is interactive. `status` and `doctor` are deterministic and secret-free. `doctor` performs
-no network call unless a future explicitly named probe flag is added.
+The executable is a separate build entry and does not expand the package's public library exports.
+It parses with Node's built-in `parseArgs` and composes the auth service, vault inspection, runtime
+compatibility evaluator, and the pinned provider's in-memory catalog. It never constructs a DSH
+agent. Production auth, vault, and prompt dependencies are lazy: help and version do not construct
+them, while construction failures for operational commands stay inside the CLI's safe error
+boundary. Once a command settles, the executable removes its SIGINT listener and exits with the
+selected code so a leaked upstream OAuth handle cannot keep it alive.
+
+`login` adapts pi-ai's published interaction events. It validates destinations as HTTPS URLs with
+no user information, prints them without opening a browser, and uses non-echoing reads for secret
+and manual-code prompts. SIGINT aborts the interaction and pending prompt resources.
+
+`status` is local and offline. `doctor` is deterministic and secret-free: it uses bounded vault
+inspection rather than a full credential read and performs no login, refresh, model request, or
+network operation. JSON output is one `StatusReportV1` or `DoctorReportV1` document. See ADR 0009.
 
 ## 4. Request lifecycle
 
@@ -286,7 +299,7 @@ Keep package exports minimal:
 
 ```text
 .                    Cordis plugin entry and stable constants
-./cli                 executable implementation only if required by build
+bin                   dsh-codex-sub executable through the package manifest
 ./compatibility.json  machine-readable supported combination
 ./package.json        package metadata
 ```

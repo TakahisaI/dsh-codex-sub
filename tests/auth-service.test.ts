@@ -181,6 +181,83 @@ describe('PiAiCodexAuthService', () => {
     await expect(service.login(interaction())).rejects.toBe(storageError)
   })
 
+  it('preserves a wrapped credential protocol failure from provider login', async () => {
+    const now = 1_800_000_000_000
+    const incompatibleCredential = {
+      type: 'oauth',
+      access: '',
+      refresh: '',
+      expires: now + 60_000,
+    } as OAuthCredential
+    const probe = new OAuthProbe(incompatibleCredential, credential(now + 120_000))
+    const vault = new MemoryCredentialVault()
+    const service = new PiAiCodexAuthService({
+      provider: providerWithOAuth(probe),
+      vault,
+    })
+
+    await expect(service.login(interaction())).rejects.toMatchObject({
+      code: 'CODEX_UPSTREAM_PROTOCOL',
+      message: 'The pi-ai OAuth credential is incompatible.',
+    })
+    expect(vault.peek()).toBeUndefined()
+  })
+
+  it('rejects a non-loopback OAuth callback host before provider login', async () => {
+    const now = 1_800_000_000_000
+    const sentinel = `PATH_SENTINEL_${randomUUID()}`
+    const original = process.env['PI_OAUTH_CALLBACK_HOST']
+    process.env['PI_OAUTH_CALLBACK_HOST'] = sentinel
+    try {
+      const probe = new OAuthProbe(credential(now + 60_000), credential(now + 120_000))
+      const service = new PiAiCodexAuthService({
+        provider: providerWithOAuth(probe),
+        vault: new MemoryCredentialVault(),
+      })
+
+      let failure: unknown
+      try {
+        await service.login(interaction())
+      } catch (error) {
+        failure = error
+      }
+      expect(failure).toMatchObject({
+        code: 'CODEX_AUTH_LOGIN_FAILED',
+        safeDetails: { reason: 'callback_host' },
+      })
+      expect(printable(failure)).not.toContain(sentinel)
+      expect(probe.loginCalls).toBe(0)
+    } finally {
+      if (original === undefined) {
+        delete process.env['PI_OAUTH_CALLBACK_HOST']
+      } else {
+        process.env['PI_OAUTH_CALLBACK_HOST'] = original
+      }
+    }
+  })
+
+  it.each(['127.0.0.1', '::1'])('allows the explicit loopback callback host %s', async (host) => {
+    const now = 1_800_000_000_000
+    const original = process.env['PI_OAUTH_CALLBACK_HOST']
+    process.env['PI_OAUTH_CALLBACK_HOST'] = host
+    try {
+      const probe = new OAuthProbe(credential(now + 60_000), credential(now + 120_000))
+      const service = new PiAiCodexAuthService({
+        provider: providerWithOAuth(probe),
+        vault: new MemoryCredentialVault(),
+      })
+
+      await expect(service.login(interaction())).resolves.toBeUndefined()
+      expect(probe.loginCalls).toBe(1)
+    } finally {
+      if (original === undefined) {
+        delete process.env['PI_OAUTH_CALLBACK_HOST']
+      } else {
+        process.env['PI_OAUTH_CALLBACK_HOST'] = original
+      }
+    }
+  })
+
   it('rejects an already-aborted interaction before starting provider login', async () => {
     const now = 1_800_000_000_000
     const probe = new OAuthProbe(credential(now + 60_000), credential(now + 120_000))

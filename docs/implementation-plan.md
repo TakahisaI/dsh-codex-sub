@@ -118,6 +118,8 @@ Host-only directory registration if the live registry is insufficient. See ADR 0
 
 ## Milestone 5 — CLI and diagnostics
 
+Status: complete in the Milestone 5 implementation branch.
+
 Deliverables:
 
 - `dsh-codex-sub` executable;

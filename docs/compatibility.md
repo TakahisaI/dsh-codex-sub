@@ -55,6 +55,9 @@ documented range, and compares every direct DSH/pi-ai runtime package exactly. P
 resolved locally and reduced to name/version only; resolved filesystem paths never enter the
 report or error details.
 
+The CLI doctor uses this same evaluator and maps only the documented Node, DSH LLM, DSH pi-ai, and
+pi-ai checks into `DoctorReportV1`; it does not maintain a second version table.
+
 A development-only environment override may allow experimentation, but it must:
 
 - be clearly named as unsupported;
