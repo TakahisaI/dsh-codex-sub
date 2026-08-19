@@ -8,7 +8,8 @@ The design baseline is:
 - `@deepseek-ai/cordis` `4.0.1`;
 - `@deepseek-ai/dsh-llm-pi-ai` `0.1.0-rc.7`;
 - `@earendil-works/pi-ai` `0.82.1`;
-- Node.js `^22.19.0 || >=24.0.0`;
+- Node.js `^22.19.0 || ^24.0.0 || ^26.0.0`;
+- Linux and macOS;
 - pnpm `11.7.0` for repository development.
 
 The exact machine-readable values live in the root `compatibility.json`.
@@ -22,7 +23,8 @@ For public prereleases:
 
 - direct DSH peer dependencies use the exact verified release;
 - pi-ai uses the exact verified release;
-- Node uses the DSH-supported engine range;
+- Node uses only the three release lines exercised by blocking CI;
+- package metadata rejects operating systems outside Linux and macOS;
 - the runtime guard rejects a known mismatch before provider registration.
 
 A broader npm range may be considered only after multiple releases demonstrate a stable public
@@ -51,9 +53,16 @@ newer unverified release  fail closed for public builds
 ```
 
 The production guard loads the supported values from `compatibility.json`, checks Node with the
-documented range, and compares every direct DSH/pi-ai runtime package exactly. Package metadata is
+documented range, and compares every direct DSH/pi-ai runtime package exactly. It rejects
+prerelease Node builds, odd major lines, and later untested major lines. Package metadata is
 resolved locally and reduced to name/version only; resolved filesystem paths never enter the
 report or error details.
+
+The package root then verifies that the injected LLM service has the exact constructor identity of
+the verified `@deepseek-ai/dsh-llm` export. The Host publishes no service version property, so a
+different module identity fails closed even when plugin-local package metadata still reports the
+supported version. A dynamically loaded runtime module lets the package root classify missing or
+incompatible static exports as `CODEX_INCOMPATIBLE_RUNTIME`.
 
 The CLI doctor uses this same evaluator and maps only the documented Node, DSH LLM, DSH pi-ai, and
 pi-ai checks into `DoctorReportV1`; it does not maintain a second version table.
@@ -114,3 +123,7 @@ response is:
 - state the installed and verified versions;
 - point to `doctor --json`;
 - recommend installing a verified combination or contributing a compatibility update.
+
+Windows is outside the first-alpha support boundary because owner-only credential ACLs cannot be
+verified by the current vault. A new Node major or operating system is unsupported until its packed
+install is a blocking CI job and the machine-readable compatibility metadata is updated.

@@ -1,7 +1,11 @@
 {
   "schemaVersion": 1,
-  "baselineDate": "2026-08-18",
-  "node": "^22.19.0 || >=24.0.0",
+  "baselineDate": "2026-08-19",
+  "node": "^22.19.0 || ^24.0.0 || ^26.0.0",
+  "platforms": [
+    "darwin",
+    "linux"
+  ],
   "packageManager": "pnpm@11.7.0",
   "dsh": {
     "release": "0.1.0-rc.7",

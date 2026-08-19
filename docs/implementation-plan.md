@@ -111,13 +111,13 @@ Acceptance:
 - request cancellation and replay behavior use DSH's adapter contract;
 - no DSH Web, settings, search, or tool registration is added.
 
-Provisional decision:
+Verified decision:
 
 The pinned DSH runtime exposes a live adapter's provider metadata and catalog through its public
 registry after `registerAdapter()` alone. The spike does not exercise the actual model selector, so
-the first release provisionally omits a configurable-provider directory, settings namespace, and
-browser card. Milestone 6 must verify the selector through a packed install and add the smallest
-Host-only directory registration if the live registry is insufficient. See ADR 0006.
+Milestone 6 checked the ordinary selector through a packed DSH Web profile. The selector consumes
+the live registry, so the first release omits a configurable-provider directory, settings
+namespace, and browser card. See ADR 0006.
 
 ## Milestone 5 — CLI and diagnostics
 
@@ -140,6 +140,8 @@ Acceptance:
 
 ## Milestone 6 — Packaging and installation
 
+Status: complete in the Milestone 6 implementation branch.
+
 Deliverables:
 
 - npm bundle manifest;
@@ -159,6 +161,13 @@ Acceptance:
 - the provider appears in model discovery;
 - uninstall leaves the package credential file untouched;
 - logout removes only the package credential file.
+
+Implementation evidence:
+
+- the automated gate packs the real tarball and a Host-only probe into a fresh DSH Web profile;
+- Ubuntu covers Node 22.19, 24, and 26, while macOS covers Node 24;
+- the ordinary model selector was manually confirmed against that packed profile;
+- the release workflow is stored with a disabled extension and contains no publication step.
 
 ## Milestone 7 — Alpha validation
 

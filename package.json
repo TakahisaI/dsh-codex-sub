@@ -8,8 +8,12 @@
   "sideEffects": false,
   "packageManager": "pnpm@11.7.0",
   "engines": {
-    "node": "^22.19.0 || >=24.0.0"
+    "node": "^22.19.0 || ^24.0.0 || ^26.0.0"
   },
+  "os": [
+    "darwin",
+    "linux"
+  ],
   "main": "lib/index.mjs",
   "types": "lib/index.d.mts",
   "bin": {
@@ -36,7 +40,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown src/index.ts --format esm --dts --out-dir lib --clean && tsdown src/bin.ts --format esm --dts --out-dir lib --no-clean",
+    "build": "tsdown src/index.ts --format esm --dts --out-dir lib --clean && tsdown src/runtime.ts --format esm --dts --out-dir lib --no-clean && tsdown src/bin.ts --format esm --dts --out-dir lib --no-clean",
     "check:built-entry": "node scripts/check-built-entry.mjs",
     "check:built-cli": "node scripts/check-built-cli.mjs",
     "typecheck": "tsc --noEmit",
@@ -45,6 +49,7 @@
     "test": "vitest run",
     "check:boundaries": "node scripts/check-core-boundaries.mjs",
     "check:compatibility": "node scripts/check-compatibility.mjs",
+    "test:packed-install": "node scripts/packed-install.mjs",
     "pack:check": "node scripts/check-pack.mjs",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run check:upstream-declarations && pnpm run test && pnpm run check:boundaries && pnpm run build && pnpm run check:built-entry && pnpm run check:built-cli && pnpm run check:compatibility && pnpm run pack:check"
   },
@@ -66,6 +71,7 @@
     "@deepseek-ai/dsh-home-paths": "0.1.0-rc.7",
     "@deepseek-ai/dsh-llm": "0.1.0-rc.7",
     "@deepseek-ai/dsh-llm-pi-ai": "0.1.0-rc.7",
+    "@deepseek-ai/dsh": "0.1.0-rc.7",
     "@types/node": "22.20.1",
     "oxlint": "1.76.0",
     "tsdown": "0.22.2",

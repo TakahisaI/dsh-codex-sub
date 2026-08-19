@@ -9,7 +9,10 @@ import { CodexError } from '../core/errors.js'
 import { PiAiCodexAuthService } from '../piai/auth-service.js'
 import { FileCredentialVault } from '../storage/file-credential-vault.js'
 import { CodexDshAdapter } from './adapter.js'
-import { assertRuntimeCompatible } from './compatibility.js'
+import {
+  assertHostLlmRuntime,
+  assertRuntimeCompatible,
+} from './compatibility.js'
 
 export const name = PLUGIN_NAME
 export const inject = ['llm']
@@ -33,6 +36,7 @@ function isDuplicateAdapterFailure(error: unknown): boolean {
 
 export function apply(ctx: Context): void {
   assertRuntimeCompatible()
+  assertHostLlmRuntime(ctx.llm)
 
   const vault = new FileCredentialVault()
   const authService = new PiAiCodexAuthService({ vault })
@@ -44,8 +48,8 @@ export function apply(ctx: Context): void {
   try {
     ctx.llm.registerAdapter([PROVIDER_ID], adapter)
   } catch (error) {
-    // Host and plugin can load distinct copies of dsh-llm, so class identity is
-    // not a stable package boundary. Trust only the public own data property.
+    // A host error can cross loader boundaries even after the service identity
+    // is verified. Trust only the public own data property, not Error identity.
     if (isDuplicateAdapterFailure(error)) {
       throw providerConflict(error)
     }

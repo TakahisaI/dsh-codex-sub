@@ -90,8 +90,8 @@ Verify:
 
 The test does not claim global discovery absence while DSH publishes no discovery-namespace list.
 The absence of settings, Web, search, tool, session, and agent-loop registration is a structural
-plugin-boundary review because those services are not mounted by the fixture. End-to-end selector
-visibility remains a Milestone 6 packed-install test.
+plugin-boundary review because those services are not mounted by the fixture. Milestone 6 adds the
+packed Host registry probe and manual ordinary-selector check described below.
 
 ### 1.5 DSH adapter contract tests
 
@@ -122,7 +122,7 @@ Verify:
   through the public DSH stream boundary;
 - the OAuth-only provider wrapper cannot send its internal configured marker and never reads an
   ambient credential;
-- duplicate-route translation works with a data-shaped error from a distinct host package copy;
+- duplicate-route translation works with a structurally compatible Host error;
 - exact runtime mismatches fail before registration without exposing resolved package paths.
 
 Do not re-test every internal behavior of DSH `PiAiAdapter`; pin only the behaviors on which this
@@ -169,14 +169,24 @@ The tarball should contain only intended runtime files and documentation. It mus
 
 Install the tarball into a temporary DSH profile and verify:
 
-1. `dsh plugin --profile <temp> add <tarball>` succeeds.
-2. `dsh --profile <temp> --dump-config` contains one `llm-codex-sub` row.
-3. DSH boots while signed out and exposes a clear auth-required failure only when the route is used.
-4. The model catalog is visible through the DSH model-list seam.
-5. Removing the package removes the bundle row.
-6. Removing the package does not delete the package-owned credential file.
+1. `dsh plugin --profile web add <tarball>` succeeds in a fresh DSH home.
+2. `dsh --profile web --dump-config` contains one `llm-codex-sub` row and one package bundle layer.
+3. The six direct DSH/Cordis peers resolve to the parent Host, not profile-root copies.
+4. The Host and plugin pi-ai copies are distinct, pinned to the same version, and interoperate.
+5. Every peer required by the Host's DSH pi-ai adapter resolves from the Host.
+6. DSH Web boots while signed out and the live provider/catalog seam used by the selector contains
+   one provider and a non-empty, unique model list.
+7. A signed-out route call returns `CODEX_AUTH_REQUIRED` while a blocked `fetch` records no network
+   attempt.
+8. The packaged `status --json` and `doctor --json` commands run from the profile.
+9. Removing the package removes its bundle row and executable but preserves byte-identical package
+   credentials.
+10. Reinstalling the same tarball reuses the credential, and logout removes only `auth.json` while
+    preserving another package-directory file.
 
-The install smoke uses no real OAuth request.
+The install smoke uses generated fake credentials and no real OAuth request. The ordinary DSH Web
+model selector is also checked manually on the packed profile because DSH does not publish a UI
+test seam for that consumer.
 
 ## 2. Secret-sentinel gate
 
@@ -222,11 +232,12 @@ Record only pass/fail and package/runtime versions.
 
 Blocking CI:
 
-- Node 22.19;
-- Node 24;
-- Node 26;
-- supported DSH release;
-- exact supported pi-ai release.
+- Ubuntu packed install on Node 22.19, 24, and 26;
+- macOS packed install on Node 24;
+- the supported DSH release;
+- the exact supported pi-ai release.
+
+Windows is not a first-alpha target because the current vault cannot verify owner-only ACLs there.
 
 Non-blocking scheduled canaries:
 

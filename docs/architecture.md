@@ -167,28 +167,36 @@ relying on undocumented internals.
 
 ### 3.7 Cordis plugin entry
 
-The plugin entry is intentionally small:
+The emitted package root is intentionally small:
 
-1. verify supported runtime versions;
-2. construct the vault and auth service;
-3. construct the DSH adapter;
-4. register `openai-codex` on `ctx.llm`;
-5. rely on Cordis effect disposal for unregistration.
+1. dynamically load the fixed sibling `runtime.mjs` module;
+2. verify supported runtime versions and Host LLM identity;
+3. construct the vault and auth service;
+4. construct the DSH adapter;
+5. register `openai-codex` on `ctx.llm`;
+6. rely on Cordis effect disposal for unregistration.
 
 The runtime guard reads the verified versions from `compatibility.json`, resolves installed package
 metadata without exposing its paths, and fails closed before registration on a missing, unknown, or
-mismatched Node/DSH/pi-ai combination. A duplicate DSH route is translated from the public
-`DUPLICATE_ADAPTER` failure to `CODEX_PROVIDER_CONFLICT` without changing the existing owner. The
-translation uses the public own `code` data property rather than error-class identity so it also
-works when the host and bundled plugin resolve separate package copies.
+mismatched Node/DSH/pi-ai combination. It also requires the injected LLM service to use the exact
+published constructor resolved from the verified DSH package; plugin-local version metadata cannot
+prove Host service identity by itself. The dynamic package root converts a missing or incompatible
+runtime module into the same safe compatibility classification instead of allowing a static linker
+failure to escape. A duplicate DSH route is translated from the public `DUPLICATE_ADAPTER` failure
+to `CODEX_PROVIDER_CONFLICT` without changing the existing owner. The translation uses the public
+own `code` data property rather than error-class identity.
 
 The pinned DSH runtime exposes live provider metadata and the adapter-owned catalog through
-`listProviders()` and `listModels()` after `registerAdapter()`. The first release provisionally
-assumes the model selector consumes that live registry; the actual selector is not a published
-consumer mounted by the Host-only contract test. Milestone 6 verifies that assumption through a
-packed install before release. The plugin starts without a configurable-provider directory or
-model-discovery namespace because it owns no user-editable provider settings or dormant route. See
-ADR 0006.
+`listProviders()` and `listModels()` after `registerAdapter()`. A Milestone 6 packed DSH Web profile
+confirmed that the ordinary model selector consumes this live registry and displays the
+provider-owned catalog under **OpenAI Codex (ChatGPT)**. The plugin therefore starts without a
+configurable-provider directory or model-discovery namespace because it owns no user-editable
+provider settings or dormant route. See ADR 0006.
+
+The verified packed topology shares every direct DSH/Cordis peer with the parent Host and contains
+two pi-ai copies at the same pinned version, one owned by the Host and one by this package. The
+adapter boundary remains structural across those copies. The packed gate exercises a signed-out
+request through that boundary and requires an auth failure before provider `fetch`. See ADR 0010.
 
 There is no Web server injection, settings card, search service, tool registration, or session
 event registration. This is a structural boundary of the production plugin, not a runtime claim
