@@ -52,11 +52,12 @@ missing package metadata  fail closed before provider registration
 newer unverified release  fail closed for public builds
 ```
 
-The production guard loads the supported values from `compatibility.json`, checks Node with the
-documented range, and compares every direct DSH/pi-ai runtime package exactly. It rejects
-prerelease Node builds, odd major lines, and later untested major lines. Package metadata is
-resolved locally and reduced to name/version only; resolved filesystem paths never enter the
-report or error details.
+The production guard loads the supported values from `compatibility.json`, checks
+`process.platform`, checks Node with the documented range, and compares every direct DSH/pi-ai
+runtime package exactly. It rejects operating systems outside Linux and macOS, prerelease Node
+builds, odd major lines, and later untested major lines before provider registration. Package
+metadata is resolved locally and reduced to name/version only; resolved filesystem paths never
+enter the report or error details.
 
 The package root then verifies that the injected LLM service has the exact constructor identity of
 the verified `@deepseek-ai/dsh-llm` export. The Host publishes no service version property, so a
@@ -64,8 +65,9 @@ different module identity fails closed even when plugin-local package metadata s
 supported version. A dynamically loaded runtime module lets the package root classify missing or
 incompatible static exports as `CODEX_INCOMPATIBLE_RUNTIME`.
 
-The CLI doctor uses this same evaluator and maps only the documented Node, DSH LLM, DSH pi-ai, and
-pi-ai checks into `DoctorReportV1`; it does not maintain a second version table.
+The CLI doctor uses this same evaluator and maps the platform, Node, and every checked package into
+`DoctorReportV1`; it does not maintain a smaller package subset or a second version table. An
+unsupported platform is `incompatible`, including when the credential is absent. See ADR 0012.
 
 A development-only environment override may allow experimentation, but it must:
 

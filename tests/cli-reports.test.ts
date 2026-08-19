@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import type {
   CredentialVaultInspection,
+  PlatformCheck,
   VersionCheck,
 } from '../src/core/contracts.js'
 import type { RuntimeCompatibilityReport } from '../src/dsh/compatibility.js'
@@ -24,21 +25,41 @@ function versionCheck(
 }
 
 function runtime(
-  overrides: Partial<Record<'node' | 'dshLlm' | 'dshPiAi' | 'piAi', VersionCheck>> = {},
+  overrides: {
+    readonly platform?: PlatformCheck
+    readonly node?: VersionCheck
+    readonly packages?: Readonly<Record<string, VersionCheck>>
+  } = {},
 ): RuntimeCompatibilityReport {
   const node = overrides.node ?? versionCheck('24.0.0')
-  const dshLlm = overrides.dshLlm ?? versionCheck('0.1.0-rc.7')
-  const dshPiAi = overrides.dshPiAi ?? versionCheck('0.1.0-rc.7')
-  const piAi = overrides.piAi ?? versionCheck('0.82.1')
-  const checks = [node, dshLlm, dshPiAi, piAi]
+  const platform = overrides.platform ?? Object.freeze({
+    supported: Object.freeze(['darwin', 'linux']),
+    installed: 'linux',
+    status: 'compatible' as const,
+  })
+  const packages = overrides.packages ?? Object.freeze({
+    '@deepseek-ai/cordis': versionCheck('4.0.1'),
+    '@deepseek-ai/dsh-llm': versionCheck('0.1.0-rc.7'),
+    '@deepseek-ai/dsh-llm-pi-ai': versionCheck('0.1.0-rc.7'),
+    '@deepseek-ai/dsh-attachment': versionCheck('0.1.0-rc.7'),
+    '@deepseek-ai/dsh-atomic-write': versionCheck('0.1.0-rc.7'),
+    '@deepseek-ai/dsh-home-paths': versionCheck('0.1.0-rc.7'),
+    '@earendil-works/pi-ai': versionCheck('0.82.1'),
+  })
+  const checks = [node, ...Object.values(packages)]
   return Object.freeze({
-    compatible: checks.every((check) => check.status === 'compatible'),
+    compatible: platform.status === 'compatible'
+      && checks.every((check) => check.status === 'compatible'),
+    platform,
     node,
-    packages: Object.freeze({
-      '@deepseek-ai/dsh-llm': dshLlm,
-      '@deepseek-ai/dsh-llm-pi-ai': dshPiAi,
-      '@earendil-works/pi-ai': piAi,
-    }),
+    packages,
+  })
+}
+
+function runtimeWithPackage(packageName: string, check: VersionCheck): RuntimeCompatibilityReport {
+  const base = runtime()
+  return runtime({
+    packages: Object.freeze({ ...base.packages, [packageName]: check }),
   })
 }
 
@@ -78,18 +99,49 @@ describe('CLI report projections', () => {
       overall: 'compatible',
       package: { name: 'dsh-codex-sub', version: PACKAGE_VERSION },
       runtime: {
+        platform: {
+          supported: ['darwin', 'linux'],
+          installed: 'linux',
+          status: 'compatible',
+        },
         node: { supported: '24.0.0', installed: '24.0.0', status: 'compatible' },
-        dshLlm: {
-          supported: '0.1.0-rc.7',
-          installed: '0.1.0-rc.7',
-          status: 'compatible',
+        packages: {
+          '@deepseek-ai/cordis': {
+            supported: '4.0.1',
+            installed: '4.0.1',
+            status: 'compatible',
+          },
+          '@deepseek-ai/dsh-llm': {
+            supported: '0.1.0-rc.7',
+            installed: '0.1.0-rc.7',
+            status: 'compatible',
+          },
+          '@deepseek-ai/dsh-llm-pi-ai': {
+            supported: '0.1.0-rc.7',
+            installed: '0.1.0-rc.7',
+            status: 'compatible',
+          },
+          '@deepseek-ai/dsh-attachment': {
+            supported: '0.1.0-rc.7',
+            installed: '0.1.0-rc.7',
+            status: 'compatible',
+          },
+          '@deepseek-ai/dsh-atomic-write': {
+            supported: '0.1.0-rc.7',
+            installed: '0.1.0-rc.7',
+            status: 'compatible',
+          },
+          '@deepseek-ai/dsh-home-paths': {
+            supported: '0.1.0-rc.7',
+            installed: '0.1.0-rc.7',
+            status: 'compatible',
+          },
+          '@earendil-works/pi-ai': {
+            supported: '0.82.1',
+            installed: '0.82.1',
+            status: 'compatible',
+          },
         },
-        dshPiAi: {
-          supported: '0.1.0-rc.7',
-          installed: '0.1.0-rc.7',
-          status: 'compatible',
-        },
-        piAi: { supported: '0.82.1', installed: '0.82.1', status: 'compatible' },
       },
       credentialStore: { state: 'absent', permissions: 'unknown' },
       catalog: { provider: 'openai-codex', modelCount: 7 },
@@ -106,13 +158,16 @@ describe('CLI report projections', () => {
   it.each([
     [
       'incompatible',
-      runtime({ dshLlm: versionCheck('0.1.0-rc.8', 'incompatible') }),
+      runtimeWithPackage(
+        '@deepseek-ai/dsh-llm',
+        versionCheck('0.1.0-rc.8', 'incompatible'),
+      ),
       inspection('present', 'owner-only'),
       7,
     ],
     [
       'unknown',
-      runtime({ piAi: versionCheck(null, 'unknown') }),
+      runtimeWithPackage('@earendil-works/pi-ai', versionCheck(null, 'unknown')),
       inspection('present', 'owner-only'),
       7,
     ],
@@ -128,20 +183,11 @@ describe('CLI report projections', () => {
     }).overall).toBe(overall)
   })
 
-  it('includes non-projected verified packages in the overall runtime classification', () => {
-    const base = runtime()
-    const runtimeWithCordisMismatch: RuntimeCompatibilityReport = {
-      ...base,
-      compatible: false,
-      packages: {
-        ...base.packages,
-        '@deepseek-ai/cordis': {
-          supported: '4.0.1',
-          installed: '4.0.2',
-          status: 'incompatible',
-        },
-      },
-    }
+  it('surfaces every verified package used in the overall runtime classification', () => {
+    const runtimeWithCordisMismatch = runtimeWithPackage(
+      '@deepseek-ai/cordis',
+      { supported: '4.0.1', installed: '4.0.2', status: 'incompatible' },
+    )
 
     const report = createDoctorReport({
       version: PACKAGE_VERSION,
@@ -151,7 +197,44 @@ describe('CLI report projections', () => {
     })
 
     expect(report.overall).toBe('incompatible')
+    expect(report.runtime.packages['@deepseek-ai/cordis']).toEqual({
+      supported: '4.0.1',
+      installed: '4.0.2',
+      status: 'incompatible',
+    })
+    expect(Object.keys(report.runtime.packages)).toEqual([
+      '@deepseek-ai/cordis',
+      '@deepseek-ai/dsh-llm',
+      '@deepseek-ai/dsh-llm-pi-ai',
+      '@deepseek-ai/dsh-attachment',
+      '@deepseek-ai/dsh-atomic-write',
+      '@deepseek-ai/dsh-home-paths',
+      '@earendil-works/pi-ai',
+    ])
     expect(report.hints).toContain('Install the exact runtime versions verified by this package.')
+  })
+
+  it('reports an unsupported platform as incompatible with a bounded platform hint', () => {
+    const report = createDoctorReport({
+      version: PACKAGE_VERSION,
+      runtime: runtime({
+        platform: {
+          supported: ['darwin', 'linux'],
+          installed: 'win32',
+          status: 'incompatible',
+        },
+      }),
+      credentialStore: inspection('absent', 'unknown'),
+      modelCount: 7,
+    })
+
+    expect(report.overall).toBe('incompatible')
+    expect(report.runtime.platform).toEqual({
+      supported: ['darwin', 'linux'],
+      installed: 'win32',
+      status: 'incompatible',
+    })
+    expect(report.hints).toContain('Run this package on a supported operating system.')
   })
 
   it('rejects malformed runtime and catalog projections with fixed safe errors', () => {

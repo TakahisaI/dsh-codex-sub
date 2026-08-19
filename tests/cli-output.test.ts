@@ -24,7 +24,11 @@ describe('CLI JSON output', () => {
       schemaVersion: 1,
       overall: 'compatible',
       package: { name: 'dsh-codex-sub', version: '1.0.0' },
-      runtime: { node: check, dshLlm: check, dshPiAi: check, piAi: check },
+      runtime: {
+        platform: { supported: ['darwin', 'linux'], installed: 'linux', status: 'compatible' },
+        node: check,
+        packages: { '@example/runtime': check },
+      },
       credentialStore: { state: 'absent', permissions: 'unknown' },
       catalog: { provider: 'openai-codex', modelCount: 1 },
       hints: ['認証状態を確認してください。'],

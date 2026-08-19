@@ -49,15 +49,20 @@ export interface VersionCheck {
   readonly status: 'compatible' | 'incompatible' | 'unknown'
 }
 
+export interface PlatformCheck {
+  readonly supported: readonly string[]
+  readonly installed: string
+  readonly status: 'compatible' | 'incompatible'
+}
+
 export interface DoctorReportV1 {
   readonly schemaVersion: 1
   readonly overall: 'compatible' | 'incompatible' | 'degraded' | 'unknown'
   readonly package: { readonly name: string; readonly version: string }
   readonly runtime: {
+    readonly platform: PlatformCheck
     readonly node: VersionCheck
-    readonly dshLlm: VersionCheck
-    readonly dshPiAi: VersionCheck
-    readonly piAi: VersionCheck
+    readonly packages: Readonly<Record<string, VersionCheck>>
   }
   readonly credentialStore: CredentialVaultInspection
   readonly catalog: {
