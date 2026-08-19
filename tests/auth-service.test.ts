@@ -77,6 +77,7 @@ class OAuthProbe implements OAuthAuth {
   loginCalls = 0
   refreshCompletions = 0
   refreshCalls = 0
+  honorRefreshSignal = true
   toAuthCalls = 0
   refreshSignal: AbortSignal | undefined
   loginError: unknown
@@ -108,7 +109,7 @@ class OAuthProbe implements OAuthAuth {
     this.refreshSignal = signal
     this.refreshStarted.resolve()
     if (this.refreshGate !== undefined) {
-      await waitForGate(this.refreshGate, signal)
+      await waitForGate(this.refreshGate, this.honorRefreshSignal ? signal : undefined)
     }
     if (this.refreshError !== undefined) {
       throw this.refreshError
@@ -358,6 +359,29 @@ describe('PiAiCodexAuthService', () => {
     }).status()).rejects.toBe(programmingError)
   })
 
+  it('reports refresh expected throughout the bounded pre-expiry skew window', async () => {
+    const now = 1_800_000_000_000
+    const withinSkew = credential(now + 30_000)
+    const outsideSkew = credential(now + 30_001)
+
+    await expect(new PiAiCodexAuthService({
+      now: () => now,
+      provider: providerWithOAuth(new OAuthProbe(withinSkew, credential(now + 60_000))),
+      vault: new MemoryCredentialVault(fromPiAiOAuthCredential(withinSkew)),
+    }).status()).resolves.toEqual({
+      state: 'signed-in',
+      refreshExpected: true,
+    })
+    await expect(new PiAiCodexAuthService({
+      now: () => now,
+      provider: providerWithOAuth(new OAuthProbe(outsideSkew, credential(now + 60_000))),
+      vault: new MemoryCredentialVault(fromPiAiOAuthCredential(outsideSkew)),
+    }).status()).resolves.toEqual({
+      state: 'signed-in',
+      refreshExpected: false,
+    })
+  })
+
   it('fails missing auth before refresh or request-auth derivation and ignores ambient keys', async () => {
     const ambient = `ACCESS_SENTINEL_${randomUUID()}`
     const original = process.env['OPENAI_API_KEY']
@@ -402,6 +426,25 @@ describe('PiAiCodexAuthService', () => {
     expect(auth.bearerToken).toBe(current.access)
     expect(probe.refreshCalls).toBe(0)
     expect(probe.toAuthCalls).toBe(1)
+  })
+
+  it('refreshes inside the pre-expiry skew window', async () => {
+    const now = 1_800_000_000_000
+    const expiring = credential(now + 30_000)
+    const refreshed = credential(now + 60_000, 2)
+    const probe = new OAuthProbe(expiring, refreshed)
+    const vault = new MemoryCredentialVault(fromPiAiOAuthCredential(expiring))
+    const service = new PiAiCodexAuthService({
+      now: () => now,
+      provider: providerWithOAuth(probe),
+      vault,
+    })
+
+    await expect(service.resolveRequestAuth()).resolves.toEqual({
+      bearerToken: refreshed.access,
+    })
+    expect(probe.refreshCalls).toBe(1)
+    expect(vault.peek()).toEqual(fromPiAiOAuthCredential(refreshed))
   })
 
   it.each([
@@ -484,12 +527,12 @@ describe('PiAiCodexAuthService', () => {
     expect(vault.peek()).toBeUndefined()
   })
 
-  it('maps refresh failure to a safe reauth error and preserves the stored credential', async () => {
+  it('maps an unclassified provider refresh failure safely without claiming reauthentication', async () => {
     const now = 1_800_000_000_000
     const expired = credential(now - 1)
     const sentinel = `REFRESH_SENTINEL_${randomUUID()}`
     const probe = new OAuthProbe(expired, credential(now + 60_000))
-    probe.refreshError = new Error(sentinel)
+    probe.refreshError = new Error(`invalid_grant ${sentinel}`)
     const vault = new MemoryCredentialVault(fromPiAiOAuthCredential(expired))
     const service = new PiAiCodexAuthService({
       now: () => now,
@@ -505,9 +548,48 @@ describe('PiAiCodexAuthService', () => {
     }
 
     expect(failure).toBeInstanceOf(CodexError)
-    expect(failure).toMatchObject({ code: 'CODEX_REAUTH_REQUIRED' })
+    expect(failure).toMatchObject({
+      code: 'CODEX_AUTH_REFRESH_FAILED',
+      safeDetails: { reason: 'provider_unclassified' },
+    })
     expect(printable(failure)).not.toContain(sentinel)
     expect(vault.peek()).toEqual(fromPiAiOAuthCredential(expired))
+  })
+
+  it('bounds safe lock-contention retries by the shared refresh deadline', async () => {
+    const now = 1_800_000_000_000
+    const expired = credential(now - 1)
+    const sentinel = `PATH_SENTINEL_${randomUUID()}`
+    const probe = new OAuthProbe(expired, credential(now + 60_000))
+    const vault = new MemoryCredentialVault(fromPiAiOAuthCredential(expired))
+    vault.modifyError = new CodexError(
+      'Credential storage is invalid.',
+      'CODEX_AUTH_STORAGE_INVALID',
+      {
+        cause: new Error(sentinel),
+        safeDetails: { reason: 'lock_failed' },
+      },
+    )
+    const service = new PiAiCodexAuthService({
+      now: () => now,
+      provider: providerWithOAuth(probe),
+      refreshTimeoutMs: 120,
+      vault,
+    })
+
+    let failure: unknown
+    try {
+      await service.resolveRequestAuth()
+    } catch (error) {
+      failure = error
+    }
+    expect(failure).toMatchObject({
+      code: 'CODEX_AUTH_REFRESH_FAILED',
+      safeDetails: { reason: 'deadline' },
+    })
+    expect(printable(failure)).not.toContain(sentinel)
+    expect(vault.modifyCalls).toBeGreaterThan(1)
+    expect(probe.refreshCalls).toBe(0)
   })
 
   it('releases the vault writer after the bounded refresh deadline', async () => {
@@ -516,6 +598,7 @@ describe('PiAiCodexAuthService', () => {
     const probe = new OAuthProbe(expired, credential(now + 60_000))
     const gate = deferred<void>()
     probe.refreshGate = gate.promise
+    probe.honorRefreshSignal = false
     const vault = new MemoryCredentialVault(fromPiAiOAuthCredential(expired))
     const service = new PiAiCodexAuthService({
       now: () => now,
@@ -525,7 +608,8 @@ describe('PiAiCodexAuthService', () => {
     })
 
     await expect(service.resolveRequestAuth()).rejects.toMatchObject({
-      code: 'CODEX_REAUTH_REQUIRED',
+      code: 'CODEX_AUTH_REFRESH_FAILED',
+      safeDetails: { reason: 'deadline' },
     })
     expect(vault.activeWriters).toBe(0)
     expect(vault.peek()).toEqual(fromPiAiOAuthCredential(expired))
@@ -538,11 +622,12 @@ describe('PiAiCodexAuthService', () => {
     expect(vault.peek()).toBeUndefined()
   })
 
-  it('passes cancellation into refresh and returns a fixed AbortError', async () => {
+  it('cancels one waiter without cancelling or duplicating its shared refresh', async () => {
     const now = 1_800_000_000_000
     const expired = credential(now - 1)
     const probe = new OAuthProbe(expired, credential(now + 60_000))
-    probe.refreshGate = new Promise<void>(() => undefined)
+    const gate = deferred<void>()
+    probe.refreshGate = gate.promise
     const vault = new MemoryCredentialVault(fromPiAiOAuthCredential(expired))
     vault.wrapOperationErrors = true
     const service = new PiAiCodexAuthService({
@@ -552,15 +637,22 @@ describe('PiAiCodexAuthService', () => {
     })
     const controller = new AbortController()
 
-    const resolving = service.resolveRequestAuth(controller.signal)
+    const cancelledWaiter = service.resolveRequestAuth(controller.signal)
     await probe.refreshStarted.promise
+    const survivingWaiter = service.resolveRequestAuth()
     controller.abort(new Error(`ACCESS_SENTINEL_${randomUUID()}`))
 
-    await expect(resolving).rejects.toMatchObject({
+    await expect(cancelledWaiter).rejects.toMatchObject({
       name: 'AbortError',
       message: 'The operation was aborted.',
     })
-    expect(probe.refreshSignal).toBe(controller.signal)
+    expect(probe.refreshSignal).not.toBe(controller.signal)
+    expect(probe.refreshSignal?.aborted).toBe(false)
+    gate.resolve()
+    await expect(survivingWaiter).resolves.toEqual({
+      bearerToken: probe.refreshedCredential.access,
+    })
+    expect(probe.refreshCalls).toBe(1)
   })
 
   it('preserves safe storage errors from logout without a ModelsError wrapper', async () => {
@@ -674,6 +766,18 @@ describe('PiAiCodexAuthService', () => {
     })).toThrowError(expect.objectContaining({
       code: 'CODEX_UPSTREAM_PROTOCOL',
       safeDetails: { reason: 'refresh_timeout' },
+    }))
+  })
+
+  it('rejects a negative refresh skew', () => {
+    const now = 1_800_000_000_000
+    expect(() => new PiAiCodexAuthService({
+      provider: providerWithOAuth(new OAuthProbe(credential(now + 1), credential(now + 2))),
+      refreshSkewMs: -1,
+      vault: new MemoryCredentialVault(),
+    })).toThrowError(expect.objectContaining({
+      code: 'CODEX_UPSTREAM_PROTOCOL',
+      safeDetails: { reason: 'refresh_skew' },
     }))
   })
 })

@@ -88,10 +88,11 @@ export type CodexAuthStatus =
   | { readonly state: 'insecure-storage'; readonly code: string }
 ```
 
-Status is local and offline. It must not claim that the upstream session is valid. An expired local
-access token still reports `signed-in` with `refreshExpected: true`; the next model request performs
-the refresh. Known storage failures project to the two storage states; an unexpected programming or
-runtime failure rejects instead of being mislabeled as invalid storage.
+Status is local and offline. It must not claim that the upstream session is valid. A local access
+token that is expired or expires within 30 seconds reports `signed-in` with
+`refreshExpected: true`; the next model request performs the refresh. Known storage failures project
+to the two storage states; an unexpected programming or runtime failure rejects instead of being
+mislabeled as invalid storage.
 
 ## 6. Authentication service
 
@@ -109,18 +110,22 @@ export interface CodexAuthService {
 ```
 
 The concrete pi-ai adapter narrows `interaction` to the published `AuthInteraction` type internally.
-Request-auth refresh is bounded to 30 seconds and cancellation releases the credential lock even
-when the pinned provider does not settle its refresh promise. The current request-auth projection
-accepts only the exact access-token `apiKey`; additional upstream auth fields fail explicitly.
+Request-auth refresh uses a 30-second pre-expiry window and is bounded to 30 seconds. Concurrent
+callers in one service instance share a flight for the same credential generation. A caller's
+cancellation ends only that caller's wait; the shared deadline releases the credential lock even
+when the pinned provider does not settle its refresh promise. Safe file-lock contention is retried
+while the credential remains stale and the shared deadline remains open. The current request-auth
+projection accepts only the exact access-token `apiKey`; additional upstream auth fields fail
+explicitly.
 Do not export `CodexRequestAuth` from the package root.
 
 ## 7. DSH request integration
 
 The internal DSH adapter resolves `CodexAuthService.resolveRequestAuth(options.signal)` exactly once
-before constructing the pi-ai stream. The returned bearer token is retained only by that
-request-local delegate and is never stored in provider metadata or a public service. Missing or
-expired authentication reaches the DSH failure vocabulary with its stable `CODEX_` code before
-provider I/O.
+when the stream is first consumed. The returned bearer token is retained only by that request-local
+delegate and is never stored in provider metadata or a public service. Missing or refresh-required
+authentication reaches the DSH failure vocabulary with its stable `CODEX_` code before provider
+I/O.
 
 The fixed provider profile uses the pi-ai catalog, DSH's normal retry policy, and a 300-second stream
 idle timeout. Unsupported reasoning effort and content combinations remain DSH/pi-ai failures; the
@@ -132,6 +137,7 @@ plugin does not clamp or discard them.
 export type CodexErrorCode =
   | 'CODEX_AUTH_REQUIRED'
   | 'CODEX_REAUTH_REQUIRED'
+  | 'CODEX_AUTH_REFRESH_FAILED'
   | 'CODEX_AUTH_STORAGE_INVALID'
   | 'CODEX_AUTH_STORAGE_INSECURE'
   | 'CODEX_AUTH_LOGIN_FAILED'
@@ -150,6 +156,12 @@ supported without serializing their contents. `safeDetails` is a detached, froze
 JSON primitives. Nested objects and arrays are intentionally rejected so callers cannot mutate a
 diagnostic after error construction or hide an unbounded secret-bearing object behind a shallow
 freeze.
+
+`CODEX_AUTH_REFRESH_FAILED` means refresh did not produce a usable credential but the public
+upstream contract did not prove that interactive login is required. Its safe `reason` distinguishes
+`deadline` and `provider_unclassified` without inspecting an upstream exception message.
+`CODEX_REAUTH_REQUIRED` is reserved for an explicitly classified permanent authentication
+rejection.
 
 ## 9. CLI JSON
 

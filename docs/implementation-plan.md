@@ -83,8 +83,11 @@ Acceptance:
 
 - provider-specific JSON fields round-trip;
 - missing credentials fail before model network I/O;
-- expired credentials refresh under the vault lock;
-- refresh failures map to a safe reauth-required error;
+- credentials inside the bounded pre-expiry window refresh under the vault lock;
+- same-generation refresh is shared within one service and recovered safely across service
+  instances after lock contention;
+- caller cancellation, refresh deadline, and unclassified provider failure remain distinct and
+  secret-safe;
 - ambient OpenAI API keys are not consulted.
 
 ## Milestone 4 — DSH LLM integration

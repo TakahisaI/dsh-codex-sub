@@ -262,6 +262,7 @@ describe('Codex DSH adapter', () => {
   it.each([
     ['CODEX_AUTH_REQUIRED', 'ChatGPT authentication is required.'],
     ['CODEX_REAUTH_REQUIRED', 'ChatGPT authentication must be renewed.'],
+    ['CODEX_AUTH_REFRESH_FAILED', 'ChatGPT authentication could not be refreshed.'],
   ] as const)('fails with %s before provider streaming', async (code, message) => {
     const faux = fauxProvider({
       provider: PROVIDER_ID,

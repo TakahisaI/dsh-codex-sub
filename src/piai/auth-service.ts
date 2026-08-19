@@ -25,6 +25,9 @@ import { CodexError, isCodexError } from '../core/errors.js'
 import { PiAiCredentialStore } from './credential-store.js'
 
 export const DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 30_000
+export const DEFAULT_OAUTH_REFRESH_SKEW_MS = 30_000
+
+const REFRESH_LOCK_RETRY_DELAY_MS = 50
 
 const OAUTH_CALLBACK_HOST_ENVIRONMENT_VARIABLE = 'PI_OAUTH_CALLBACK_HOST'
 const SAFE_OAUTH_CALLBACK_HOSTS = new Set(['127.0.0.1', '::1'])
@@ -41,6 +44,7 @@ const NO_AMBIENT_AUTH_CONTEXT: AuthContext = Object.freeze({
 export interface PiAiCodexAuthServiceOptions {
   readonly vault: CodexCredentialVault
   readonly now?: () => number
+  readonly refreshSkewMs?: number
   readonly refreshTimeoutMs?: number
   /** Published-provider injection seam for offline contract tests. */
   readonly provider?: Provider
@@ -50,9 +54,10 @@ function authRequired(): CodexError {
   return new CodexError('ChatGPT authentication is required.', 'CODEX_AUTH_REQUIRED')
 }
 
-function reauthRequired(cause?: unknown): CodexError {
-  return new CodexError('ChatGPT authentication must be renewed.', 'CODEX_REAUTH_REQUIRED', {
+function refreshFailed(reason: string, cause?: unknown): CodexError {
+  return new CodexError('ChatGPT authentication could not be refreshed.', 'CODEX_AUTH_REFRESH_FAILED', {
     cause,
+    safeDetails: { reason },
   })
 }
 
@@ -68,14 +73,6 @@ function upstreamProtocol(reason: string, cause?: unknown): CodexError {
     cause,
     safeDetails: { reason },
   })
-}
-
-class RefreshCancelled extends CodexError {
-  constructor() {
-    super('OAuth refresh was cancelled.', 'CODEX_UPSTREAM_PROTOCOL', {
-      safeDetails: { reason: 'refresh_cancelled' },
-    })
-  }
 }
 
 function abortFailure(): DOMException {
@@ -144,24 +141,14 @@ function projectErrorFromModels(error: unknown): CodexError | undefined {
     : undefined
 }
 
-function refreshWithDeadline(
-  oauth: OAuthAuth,
-  credential: OAuthCredential,
-  signal: AbortSignal | undefined,
-  timeoutMs: number,
-  markCancelled: () => void,
-): Promise<OAuthCredential> {
-  return new Promise<OAuthCredential>((resolve, reject) => {
+function waitForCoordinator<T>(operation: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
     let settled = false
-    let timeout: ReturnType<typeof setTimeout> | undefined
 
     const cleanup = (): void => {
-      if (timeout !== undefined) {
-        clearTimeout(timeout)
-      }
-      signal?.removeEventListener('abort', onAbort)
+      signal.removeEventListener('abort', onAbort)
     }
-    const resolveOnce = (value: OAuthCredential): void => {
+    const resolveOnce = (value: T): void => {
       if (!settled) {
         settled = true
         cleanup()
@@ -175,36 +162,139 @@ function refreshWithDeadline(
         reject(error)
       }
     }
-    const cancel = (): void => {
-      markCancelled()
-      rejectOnce(new RefreshCancelled())
-    }
     const onAbort = (): void => {
-      cancel()
+      rejectOnce(refreshFailed('deadline'))
     }
 
-    if (signal?.aborted === true) {
-      cancel()
+    if (signal.aborted) {
+      onAbort()
       return
     }
-    signal?.addEventListener('abort', onAbort, { once: true })
-    timeout = setTimeout(() => {
-      rejectOnce(reauthRequired())
-    }, timeoutMs)
+    signal.addEventListener('abort', onAbort, { once: true })
+    void operation.then(resolveOnce, rejectOnce)
+  })
+}
 
-    const rejectRefresh = (error: unknown): void => {
-      if (isAbortFailure(error, signal)) {
-        cancel()
-      } else {
-        rejectOnce(reauthRequired(error))
+function waitForCaller<T>(operation: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (signal === undefined) {
+    return operation
+  }
+  return new Promise<T>((resolve, reject) => {
+    let settled = false
+
+    const cleanup = (): void => {
+      signal.removeEventListener('abort', onAbort)
+    }
+    const resolveOnce = (value: T): void => {
+      if (!settled) {
+        settled = true
+        cleanup()
+        resolve(value)
       }
     }
-    try {
-      void oauth.refresh(credential, signal).then(resolveOnce, rejectRefresh)
-    } catch (error) {
-      rejectRefresh(error)
+    const rejectOnce = (error: unknown): void => {
+      if (!settled) {
+        settled = true
+        cleanup()
+        reject(error)
+      }
     }
+    const onAbort = (): void => {
+      rejectOnce(abortFailure())
+    }
+
+    if (signal.aborted) {
+      onAbort()
+      return
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    void operation.then(resolveOnce, rejectOnce)
   })
+}
+
+function waitForRetry(signal: AbortSignal): Promise<void> {
+  const delay = new Promise<void>((resolve) => {
+    setTimeout(resolve, REFRESH_LOCK_RETRY_DELAY_MS)
+  })
+  return waitForCoordinator(delay, signal)
+}
+
+async function refreshCredential(
+  oauth: OAuthAuth,
+  credential: OAuthCredential,
+  signal: AbortSignal,
+): Promise<OAuthCredential> {
+  try {
+    let refresh: Promise<OAuthCredential>
+    try {
+      refresh = oauth.refresh(credential, signal)
+    } catch (error) {
+      throw refreshFailed('provider_unclassified', error)
+    }
+    return await waitForCoordinator(refresh, signal)
+  } catch (error) {
+    if (signal.aborted) {
+      throw refreshFailed('deadline')
+    }
+    if (isCodexError(error) && error.code === 'CODEX_REAUTH_REQUIRED') {
+      throw error
+    }
+    if (isCodexError(error) && error.code === 'CODEX_AUTH_REFRESH_FAILED') {
+      throw error
+    }
+    throw refreshFailed('provider_unclassified', error)
+  }
+}
+
+function sameCredentialValue(left: unknown, right: unknown): boolean {
+  if (Object.is(left, right)) {
+    return true
+  }
+  if (Array.isArray(left) || Array.isArray(right)) {
+    return Array.isArray(left)
+      && Array.isArray(right)
+      && left.length === right.length
+      && left.every((value, index) => sameCredentialValue(value, right[index]))
+  }
+  if (
+    left === null
+    || right === null
+    || typeof left !== 'object'
+    || typeof right !== 'object'
+  ) {
+    return false
+  }
+
+  const leftRecord = left as Readonly<Record<string, unknown>>
+  const rightRecord = right as Readonly<Record<string, unknown>>
+  const leftKeys = Object.keys(leftRecord).sort()
+  const rightKeys = Object.keys(rightRecord).sort()
+  return leftKeys.length === rightKeys.length
+    && leftKeys.every((key, index) => (
+      key === rightKeys[index]
+      && sameCredentialValue(leftRecord[key], rightRecord[key])
+    ))
+}
+
+function sameCredentialGeneration(
+  left: OAuthCredential,
+  right: OAuthCredential,
+): boolean {
+  return sameCredentialValue(left, right)
+}
+
+function refreshIsExpected(
+  credential: OAuthCredential,
+  now: number,
+  skewMs: number,
+): boolean {
+  return credential.expires - now <= skewMs
+}
+
+function isLockFailure(error: unknown): boolean {
+  return isCodexError(error)
+    && error.code === 'CODEX_AUTH_STORAGE_INVALID'
+    && error.safeDetails?.['reason'] === 'lock_failed'
 }
 
 function readOwnDataProperty(value: object, key: string): unknown {
@@ -326,13 +416,20 @@ function statusFromStorageError(error: unknown): CodexAuthStatus {
   throw error
 }
 
+interface RefreshFlight {
+  readonly credential: OAuthCredential
+  readonly promise: Promise<OAuthCredential>
+}
+
 export class PiAiCodexAuthService implements CodexAuthServiceContract {
   readonly #models: Models
   readonly #now: () => number
   readonly #oauth: OAuthAuth
+  readonly #refreshSkewMs: number
   readonly #refreshTimeoutMs: number
   readonly #store: PiAiCredentialStore
   readonly #vault: CodexCredentialVault
+  #refreshFlight: RefreshFlight | undefined
 
   constructor(options: PiAiCodexAuthServiceOptions) {
     const provider = options.provider ?? openaiCodexProvider()
@@ -348,7 +445,11 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
     this.#store = new PiAiCredentialStore(options.vault)
     this.#oauth = provider.auth.oauth
     this.#now = options.now ?? Date.now
+    this.#refreshSkewMs = options.refreshSkewMs ?? DEFAULT_OAUTH_REFRESH_SKEW_MS
     this.#refreshTimeoutMs = options.refreshTimeoutMs ?? DEFAULT_OAUTH_REFRESH_TIMEOUT_MS
+    if (!Number.isSafeInteger(this.#refreshSkewMs) || this.#refreshSkewMs < 0) {
+      throw upstreamProtocol('refresh_skew')
+    }
     if (!Number.isSafeInteger(this.#refreshTimeoutMs) || this.#refreshTimeoutMs <= 0) {
       throw upstreamProtocol('refresh_timeout')
     }
@@ -400,7 +501,7 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
       }
       return Object.freeze({
         state: 'signed-in',
-        refreshExpected: document.credential.expiresAt <= this.#now(),
+        refreshExpected: document.credential.expiresAt - this.#now() <= this.#refreshSkewMs,
       })
     } catch (error) {
       return statusFromStorageError(error)
@@ -413,46 +514,11 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
     if (credential === undefined) {
       throw authRequired()
     }
+    throwIfAborted(signal)
     let oauthCredential = requireOAuthCredential(credential)
 
-    if (oauthCredential.expires <= this.#now()) {
-      let refreshCancelled = false
-      try {
-        credential = await this.#store.modify(PROVIDER_ID, async (current) => {
-          if (signal?.aborted === true) {
-            refreshCancelled = true
-            throw new RefreshCancelled()
-          }
-          if (current === undefined) {
-            return undefined
-          }
-          const currentOAuth = requireOAuthCredential(current)
-          if (currentOAuth.expires > this.#now()) {
-            return undefined
-          }
-          return refreshWithDeadline(
-            this.#oauth,
-            currentOAuth,
-            signal,
-            this.#refreshTimeoutMs,
-            () => {
-              refreshCancelled = true
-            },
-          )
-        })
-      } catch (error) {
-        if (refreshCancelled) {
-          throw abortFailure()
-        }
-        throw error
-      }
-      if (credential === undefined) {
-        throw authRequired()
-      }
-      oauthCredential = requireOAuthCredential(credential)
-      if (oauthCredential.expires <= this.#now()) {
-        throw reauthRequired()
-      }
+    if (this.#refreshIsExpected(oauthCredential)) {
+      oauthCredential = await this.#waitForRefresh(oauthCredential, signal)
     }
 
     throwIfAborted(signal)
@@ -470,5 +536,108 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
 
   async logout(): Promise<void> {
     await this.#store.delete(PROVIDER_ID)
+  }
+
+  #refreshIsExpected(credential: OAuthCredential): boolean {
+    return refreshIsExpected(credential, this.#now(), this.#refreshSkewMs)
+  }
+
+  async #waitForRefresh(
+    credential: OAuthCredential,
+    signal?: AbortSignal,
+  ): Promise<OAuthCredential> {
+    let flight = this.#refreshFlight
+    if (flight === undefined || !sameCredentialGeneration(flight.credential, credential)) {
+      const promise = this.#runRefresh(credential)
+      flight = { credential, promise }
+      this.#refreshFlight = flight
+      const clearFlight = (): void => {
+        if (this.#refreshFlight === flight) {
+          this.#refreshFlight = undefined
+        }
+      }
+      void promise.then(clearFlight, clearFlight)
+    }
+    return waitForCaller(flight.promise, signal)
+  }
+
+  async #runRefresh(initial: OAuthCredential): Promise<OAuthCredential> {
+    const coordinator = new AbortController()
+    const timeout = setTimeout(() => {
+      coordinator.abort()
+    }, this.#refreshTimeoutMs)
+    let expected = initial
+
+    try {
+      for (;;) {
+        let credential: OAuthCredential
+        try {
+          const stored = await waitForCoordinator(
+            this.#store.modify(PROVIDER_ID, async (current) => {
+              if (coordinator.signal.aborted) {
+                throw refreshFailed('deadline')
+              }
+              if (current === undefined) {
+                return undefined
+              }
+              const currentOAuth = requireOAuthCredential(current)
+              if (!this.#refreshIsExpected(currentOAuth)) {
+                return undefined
+              }
+              if (!sameCredentialGeneration(currentOAuth, expected)) {
+                return undefined
+              }
+
+              const refreshed = await refreshCredential(
+                this.#oauth,
+                currentOAuth,
+                coordinator.signal,
+              )
+              if (this.#refreshIsExpected(refreshed)) {
+                throw upstreamProtocol('refresh_credential_stale')
+              }
+              return refreshed
+            }),
+            coordinator.signal,
+          )
+          if (stored === undefined) {
+            throw authRequired()
+          }
+          credential = requireOAuthCredential(stored)
+        } catch (error) {
+          if (coordinator.signal.aborted) {
+            throw refreshFailed('deadline')
+          }
+          if (!isLockFailure(error)) {
+            throw error
+          }
+
+          const latest = await waitForCoordinator(
+            this.#store.read(PROVIDER_ID),
+            coordinator.signal,
+          )
+          if (latest === undefined) {
+            throw authRequired()
+          }
+          const latestOAuth = requireOAuthCredential(latest)
+          if (!this.#refreshIsExpected(latestOAuth)) {
+            return latestOAuth
+          }
+          expected = latestOAuth
+          await waitForRetry(coordinator.signal)
+          continue
+        }
+
+        if (!this.#refreshIsExpected(credential)) {
+          return credential
+        }
+        if (sameCredentialGeneration(credential, expected)) {
+          throw upstreamProtocol('refresh_credential_stale')
+        }
+        expected = credential
+      }
+    } finally {
+      clearTimeout(timeout)
+    }
   }
 }
