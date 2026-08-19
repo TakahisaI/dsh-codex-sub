@@ -59,13 +59,21 @@ const releaseWorkflowPath = enabledWorkflow
   : '.github/workflows/release.yml.disabled'
 const releaseNotesPath = `docs/releases/${String(packageJson.version)}.md`
 const releaseNotesExists = await exists(releaseNotesPath)
-const [ciWorkflow, releaseWorkflow, compatibility, releaseNotesText] = await Promise.all([
+const [
+  bootstrapReleaseRecord,
+  ciWorkflow,
+  releaseWorkflow,
+  compatibility,
+  releaseNotesText,
+] = await Promise.all([
+  readText('docs/releases/0.1.0-alpha.0.md'),
   readText('.github/workflows/ci.yml'),
   readText(releaseWorkflowPath),
   readText('compatibility.json').then((text) => JSON.parse(text)),
   releaseNotesExists ? readText(releaseNotesPath) : undefined,
 ])
 validateReleaseState({
+  bootstrapReleaseRecord,
   ciWorkflow,
   compatibility,
   disabledWorkflowExists: disabledWorkflow,

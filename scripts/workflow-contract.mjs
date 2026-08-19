@@ -74,7 +74,7 @@ function assertExactJobSet(workflow, expected, label) {
   const sortedExpected = [...expected].sort()
   invariant(
     JSON.stringify(actual) === JSON.stringify(sortedExpected),
-    `${label} job set did not match the verification-only contract.`,
+    `${label} job set did not match the reviewed contract.`,
   )
 }
 
@@ -228,6 +228,13 @@ function assertPinnedActions(workflow, label) {
   )
 }
 
+function assertNoCheckoutOverrides(workflow, label) {
+  invariant(
+    !/^\s+(?:ref|repository):\s*/mu.test(workflow),
+    `${label} must not override the checked-out ref or repository.`,
+  )
+}
+
 function assertMatrix(job, expected, label) {
   const actual = matrixCells(job).sort()
   const sortedExpected = [...expected].sort()
@@ -312,6 +319,31 @@ function assertArtifactFinalizer(job, label) {
   assertNoArtifactMutation(job, label)
 }
 
+function permissionDeclarations(workflow) {
+  return workflow.split(/\r?\n/u)
+    .map((line, index) => ({ index, line }))
+    .filter(({ line }) => /^\s*(?:permissions|'permissions'|"permissions")\s*:/u.test(line))
+}
+
+function assertPermissionBlock(workflow, declaration, expectedEntries, label) {
+  const lines = workflow.split(/\r?\n/u)
+  const parentIndent = indentation(declaration.line)
+  invariant(
+    declaration.line.trim() === 'permissions:',
+    `${label} permissions must use the reviewed block form.`,
+  )
+  const end = blockEnd(lines, declaration.index + 1, parentIndent)
+  const entries = lines.slice(declaration.index + 1, end).filter(isContent)
+  invariant(
+    entries.length === expectedEntries.length
+      && entries.every((entry, index) => (
+        entry.trim() === expectedEntries[index]
+          && indentation(entry) === parentIndent + 2
+      )),
+    `${label} permissions must use the reviewed block form.`,
+  )
+}
+
 function assertNoReleaseGateOverride(job, label) {
   invariant(
     !/^\s*(?:-\s*)?(?:(?:if|continue-on-error)|'(?:if|continue-on-error)'|"(?:if|continue-on-error)")\s*:/mu.test(job),
@@ -319,8 +351,23 @@ function assertNoReleaseGateOverride(job, label) {
   )
 }
 
+function assertReleaseGateChain(workflow, releaseMode) {
+  const jobs = [
+    ['release-ref', 'Release ref verification'],
+    ['source-checks', 'Release source-checks job'],
+    ['candidate', 'Release candidate job'],
+    ['candidate-install', 'Release candidate-install job'],
+    ['candidate-ready', 'Release candidate-ready job'],
+  ]
+  if (releaseMode === 'staged') {
+    jobs.push(['stage-publish', 'Release staging job'])
+  }
+  for (const [jobId, label] of jobs) {
+    assertNoReleaseGateOverride(jobBody(workflow, jobId), label)
+  }
+}
+
 function assertReleaseRefGuard(job) {
-  assertNoReleaseGateOverride(job, 'Release ref verification')
   invariant(
     /^          RELEASE_REF:\s*\$\{\{ github\.ref \}\}\s*$/mu.test(job),
     'Release ref verification must read github.ref explicitly.',
@@ -333,7 +380,6 @@ function assertReleaseRefGuard(job) {
 }
 
 function assertReleaseCandidateDependencies(job) {
-  assertNoReleaseGateOverride(job, 'Release candidate job')
   invariant(
     job.includes('    needs:\n      - release-ref\n      - source-checks\n'),
     'Release candidate job must depend on source-checks and release-ref.',
@@ -341,10 +387,7 @@ function assertReleaseCandidateDependencies(job) {
 }
 
 function assertReadOnlyWorkflowPermissions(workflow, label) {
-  const lines = workflow.split(/\r?\n/u)
-  const declarations = lines
-    .map((line, index) => ({ index, line }))
-    .filter(({ line }) => /^\s*(?:permissions|'permissions'|"permissions")\s*:/u.test(line))
+  const declarations = permissionDeclarations(workflow)
   const workflowDeclarations = declarations.filter(({ line }) => indentation(line) === 0)
   invariant(
     workflowDeclarations.length === 1,
@@ -352,26 +395,135 @@ function assertReadOnlyWorkflowPermissions(workflow, label) {
   )
 
   for (const declaration of declarations) {
-    const parentIndent = indentation(declaration.line)
-    invariant(
-      declaration.line.trim() === 'permissions:',
-      `${label} permissions must use a block containing only contents: read.`,
-    )
-    const end = blockEnd(lines, declaration.index + 1, parentIndent)
-    const entries = lines.slice(declaration.index + 1, end).filter(isContent)
-    invariant(
-      entries.length === 1
-        && entries[0]?.trim() === 'contents: read'
-        && indentation(entries[0]) === parentIndent + 2,
-      `${label} permissions must use a block containing only contents: read.`,
-    )
+    try {
+      assertPermissionBlock(workflow, declaration, ['contents: read'], label)
+    } catch {
+      throw new Error(`${label} permissions must use a block containing only contents: read.`)
+    }
   }
+}
+
+function assertReleaseWorkflowPermissions(workflow, stageJob) {
+  const declarations = permissionDeclarations(workflow)
+  const workflowDeclarations = declarations.filter(({ line }) => indentation(line) === 0)
+  invariant(
+    workflowDeclarations.length === 1 && declarations.length === 2,
+    'Release workflow must have one read-only default and one stage-only OIDC permission block.',
+  )
+  const workflowDeclaration = workflowDeclarations[0]
+  invariant(workflowDeclaration !== undefined, 'Release workflow permissions were missing.')
+  assertPermissionBlock(
+    workflow,
+    workflowDeclaration,
+    ['contents: read'],
+    'Release workflow default',
+  )
+
+  const stageDeclarations = permissionDeclarations(stageJob)
+  invariant(
+    stageDeclarations.length === 1,
+    'Release staging job must declare exactly one OIDC permission block.',
+  )
+  const stageDeclaration = stageDeclarations[0]
+  invariant(stageDeclaration !== undefined, 'Release staging permissions were missing.')
+  assertPermissionBlock(
+    stageJob,
+    stageDeclaration,
+    ['contents: read', 'id-token: write'],
+    'Release staging job',
+  )
+}
+
+function assertTrustedPublishingVersion(workflow) {
+  const lines = workflow.split(/\r?\n/u)
+  const envIndex = lines.findIndex((line) => line === 'env:')
+  invariant(envIndex >= 0, 'Release workflow npm CLI version pin was missing.')
+  const envEnd = blockEnd(lines, envIndex + 1, 0)
+  const entries = lines.slice(envIndex + 1, envEnd).filter(isContent)
+  invariant(
+    entries.length === 1 && entries[0] === '  TRUSTED_PUBLISHING_NPM_VERSION: 11.15.0',
+    'Release workflow must pin the reviewed npm CLI version exactly once.',
+  )
+}
+
+function assertStagePublisher(job) {
+  const installCommand = 'npm install --global "npm@$TRUSTED_PUBLISHING_NPM_VERSION"\n'
+    + '          --registry=https://registry.npmjs.org'
+  const stageCommand = 'npm stage publish "${{ steps.release-artifact.outputs.package-tarball }}"\n'
+    + '          --tag alpha\n'
+    + '          --access public\n'
+    + '          --registry=https://registry.npmjs.org'
+  invariant(/^    needs: candidate-ready$/mu.test(job), 'Release staging job must depend on candidate-ready.')
+  invariant(
+    count(job, PINNED_ACTIONS.downloadArtifact) === 1,
+    'Release staging job must download the candidate artifact exactly once.',
+  )
+  invariant(
+    count(job, `name: ${RELEASE_ARTIFACT_NAME}`) === 1,
+    'Release staging job must download the canonical workflow artifact.',
+  )
+  invariant(
+    count(job, 'node scripts/release-artifact.mjs verify') === 1
+      && count(job, '--github-output') === 1,
+    'Release staging job must verify and resolve the downloaded candidate exactly once.',
+  )
+  invariant(
+    count(job, installCommand) === 1
+      && count(job, 'test "$(npm --version)" = "$TRUSTED_PUBLISHING_NPM_VERSION"') === 1,
+    'Release staging job must install and verify the reviewed npm CLI version.',
+  )
+  invariant(
+    count(job, stageCommand) === 1,
+    'Release staging job must stage the exact candidate with reviewed registry metadata.',
+  )
+  assertNoArtifactMutation(job, 'Release staging job')
+
+  const expected = [
+    '    name: Stage exact candidate for maintainer approval',
+    '    needs: candidate-ready',
+    '    runs-on: ubuntu-latest',
+    '    permissions:',
+    '      contents: read',
+    '      id-token: write',
+    '    steps:',
+    `      - uses: ${PINNED_ACTIONS.checkout}`,
+    `      - uses: ${PINNED_ACTIONS.setupNode}`,
+    '        with:',
+    '          node-version: 24',
+    `      - uses: ${PINNED_ACTIONS.downloadArtifact}`,
+    '        with:',
+    `          name: ${RELEASE_ARTIFACT_NAME}`,
+    '          path: ${{ runner.temp }}/release-artifact',
+    '      - id: release-artifact',
+    '        run: >-',
+    '          node scripts/release-artifact.mjs verify',
+    '          --directory "$RUNNER_TEMP/release-artifact"',
+    '          --github-output',
+    '      - name: Install the reviewed npm CLI',
+    '        run: >-',
+    '          npm install --global "npm@$TRUSTED_PUBLISHING_NPM_VERSION"',
+    '          --registry=https://registry.npmjs.org',
+    '      - name: Verify the npm CLI version',
+    '        run: test "$(npm --version)" = "$TRUSTED_PUBLISHING_NPM_VERSION"',
+    '      - name: Stage the exact candidate',
+    '        run: >-',
+    '          npm stage publish "${{ steps.release-artifact.outputs.package-tarball }}"',
+    '          --tag alpha',
+    '          --access public',
+    '          --registry=https://registry.npmjs.org',
+  ].join('\n')
+  const normalized = job.replace(/\s+#.*$/gmu, '').trimEnd()
+  invariant(
+    normalized === expected,
+    'Release staging job steps must exactly match the reviewed OIDC staging topology.',
+  )
 }
 
 function assertNoRegistryCredentials(workflow) {
   const forbidden = [
     /\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\b/iu,
     /\bsecrets(?:\.|\[)/iu,
+    /\bvars(?:\.|\[)/iu,
     /_authToken/iu,
     /\.npmrc\b/iu,
     /\b(?:always-auth|registry-url)\s*:/iu,
@@ -389,20 +541,49 @@ function assertNonPublishingWorkflow(workflow, label) {
   assertReadOnlyWorkflowPermissions(workflow, label)
 }
 
-export function validateWorkflowContracts({ ciWorkflow, compatibility, releaseWorkflow }) {
+function assertStagedPublishingWorkflow(workflow, stageJob) {
+  const jobs = workflowJobsBody(workflow)
+  invariant(
+    !/\b(?:npm|pnpm|yarn(?:\s+npm)?)\s+publish\b/iu.test(jobs),
+    'Release workflow must not publish directly.',
+  )
+  invariant(
+    !/\bnpm\s+stage\s+(?:approve|reject)\b/iu.test(jobs),
+    'Release workflow must leave staged-package approval to a maintainer.',
+  )
+  invariant(
+    count(jobs, 'npm stage publish') === 1 && count(stageJob, 'npm stage publish') === 1,
+    'Release workflow must contain exactly one reviewed staging operation.',
+  )
+  assertReleaseWorkflowPermissions(workflow, stageJob)
+  assertTrustedPublishingVersion(workflow)
+}
+
+export function validateWorkflowContracts({
+  ciWorkflow,
+  compatibility,
+  releaseMode = 'staged',
+  releaseWorkflow,
+}) {
   const expected = expectedPackedInstallMatrix(compatibility)
   assertPinnedActions(ciWorkflow, 'CI workflow')
   assertPinnedActions(releaseWorkflow, 'Release workflow')
+  assertNoCheckoutOverrides(ciWorkflow, 'CI workflow')
+  assertNoCheckoutOverrides(releaseWorkflow, 'Release workflow')
+  assertNoRegistryCredentials(releaseWorkflow)
   assertExactJobSet(
     ciWorkflow,
     ['candidate', 'check', 'dependency-review', 'packed-install'],
     'CI workflow',
   )
-  assertExactJobSet(
-    releaseWorkflow,
-    ['candidate', 'candidate-install', 'candidate-ready', 'release-ref', 'source-checks'],
-    'Release workflow',
-  )
+  const releaseJobs = ['candidate', 'candidate-install', 'candidate-ready', 'release-ref', 'source-checks']
+  if (releaseMode === 'staged') {
+    releaseJobs.push('stage-publish')
+  } else {
+    invariant(releaseMode === 'verification-only', 'Release workflow mode was invalid.')
+  }
+  assertExactJobSet(releaseWorkflow, releaseJobs, 'Release workflow')
+  assertReleaseGateChain(releaseWorkflow, releaseMode)
   assertArtifactProducer(jobBody(ciWorkflow, 'candidate'), 'CI candidate job')
   assertArtifactConsumer(jobBody(ciWorkflow, 'packed-install'), expected, 'CI')
   assertOnlyProducerMutatesArtifact(ciWorkflow, 'candidate', 'CI')
@@ -421,6 +602,11 @@ export function validateWorkflowContracts({ ciWorkflow, compatibility, releaseWo
     'Release candidate-ready job',
   )
   assertOnlyProducerMutatesArtifact(releaseWorkflow, 'candidate', 'Release workflow')
-  assertNonPublishingWorkflow(releaseWorkflow, 'Release workflow')
-  assertNoRegistryCredentials(releaseWorkflow)
+  if (releaseMode === 'staged') {
+    const stageJob = jobBody(releaseWorkflow, 'stage-publish')
+    assertStagePublisher(stageJob)
+    assertStagedPublishingWorkflow(releaseWorkflow, stageJob)
+  } else {
+    assertNonPublishingWorkflow(releaseWorkflow, 'Release workflow')
+  }
 }

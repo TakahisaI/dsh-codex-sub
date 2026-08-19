@@ -260,23 +260,29 @@ repacks in artifact-consumer, candidate-ready, and any later jobs. Archive tests
 compressible fixtures to exceed the 2 MiB per-entry, 512 KiB README, 64 KiB manifest, and 8 MiB
 aggregate extracted-content budgets. Packaged README tests reject inline or reference-style
 relative links whose targets are omitted from the tarball. The CI and release contracts allow only
-the exact expected job set and require exactly one workflow-level, canonical block-form
-`contents: read` permission. Every permission block rejects `id-token`, `write-all`, quoted, flow,
-and inline-comment variants. The verification-only release workflow also rejects publication and
-npm registry credential plumbing anywhere in the file, including workflow-level environment
-variables, relative or absolute `.npmrc` references, and npm/pnpm login commands. Tests locate
-either the disabled or enabled release-workflow filename so the activation rename cannot bypass or
-break this gate. The active CI handoff remains the cross-platform integration proof for the
+the exact expected job set. CI requires canonical block-form `contents: read` in every permission
+block. The release workflow requires one read-only workflow default and exactly one job-local block
+containing `contents: read` plus `id-token: write`; that block must belong to the staging job.
+Quoted, flow, inline-comment, workflow-wide OIDC, and `write-all` variants fail closed. The release
+workflow rejects direct publication, automatic staged-package approval or rejection, and npm
+registry credential plumbing anywhere in the file, including workflow-level environment variables,
+`secrets.*`, `vars.*`, relative or absolute `.npmrc` references, and npm/pnpm login commands. It
+also pins and verifies npm `11.15.0`, requires the staging job to consume the verified artifact
+output, and fixes the public registry, public access, and `alpha` tag. Tests locate either the
+disabled or enabled release-workflow filename so the activation transition cannot bypass or break
+this gate. The active CI handoff remains the cross-platform integration proof for the
 operating-system archive and artifact clients.
 
 The workflow contract also requires every third-party Action, including a named step whose
-`uses:` key is on the following line, to match a reviewed full commit SHA. It rejects conditional
-or ignored protected-main guards before candidate construction.
+`uses:` key is on the following line, to match a reviewed full commit SHA. It rejects checkout ref
+or repository overrides and conditional or ignored protected-main guards before candidate
+construction or staging.
 The enabled release gate has an always-executed `release-ref` job that compares `github.ref` with
-`refs/heads/main`; candidate construction must depend on both that guard and source checks. Pure
-release-state fixtures exercise both the legacy private-development branch and the current public
-Alpha metadata branch, including rejection of a disabled workflow, draft notes, wrong dist-tag,
-publish command, or OIDC permission.
+`refs/heads/main`; candidate construction must depend on both that guard and source checks, and the
+staging job must depend on the post-matrix candidate-ready boundary. Pure release-state fixtures
+exercise both the legacy private-development branch and the current published-Alpha branch,
+including rejection of a disabled workflow, incomplete release evidence, wrong dist-tag, direct
+publish command, missing staging job, or workflow-wide OIDC permission.
 
 Windows is not a first-alpha target because the current vault cannot verify owner-only ACLs there.
 

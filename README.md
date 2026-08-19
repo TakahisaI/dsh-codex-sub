@@ -3,11 +3,11 @@
 `dsh-codex-sub` is a DeepSeek Harness plugin that exposes the pi-ai `openai-codex`
 provider as a normal DSH model route using ChatGPT subscription authentication.
 
-> Status: Milestones 0 through 6 are implemented: repository tooling, pure core contracts, the
+> Status: Milestones 0 through 7 are complete: repository tooling, pure core contracts, the
 > credential document codec, the secure package-owned file vault, pi-ai OAuth integration, and the
 > native DSH LLM provider route, plus the package CLI, offline diagnostics, and packed-install
-> release gates. Milestone 7 Alpha validation is in progress. No package version has been
-> published, and publication remains blocked on exact-artifact verification and manual smoke.
+> release gates. `0.1.0-alpha.0` is published to npm under the `alpha` dist-tag and has a matching
+> GitHub prerelease.
 
 ## Product contract
 
@@ -64,16 +64,12 @@ See
 [known limitations](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/known-limitations.md)
 for the account, storage, platform, and product boundaries of the first Alpha.
 
-## Install a packed build
+## Install the Alpha
 
-The Alpha metadata is prepared, but the package has not been published. To test a local candidate,
-build and pack it, then add the resulting `.tgz` file to a DSH Web profile:
+Add the current npm Alpha to a DSH Web profile:
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm run build
-pnpm pack
-dsh plugin --profile web add ./dsh-codex-sub-0.1.0-alpha.0.tgz \
+dsh plugin --profile web add dsh-codex-sub@alpha \
   --save-exact \
   --allow-build=@google/genai \
   --allow-build=protobufjs
@@ -145,14 +141,15 @@ codes, account identifiers, full environment dumps, local paths, or model conver
 Report suspected vulnerabilities privately through
 [`SECURITY.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/SECURITY.md).
 
-## Publication blocker
+## Release security
 
 The project is licensed under the
 [MIT License](https://github.com/TakahisaI/dsh-codex-sub/blob/main/LICENSE).
-The initial npm publishing bootstrap in ADR 0011 is accepted, but this metadata change does not
-publish the package. npm has no separate package-name reservation step; the first real publish
-establishes ownership. The enabled release workflow only constructs and verifies a candidate; it
-has no npm credential, OIDC permission, or publish step. Alpha release-candidate notes and the
-secret-free manual-smoke record are available under
+The first npm publication used the reviewed interactive bootstrap recorded in ADR 0011. Every later
+release uses a stage-only npm Trusted Publisher restricted to this repository's `release.yml`.
+GitHub Actions may stage the one checksum-verified artifact after the complete Linux/macOS matrix,
+but it cannot publish directly. Conventional publishing tokens are disabled, and a maintainer must
+inspect and approve each staged package with two-factor authentication. Release records and the
+secret-free manual-smoke template are available under
 [`docs/releases/`](https://github.com/TakahisaI/dsh-codex-sub/tree/main/docs/releases) and
 [`docs/alpha-smoke-record.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/alpha-smoke-record.md).

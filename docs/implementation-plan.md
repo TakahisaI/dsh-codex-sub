@@ -151,8 +151,8 @@ Deliverables:
 - packed model-selector visibility acceptance test;
 - install, login, usage, logout, uninstall documentation;
 - security and limitation documentation;
-- non-publishing release workflow enabled after the npm bootstrap decision was accepted; registry
-  ownership is still established only by the first real release.
+- release workflow enabled after the npm bootstrap decision was accepted; after the first real
+  release established registry ownership, its final job was restricted to OIDC staging.
 
 Acceptance:
 
@@ -175,13 +175,15 @@ Implementation evidence:
 - candidate validation bounds each extracted file and aggregate unpacked bytes, and packaged
   README links cannot target files omitted from the tarball;
 - the ordinary model selector was manually confirmed against that packed profile;
-- the release workflow is enabled for manual verification and contains no publication step.
+- the release workflow verifies one artifact across the complete matrix, then may stage those exact
+  bytes through OIDC for separate maintainer approval.
 
 ## Milestone 7 — Alpha validation
 
-Status: in progress. ADR 0011 is accepted, npm two-factor authentication and recovery access are
-prepared, and the MIT project license is committed. Real-account OAuth, exact-artifact evidence,
-final publication approval, and publication remain manual gates.
+Status: complete. ADR 0011 is accepted, npm two-factor authentication and recovery access are
+prepared, and the MIT project license is committed. The exact artifact passed real-account smoke,
+was published as `0.1.0-alpha.0`, matched after registry download, and has a matching GitHub
+prerelease. The trusted publisher is stage-only and conventional publishing tokens are disabled.
 
 Deliverables:
 

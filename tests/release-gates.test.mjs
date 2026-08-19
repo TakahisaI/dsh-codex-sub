@@ -364,7 +364,7 @@ describe('workflow release evidence', () => {
     const cases = [
       ['pnpm run build', 'Release candidate-ready job must not rebuild the package.'],
       ['pnpm --silent pack', 'Release candidate-ready job must not pack the package.'],
-      ['npm publish', 'Release workflow must not contain a publish operation.'],
+      ['npm publish', 'Release workflow must not publish directly.'],
     ]
     for (const [command, expectedMessage] of cases) {
       const releaseWorkflow = inputs.releaseWorkflow.replace(
@@ -391,7 +391,7 @@ describe('workflow release evidence', () => {
         permissions,
       )
       expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(
-        'Release workflow permissions must use a block containing only contents: read.',
+        'Release workflow default permissions must use the reviewed block form.',
       )
     }
   })
@@ -403,7 +403,7 @@ describe('workflow release evidence', () => {
       + '    steps:\n'
       + '      - run: pnpm pack\n'
     expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(
-      'Release workflow job set did not match the verification-only contract.',
+      'Release workflow job set did not match the reviewed contract.',
     )
   })
 
@@ -415,6 +415,7 @@ describe('workflow release evidence', () => {
       '      - run: touch .npmrc',
       '      - run: touch ~/.npmrc',
       '      - run: npm whoami\n        env:\n          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}',
+      '      - run: npm whoami\n        env:\n          REGISTRY_AUTH: ${{ vars.NPM_AUTH }}',
       `      - uses: ${PINNED_ACTIONS.setupNode}\n        with:\n          registry-url: https://registry.npmjs.org`,
     ]
     for (const step of cases) {
@@ -473,6 +474,99 @@ describe('workflow release evidence', () => {
     ).toBe(true)
   })
 
+  it('requires the staging job to consume the verified artifact with the reviewed npm CLI', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      [
+        'npm install --global "npm@$TRUSTED_PUBLISHING_NPM_VERSION"',
+        'npm install --global npm@latest',
+        'Release staging job must install and verify the reviewed npm CLI version.',
+      ],
+      [
+        'npm stage publish "${{ steps.release-artifact.outputs.package-tarball }}"',
+        'npm stage publish ./rebuilt.tgz',
+        'Release staging job must stage the exact candidate with reviewed registry metadata.',
+      ],
+      [
+        '--tag alpha',
+        '--tag latest',
+        'Release staging job must stage the exact candidate with reviewed registry metadata.',
+      ],
+    ]
+    for (const [from, to, expected] of cases) {
+      const releaseWorkflow = inputs.releaseWorkflow.replace(from, to)
+      expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(expected)
+    }
+  })
+
+  it('rejects direct publishing or automated staged-package decisions', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      ['npm stage publish', 'npm publish', 'Release staging job must stage the exact candidate'],
+      ['npm stage publish', 'npm stage approve', 'Release staging job must stage the exact candidate'],
+      ['npm stage publish', 'npm stage reject', 'Release staging job must stage the exact candidate'],
+    ]
+    for (const [from, to, expected] of cases) {
+      const releaseWorkflow = inputs.releaseWorkflow.replace(from, to)
+      expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(expected)
+    }
+  })
+
+  it('rejects dry runs, shell failure masking, or extra OIDC-capable steps', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      inputs.releaseWorkflow.replace(
+        '          --access public\n          --registry=https://registry.npmjs.org\n',
+        '          --access public\n          --registry=https://registry.npmjs.org\n          --dry-run\n',
+      ),
+      inputs.releaseWorkflow.replace(
+        '          --access public\n          --registry=https://registry.npmjs.org\n',
+        '          --access public\n          --registry=https://registry.npmjs.org || true\n',
+      ),
+      inputs.releaseWorkflow.replace(
+        '      - name: Stage the exact candidate\n',
+        '      - run: npm whoami\n      - name: Stage the exact candidate\n',
+      ),
+    ]
+    for (const releaseWorkflow of cases) {
+      expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(
+        'Release staging job steps must exactly match the reviewed OIDC staging topology.',
+      )
+    }
+  })
+
+  it('limits OIDC permission to the staging job and rejects a skippable stage', async () => {
+    const inputs = await repositoryInputs()
+    const workflowOidc = inputs.releaseWorkflow.replace(
+      'permissions:\n  contents: read',
+      'permissions:\n  contents: read\n  id-token: write',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow: workflowOidc })).toThrow(
+      'Release workflow default permissions must use the reviewed block form.',
+    )
+
+    const skippedStage = inputs.releaseWorkflow.replace(
+      '    name: Stage exact candidate for maintainer approval\n',
+      '    name: Stage exact candidate for maintainer approval\n    if: always()\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow: skippedStage })).toThrow(
+      'Release staging job must not skip or ignore the protected-main gate.',
+    )
+  })
+
+  it('rejects checkout ref or repository overrides', async () => {
+    const inputs = await repositoryInputs()
+    for (const override of ['          ref: unreviewed', '          repository: other/project']) {
+      const releaseWorkflow = inputs.releaseWorkflow.replace(
+        '          node-version: 24',
+        `          node-version: 24\n${override}`,
+      )
+      expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(
+        'Release workflow must not override the checked-out ref or repository.',
+      )
+    }
+  })
+
   it('rejects flow-style action steps instead of leaving them uninspected', async () => {
     const inputs = await repositoryInputs()
     const ciWorkflow = inputs.ciWorkflow.replace(
@@ -529,6 +623,36 @@ describe('workflow release evidence', () => {
           '    name: Build candidate artifact\n    if: always()\n',
         ),
       },
+      {
+        expected: 'Release source-checks job must not skip or ignore the protected-main gate.',
+        workflow: inputs.releaseWorkflow.replace(
+          '    name: Source checks (Node ${{ matrix.node }})\n',
+          '    name: Source checks (Node ${{ matrix.node }})\n    continue-on-error: true\n',
+        ),
+      },
+      {
+        expected: 'Release candidate-install job must not skip or ignore the protected-main gate.',
+        workflow: inputs.releaseWorkflow.replace(
+          '    name: Candidate install (${{ matrix.os }}, Node ${{ matrix.node }})\n',
+          '    name: Candidate install (${{ matrix.os }}, Node ${{ matrix.node }})\n'
+            + '    continue-on-error: true\n',
+        ),
+      },
+      {
+        expected: 'Release candidate-install job must not skip or ignore the protected-main gate.',
+        workflow: inputs.releaseWorkflow.replace(
+          '      - run: >-\n          pnpm run test:packed-install --\n',
+          '      - continue-on-error: true\n        run: >-\n'
+            + '          pnpm run test:packed-install --\n',
+        ),
+      },
+      {
+        expected: 'Release candidate-ready job must not skip or ignore the protected-main gate.',
+        workflow: inputs.releaseWorkflow.replace(
+          '    name: Candidate ready for staging\n',
+          '    name: Candidate ready for staging\n    if: always()\n',
+        ),
+      },
     ]
     for (const { expected, workflow: releaseWorkflow } of cases) {
       expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(expected)
@@ -558,6 +682,7 @@ describe('release state transitions', () => {
       readFile(new URL('../SECURITY.md', import.meta.url), 'utf8'),
     ])
     return {
+      bootstrapReleaseRecord: releaseNotesText,
       ciWorkflow,
       compatibility: JSON.parse(compatibilityText),
       disabledWorkflowExists: false,
@@ -578,6 +703,8 @@ describe('release state transitions', () => {
 
   async function privateDevelopmentFixture() {
     const fixture = await repositoryFixture()
+    const releaseWorkflow = fixture.releaseWorkflow.replace(/\n  stage-publish:\n[\s\S]*$/u, '\n')
+    expect(releaseWorkflow).not.toBe(fixture.releaseWorkflow)
     return {
       ...fixture,
       disabledWorkflowExists: true,
@@ -587,6 +714,7 @@ describe('release state transitions', () => {
         private: true,
         version: '0.0.0-development',
       },
+      releaseWorkflow,
     }
   }
 
@@ -606,14 +734,19 @@ describe('release state transitions', () => {
     })).toThrow('A public package requires the reviewed release workflow to be enabled once.')
   })
 
-  it('rejects publication commands or OIDC permission in the public Alpha state', async () => {
+  it('rejects direct publication, a missing staging job, or workflow-wide OIDC', async () => {
     const fixture = await publicAlphaFixture()
     const publishWorkflow = fixture.releaseWorkflow.replace(
       '      - name: Require protected main',
       '      - run: npm publish\n      - name: Require protected main',
     )
     expect(() => validateReleaseState({ ...fixture, releaseWorkflow: publishWorkflow })).toThrow(
-      'Release workflow must not contain a publish operation.',
+      'Release workflow must not publish directly.',
+    )
+
+    const missingStage = fixture.releaseWorkflow.replace(/\n  stage-publish:\n[\s\S]*$/u, '\n')
+    expect(() => validateReleaseState({ ...fixture, releaseWorkflow: missingStage })).toThrow(
+      'Release workflow job set did not match the reviewed contract.',
     )
 
     const oidcWorkflow = fixture.releaseWorkflow.replace(
@@ -621,11 +754,11 @@ describe('release state transitions', () => {
       'permissions:\n  contents: read\n  id-token: write',
     )
     expect(() => validateReleaseState({ ...fixture, releaseWorkflow: oidcWorkflow })).toThrow(
-      'Release workflow permissions must use a block containing only contents: read.',
+      'Release workflow default permissions must use the reviewed block form.',
     )
   })
 
-  it('rejects a wrong public dist-tag or draft release notes', async () => {
+  it('rejects a wrong public dist-tag or incomplete release evidence', async () => {
     const fixture = await publicAlphaFixture()
     expect(() => validateReleaseState({
       ...fixture,
@@ -638,7 +771,24 @@ describe('release state transitions', () => {
     )
     expect(() => validateReleaseState({
       ...fixture,
-      releaseNotes: { exists: true, text: '> Draft only. Not published.' },
-    })).toThrow('Final release notes are missing for 0.1.0-alpha.0.')
+      releaseNotes: { exists: true, text: '> Draft only. Publication pending.' },
+    })).toThrow('Reviewed release notes are missing for 0.1.0-alpha.0.')
+  })
+
+  it('accepts reviewed notes for the next unpublished Alpha without weakening the first record', async () => {
+    const fixture = await publicAlphaFixture()
+    expect(() => validateReleaseState({
+      ...fixture,
+      packageJson: { ...fixture.packageJson, version: '0.1.0-alpha.1' },
+      releaseNotes: {
+        exists: true,
+        text: '# 0.1.0-alpha.1 release notes\n\n> Release candidate. This version has not been published.',
+      },
+    })).not.toThrow()
+
+    expect(() => validateReleaseState({
+      ...fixture,
+      bootstrapReleaseRecord: '> Release candidate. This version has not been published.',
+    })).toThrow('The first Alpha release record must retain its final exact-artifact evidence.')
   })
 })
