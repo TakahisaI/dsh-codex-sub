@@ -159,6 +159,12 @@ Capture stdout and stderr separately.
 
 Build and pack the package, then inspect the tarball.
 
+Release validation creates the candidate tarball once. Every platform job uses
+`test:packed-install -- --package-tarball <absolute-path>` so the driver validates and installs the
+downloaded bytes without rebuilding or repacking the package. The probe remains locally generated
+test instrumentation. A capture that reaches its stdout/stderr limit fails the gate because an
+incomplete transcript cannot prove that secret sentinels stayed out of output. See ADR 0013.
+
 The tarball should contain only intended runtime files and documentation. It must not contain:
 
 - source maps with local paths unless deliberately approved;
@@ -237,7 +243,7 @@ Record only pass/fail and package/runtime versions.
 Blocking CI:
 
 - Ubuntu packed install on Node 22.19, 24, and 26;
-- macOS packed install on Node 24;
+- macOS packed install on Node 22.19, 24, and 26;
 - the supported DSH release;
 - the exact supported pi-ai release.
 
@@ -257,6 +263,7 @@ A release is blocked unless:
 
 - all unit, contract, CLI, and package tests pass;
 - packed install passes on every supported Node line;
+- Linux, macOS, manual smoke, and publication consume the same checksum-verified candidate tarball;
 - `compatibility.json`, package peer dependencies, and doctor expectations agree;
 - secret-sentinel scan passes;
 - dependency review passes;

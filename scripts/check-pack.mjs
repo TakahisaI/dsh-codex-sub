@@ -1,18 +1,7 @@
 import { spawnSync } from 'node:child_process'
+import { PACKAGE_FILE_ALLOWLIST } from './package-files.mjs'
 
-const requiredFiles = new Set([
-  'compatibility.json',
-  'cordis.patch.yml',
-  'lib/bin.d.mts',
-  'lib/bin.mjs',
-  'lib/index.d.mts',
-  'lib/index.mjs',
-  'lib/runtime.d.mts',
-  'lib/runtime.mjs',
-  'package.json',
-  'README.ja.md',
-  'README.md',
-])
+const requiredFiles = new Set(PACKAGE_FILE_ALLOWLIST)
 
 const result = spawnSync('pnpm', ['pack', '--dry-run', '--json'], {
   encoding: 'utf8',

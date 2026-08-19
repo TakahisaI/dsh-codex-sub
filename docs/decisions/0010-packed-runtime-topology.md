@@ -55,7 +55,8 @@ Support the tested Node lines `^22.19.0`, `^24.0.0`, and `^26.0.0`; reject odd m
 prereleases, and later untested majors. The first alpha supports Linux and macOS. Windows remains
 unsupported because the package cannot verify owner-only credential ACLs there. Package metadata
 enforces the OS boundary, Ubuntu runs the packed test on every Node line, and macOS runs it on Node
-24.
+24. ADR 0013 subsequently expands macOS evidence to every supported Node line and makes the release
+matrix consume one immutable candidate artifact.
 
 Pin the declaration audit to the newly reachable MCP SDK `HeadersInit` diagnostic together with the
 existing documented upstream diagnostics. Any further change still fails the audit and requires a
