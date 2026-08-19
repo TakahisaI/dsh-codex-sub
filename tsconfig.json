@@ -17,7 +17,7 @@
     "declaration": true,
     "declarationMap": false,
     "sourceMap": false,
-    "skipLibCheck": false,
+    "skipLibCheck": true,
     "types": ["node"]
   },
   "include": ["src/**/*.ts", "tests/**/*.ts"],

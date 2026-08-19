@@ -156,6 +156,8 @@ These limitations must be stated honestly. Do not describe plaintext local token
 
 - The plugin itself does not implement general-purpose fetch, proxy, search, image, or URL tools.
 - OAuth and model network calls are delegated to the pinned pi-ai provider.
+- OAuth refresh is bounded at the service boundary so a stalled provider request cannot hold the
+  package credential lock indefinitely.
 - No arbitrary base URL or header configuration is exposed.
 - No telemetry endpoint exists.
 
