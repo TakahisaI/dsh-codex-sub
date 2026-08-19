@@ -214,6 +214,29 @@ describe('workflow release evidence', () => {
     )
   })
 
+  it('accepts the exact supported matrix when every cell uses flow style', async () => {
+    const inputs = await repositoryInputs()
+    const blockMatrix = [
+      '          - os: ubuntu-latest\n            node: 22.19.0',
+      '          - os: ubuntu-latest\n            node: 24',
+      '          - os: ubuntu-latest\n            node: 26',
+      '          - os: macos-latest\n            node: 22.19.0',
+      '          - os: macos-latest\n            node: 24',
+      '          - os: macos-latest\n            node: 26',
+    ].join('\n')
+    const flowMatrix = [
+      '          - { os: ubuntu-latest, node: 22.19.0 }',
+      '          - { os: ubuntu-latest, node: 24 }',
+      '          - { os: ubuntu-latest, node: 26 }',
+      '          - { os: macos-latest, node: 22.19.0 }',
+      '          - { os: macos-latest, node: 24 }',
+      '          - { os: macos-latest, node: 26 }',
+    ].join('\n')
+    const releaseWorkflow = inputs.releaseWorkflow.replace(blockMatrix, flowMatrix)
+    expect(releaseWorkflow).not.toBe(inputs.releaseWorkflow)
+    expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).not.toThrow()
+  })
+
   it('rejects rebuilding, repacking, or publishing after candidate verification', async () => {
     const inputs = await repositoryInputs()
     const cases = [
@@ -231,14 +254,53 @@ describe('workflow release evidence', () => {
     }
   })
 
-  it('rejects OIDC write permission before trusted publishing is enabled', async () => {
+  it('rejects every non-canonical or write-capable permissions form', async () => {
     const inputs = await repositoryInputs()
-    const releaseWorkflow = inputs.releaseWorkflow.replace(
-      'permissions:\n  contents: read',
-      'permissions:\n  contents: read\n  id-token: write',
-    )
+    const cases = [
+      'permissions:\n  contents: read\n  id-token: write # required for the JWT',
+      'permissions:\n  contents: read\n  id-token: "write"',
+      'permissions: { id-token: write, contents: read }',
+      'permissions: write-all',
+      'permissions: "write-all"',
+    ]
+    for (const permissions of cases) {
+      const releaseWorkflow = inputs.releaseWorkflow.replace(
+        'permissions:\n  contents: read',
+        permissions,
+      )
+      expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(
+        'Release workflow permissions must use a block containing only contents: read.',
+      )
+    }
+  })
+
+  it('rejects artifact mutation in any added release job', async () => {
+    const inputs = await repositoryInputs()
+    const releaseWorkflow = `${inputs.releaseWorkflow}\n  replacement-artifact:\n`
+      + '    runs-on: ubuntu-latest\n'
+      + '    steps:\n'
+      + '      - run: pnpm pack\n'
     expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(
-      'Release workflow must not request OIDC write permission before trusted publishing is enabled.',
+      'Release workflow replacement-artifact job must not pack the package.',
     )
+  })
+
+  it('rejects npm registry credential plumbing in the release workflow', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      '      - run: npm login',
+      '      - run: touch ~/.npmrc',
+      '      - run: npm whoami\n        env:\n          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}',
+      '      - uses: actions/setup-node@v7\n        with:\n          registry-url: https://registry.npmjs.org',
+    ]
+    for (const step of cases) {
+      const releaseWorkflow = inputs.releaseWorkflow.replace(
+        '      - uses: actions/checkout@v7\n      - uses: actions/setup-node@v7',
+        `${step}\n      - uses: actions/checkout@v7\n      - uses: actions/setup-node@v7`,
+      )
+      expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(
+        'Release workflow must not contain npm registry credential plumbing.',
+      )
+    }
   })
 })

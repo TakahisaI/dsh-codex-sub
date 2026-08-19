@@ -256,11 +256,13 @@ package build or repack. The release-state check derives the exact six-cell matr
 Unit tests reject relative or symbolic-link tarballs, oversized files, allowlist drift, duplicate
 archive paths, extra artifact entries, checksum or filename mismatch, stdout or stderr capture
 overflow, missing or extra matrix cells in block or flow style, and rebuilds or direct repacks in
-artifact-consumer and candidate-ready jobs. The release workflow contract also rejects publication
-and OIDC write permission before trusted publishing is enabled. Tests locate either the disabled or
-enabled release-workflow filename so the activation rename cannot bypass or break this gate. The
-active CI handoff remains the cross-platform integration proof for the operating-system archive and
-artifact clients.
+artifact-consumer, candidate-ready, and any later jobs. The CI and release contracts allow only the
+canonical block-form `contents: read` permission, rejecting `id-token`, `write-all`, quoted, flow,
+inline-comment, and job-local variants. The verification-only release workflow also rejects
+publication and npm registry credential plumbing before trusted publishing is enabled. Tests locate
+either the disabled or enabled release-workflow filename so the activation rename cannot bypass or
+break this gate. The active CI handoff remains the cross-platform integration proof for the
+operating-system archive and artifact clients.
 
 Windows is not a first-alpha target because the current vault cannot verify owner-only ACLs there.
 

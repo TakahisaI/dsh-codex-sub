@@ -62,6 +62,6 @@ unaccepted and the package does not exist in the registry.
 - The blocking packed-install matrix grows from four to six jobs.
 - Unit tests cover bounded path, archive-list, checksum, stdout/stderr capture-overflow, and
   workflow-topology rejection paths without generating credentials or making network requests.
-  The topology contract includes block- and flow-style matrix entries, consumer and finalizer
-  rebuild/repack rejection, the enabled/disabled workflow rename, and the pre-bootstrap prohibition
-  on publication and OIDC write permission.
+  The topology contract includes block- and flow-style matrix entries, rebuild/repack rejection in
+  every non-producer job, the enabled/disabled workflow rename, and the pre-bootstrap prohibition on
+  publication, npm registry credentials, or any permission beyond canonical `contents: read`.

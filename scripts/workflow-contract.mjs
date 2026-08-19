@@ -42,6 +42,33 @@ function jobBody(workflow, jobName) {
     : workflow.slice(bodyStart, bodyStart + nextJob)
 }
 
+function workflowJobs(workflow) {
+  const lines = workflow.split(/\r?\n/u)
+  const jobsIndex = lines.findIndex((line) => line === 'jobs:')
+  invariant(jobsIndex >= 0, 'Workflow jobs were missing.')
+  const jobsEnd = blockEnd(lines, jobsIndex + 1, 0)
+  const names = []
+  for (const line of lines.slice(jobsIndex + 1, jobsEnd)) {
+    if (!isContent(line) || indentation(line) !== 2) {
+      continue
+    }
+    const match = /^  ([a-z][a-z0-9-]*):\s*$/u.exec(line)
+    invariant(match !== null, 'Workflow jobs must use block-style definitions.')
+    const name = match[1]
+    invariant(name !== undefined && !names.includes(name), 'Workflow job name was invalid or repeated.')
+    names.push(name)
+  }
+  invariant(names.length > 0, 'Workflow contained no jobs.')
+  return names.map((name) => ({ body: jobBody(workflow, name), name }))
+}
+
+function workflowJobsBody(workflow) {
+  const marker = '\njobs:\n'
+  const start = workflow.indexOf(marker)
+  invariant(start >= 0, 'Workflow jobs were missing.')
+  return workflow.slice(start + marker.length)
+}
+
 function matrixCells(job) {
   const lines = job.split(/\r?\n/u)
   const matrixIndex = lines.findIndex((line) => /^\s+matrix:\s*$/u.test(line))
@@ -203,6 +230,14 @@ function assertNoArtifactMutation(job, label) {
   )
 }
 
+function assertOnlyProducerMutatesArtifact(workflow, producerName, label) {
+  for (const job of workflowJobs(workflow)) {
+    if (job.name !== producerName) {
+      assertNoArtifactMutation(job.body, `${label} ${job.name} job`)
+    }
+  }
+}
+
 function assertArtifactConsumer(job, expected, label) {
   assertMatrix(job, expected, label)
   invariant(/^    needs: candidate$/mu.test(job), `${label} must depend on the candidate job.`)
@@ -239,22 +274,58 @@ function assertArtifactFinalizer(job, label) {
   assertNoArtifactMutation(job, label)
 }
 
-function assertNonPublishingWorkflow(workflow) {
-  const jobsMarker = '\njobs:\n'
-  const jobsStart = workflow.indexOf(jobsMarker)
-  invariant(jobsStart >= 0, 'Release workflow jobs were missing.')
-  const jobs = workflow.slice(jobsStart + jobsMarker.length)
-  invariant(!/\bpublish\b/u.test(jobs), 'Release workflow must not contain a publish operation.')
+function assertReadOnlyWorkflowPermissions(workflow, label) {
+  const lines = workflow.split(/\r?\n/u)
+  const declarations = lines
+    .map((line, index) => ({ index, line }))
+    .filter(({ line }) => /^\s*(?:permissions|'permissions'|"permissions")\s*:/u.test(line))
+  invariant(declarations.length > 0, `${label} permissions were missing.`)
+
+  for (const declaration of declarations) {
+    const parentIndent = indentation(declaration.line)
+    invariant(
+      declaration.line.trim() === 'permissions:',
+      `${label} permissions must use a block containing only contents: read.`,
+    )
+    const end = blockEnd(lines, declaration.index + 1, parentIndent)
+    const entries = lines.slice(declaration.index + 1, end).filter(isContent)
+    invariant(
+      entries.length === 1
+        && entries[0]?.trim() === 'contents: read'
+        && indentation(entries[0]) === parentIndent + 2,
+      `${label} permissions must use a block containing only contents: read.`,
+    )
+  }
+}
+
+function assertNoRegistryCredentials(workflow) {
+  const jobs = workflowJobsBody(workflow)
+  const forbidden = [
+    /\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\b/iu,
+    /\bsecrets(?:\.|\[)/iu,
+    /_authToken/iu,
+    /(?:^|[/\\])\.npmrc\b/mu,
+    /\b(?:always-auth|registry-url)\s*:/iu,
+    /\bnpm\s+(?:adduser|login)\b/iu,
+  ]
   invariant(
-    !/^\s*id-token:\s*write\s*$/mu.test(workflow),
-    'Release workflow must not request OIDC write permission before trusted publishing is enabled.',
+    forbidden.every((pattern) => !pattern.test(jobs)),
+    'Release workflow must not contain npm registry credential plumbing.',
   )
+}
+
+function assertNonPublishingWorkflow(workflow, label) {
+  const jobs = workflowJobsBody(workflow)
+  invariant(!/\bpublish\b/u.test(jobs), `${label} must not contain a publish operation.`)
+  assertReadOnlyWorkflowPermissions(workflow, label)
 }
 
 export function validateWorkflowContracts({ ciWorkflow, compatibility, releaseWorkflow }) {
   const expected = expectedPackedInstallMatrix(compatibility)
   assertArtifactProducer(jobBody(ciWorkflow, 'candidate'), 'CI candidate job')
   assertArtifactConsumer(jobBody(ciWorkflow, 'packed-install'), expected, 'CI')
+  assertOnlyProducerMutatesArtifact(ciWorkflow, 'candidate', 'CI')
+  assertNonPublishingWorkflow(ciWorkflow, 'CI workflow')
   assertArtifactProducer(jobBody(releaseWorkflow, 'candidate'), 'Release candidate job')
   assertArtifactConsumer(
     jobBody(releaseWorkflow, 'candidate-install'),
@@ -265,5 +336,7 @@ export function validateWorkflowContracts({ ciWorkflow, compatibility, releaseWo
     jobBody(releaseWorkflow, 'candidate-ready'),
     'Release candidate-ready job',
   )
-  assertNonPublishingWorkflow(releaseWorkflow)
+  assertOnlyProducerMutatesArtifact(releaseWorkflow, 'candidate', 'Release workflow')
+  assertNonPublishingWorkflow(releaseWorkflow, 'Release workflow')
+  assertNoRegistryCredentials(releaseWorkflow)
 }
