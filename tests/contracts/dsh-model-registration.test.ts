@@ -11,14 +11,36 @@ import type {
   LlmResolvedModelInfo,
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, onTestFinished } from 'vitest'
 
-import { PROVIDER_DISPLAY_NAME, PROVIDER_ID } from '../../src/core/constants.js'
+import {
+  PACKAGE_NAME,
+  PLUGIN_ROW_ID,
+  PROVIDER_DISPLAY_NAME,
+  PROVIDER_ID,
+} from '../../src/core/constants.js'
 
 const FIXTURE_MODEL_ID = 'contract-fixture-model'
 const FIXTURE_MODEL_NAME = 'Contract Fixture Model'
 const CONFLICT_PROBE_PROVIDER = 'contract-conflict-probe'
-const UNOWNED_SETTINGS_NAMESPACE = 'contract-unowned-settings'
+
+type Cleanup = () => void | Promise<void>
+
+function cleanupAfterTest(...cleanups: Cleanup[]): void {
+  onTestFinished(async () => {
+    const failures: unknown[] = []
+    for (const cleanup of cleanups) {
+      try {
+        await cleanup()
+      } catch (error) {
+        failures.push(error)
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'DSH registration contract cleanup failed.')
+    }
+  })
+}
 
 class FixtureAdapter extends LlmAdapter {
   readonly #model: Readonly<LlmModelInfo>
@@ -38,15 +60,15 @@ class FixtureAdapter extends LlmAdapter {
     return Object.freeze({ id: provider, name: PROVIDER_DISPLAY_NAME })
   }
 
-  override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
-    return provider === PROVIDER_ID ? Object.freeze([this.#model]) : Object.freeze([])
+  override async listModels(_provider: string): Promise<readonly LlmModelInfo[]> {
+    return Object.freeze([this.#model])
   }
 
-  override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+  override async resolveModel(provider: string, _model: string): Promise<LlmResolvedModelInfo> {
     return Object.freeze({
       provider,
-      id: model,
-      name: model === FIXTURE_MODEL_ID ? FIXTURE_MODEL_NAME : model,
+      id: FIXTURE_MODEL_ID,
+      name: FIXTURE_MODEL_NAME,
     })
   }
 
@@ -66,7 +88,7 @@ function registrationPlugin(providers: string[]) {
 }
 
 describe('DSH model registration contract', () => {
-  it('exposes one live provider and fake catalog through the public selector seams', async () => {
+  it('exposes one live provider and fake catalog through the public LLM registry', async () => {
     const ctx = new Context()
     const runtimeFiber = ctx.plugin(LlmRuntime)
     await runtimeFiber
@@ -75,50 +97,47 @@ describe('DSH model registration contract', () => {
       topologyUpdates += 1
     })
     const adapterFiber = ctx.plugin(registrationPlugin([PROVIDER_ID]))
+    cleanupAfterTest(
+      () => adapterFiber.dispose(),
+      () => {
+        disposeListener()
+      },
+      () => runtimeFiber.dispose(),
+    )
 
-    try {
-      try {
-        await adapterFiber
+    await adapterFiber
 
-        expect(ctx.llm.listProviders()).toEqual([
-          { id: PROVIDER_ID, name: PROVIDER_DISPLAY_NAME },
-        ])
-        expect(await ctx.llm.listModels(PROVIDER_ID)).toEqual([
-          {
-            provider: PROVIDER_ID,
-            id: FIXTURE_MODEL_ID,
-            name: FIXTURE_MODEL_NAME,
-            description: 'Offline model-registration contract fixture.',
-            inputModalities: ['text'],
-          },
-        ])
-        expect(await ctx.llm.resolveModelInfo(PROVIDER_ID, FIXTURE_MODEL_ID)).toEqual({
-          provider: PROVIDER_ID,
-          id: FIXTURE_MODEL_ID,
-          name: FIXTURE_MODEL_NAME,
-        })
-        expect(ctx.llm.listConfigurableProviders()).toEqual([])
-        await expect(
-          ctx.llm.discoverModels(UNOWNED_SETTINGS_NAMESPACE, { provider: PROVIDER_ID }),
-        ).rejects.toMatchObject({ code: 'NO_DISCOVERY' })
-        expect(topologyUpdates).toBe(1)
+    expect(ctx.llm.listProviders()).toEqual([
+      { id: PROVIDER_ID, name: PROVIDER_DISPLAY_NAME },
+    ])
+    expect(await ctx.llm.listModels(PROVIDER_ID)).toEqual([
+      {
+        provider: PROVIDER_ID,
+        id: FIXTURE_MODEL_ID,
+        name: FIXTURE_MODEL_NAME,
+        description: 'Offline model-registration contract fixture.',
+        inputModalities: ['text'],
+      },
+    ])
+    expect(await ctx.llm.resolveModelInfo(PROVIDER_ID, FIXTURE_MODEL_ID)).toEqual({
+      provider: PROVIDER_ID,
+      id: FIXTURE_MODEL_ID,
+      name: FIXTURE_MODEL_NAME,
+    })
+    expect(ctx.llm.listConfigurableProviders()).toEqual([])
+    await expect(
+      ctx.llm.discoverModels(PACKAGE_NAME, { provider: PROVIDER_ID }),
+    ).rejects.toMatchObject({ code: 'NO_DISCOVERY' })
+    expect(topologyUpdates).toBe(1)
 
-        for (const unownedService of ['agent', 'search', 'session', 'settings', 'tool', 'web']) {
-          expect(ctx.get(unownedService)).toBeUndefined()
-        }
-      } finally {
-        await adapterFiber.dispose()
-      }
+    await adapterFiber.dispose()
+    expect(ctx.llm.listProviders()).toEqual([])
+    expect(ctx.llm.listConfigurableProviders()).toEqual([])
+    await expect(ctx.llm.listModels(PROVIDER_ID)).rejects.toMatchObject({ code: 'NO_ADAPTER' })
+    expect(topologyUpdates).toBe(2)
 
-      expect(ctx.llm.listProviders()).toEqual([])
-      expect(ctx.llm.listConfigurableProviders()).toEqual([])
-      await expect(ctx.llm.listModels(PROVIDER_ID)).rejects.toMatchObject({ code: 'NO_ADAPTER' })
-      expect(topologyUpdates).toBe(2)
-    } finally {
-      disposeListener()
-      await runtimeFiber.dispose()
-    }
-
+    disposeListener()
+    await runtimeFiber.dispose()
     expect(ctx.get('llm')).toBeUndefined()
   })
 
@@ -136,29 +155,49 @@ describe('DSH model registration contract', () => {
       CONFLICT_PROBE_PROVIDER,
       PROVIDER_ID,
     ]))
+    cleanupAfterTest(
+      () => conflictingFiber.dispose(),
+      () => servingFiber.dispose(),
+      () => {
+        disposeListener()
+      },
+      () => runtimeFiber.dispose(),
+    )
 
-    try {
-      await expect(conflictingFiber.await()).rejects.toMatchObject({
-        code: 'DUPLICATE_ADAPTER',
-      })
-      expect(ctx.llm.listProviders()).toEqual([
-        { id: PROVIDER_ID, name: PROVIDER_DISPLAY_NAME },
-      ])
-      await expect(ctx.llm.listModels(CONFLICT_PROBE_PROVIDER)).rejects.toMatchObject({
-        code: 'NO_ADAPTER',
-      })
-      expect(await ctx.llm.listModels(PROVIDER_ID)).toHaveLength(1)
-      expect(ctx.llm.listConfigurableProviders()).toEqual([])
-      expect(topologyUpdates).toBe(1)
-    } finally {
-      await conflictingFiber.dispose()
-      await servingFiber.dispose()
-      disposeListener()
-      await runtimeFiber.dispose()
-    }
+    await expect(conflictingFiber.await()).rejects.toMatchObject({
+      code: 'DUPLICATE_ADAPTER',
+    })
+    expect(ctx.llm.listProviders()).toEqual([
+      { id: PROVIDER_ID, name: PROVIDER_DISPLAY_NAME },
+    ])
+    await expect(ctx.llm.listModels(CONFLICT_PROBE_PROVIDER)).rejects.toMatchObject({
+      code: 'NO_ADAPTER',
+    })
+    expect(await ctx.llm.listModels(PROVIDER_ID)).toHaveLength(1)
+    expect(ctx.llm.listConfigurableProviders()).toEqual([])
+    expect(topologyUpdates).toBe(1)
+
+    await conflictingFiber.dispose()
+    expect(ctx.llm.listProviders()).toEqual([
+      { id: PROVIDER_ID, name: PROVIDER_DISPLAY_NAME },
+    ])
+    await expect(ctx.llm.listModels(CONFLICT_PROBE_PROVIDER)).rejects.toMatchObject({
+      code: 'NO_ADAPTER',
+    })
+    expect(topologyUpdates).toBe(1)
+
+    await servingFiber.dispose()
+    expect(ctx.llm.listProviders()).toEqual([])
+    expect(ctx.llm.listConfigurableProviders()).toEqual([])
+    await expect(ctx.llm.listModels(PROVIDER_ID)).rejects.toMatchObject({ code: 'NO_ADAPTER' })
+    expect(topologyUpdates).toBe(2)
+
+    disposeListener()
+    await runtimeFiber.dispose()
+    expect(ctx.get('llm')).toBeUndefined()
   })
 
-  it('keeps the bundle row addressed to the package root export', async () => {
+  it('keeps one bundle insert row addressed to the built package root export', async () => {
     const packageMetadata = JSON.parse(
       await readFile(new URL('../../package.json', import.meta.url), 'utf8'),
     ) as {
@@ -169,12 +208,19 @@ describe('DSH model registration contract', () => {
     }
     const patch = await readFile(new URL('../../cordis.patch.yml', import.meta.url), 'utf8')
 
-    expect(packageMetadata.name).toBe('dsh-codex-sub')
+    expect(packageMetadata.name).toBe(PACKAGE_NAME)
     expect(packageMetadata.main).toBe('lib/index.mjs')
-    expect(packageMetadata.exports).toHaveProperty('.')
+    expect(packageMetadata.exports?.['.']).toEqual({
+      types: './lib/index.d.mts',
+      default: './lib/index.mjs',
+    })
     expect(packageMetadata.dsh?.bundle?.patch).toBe('./cordis.patch.yml')
-    expect(patch).toMatch(/^\s*- id: llm-codex-sub\s*$/m)
-    expect(patch).toMatch(/^\s*name: dsh-codex-sub\s*$/m)
-    expect(patch).not.toMatch(/settings|search|tool|web/i)
+    // Canonical equality rejects extra operations, rows, or keys without adding a YAML test dependency.
+    expect(patch).toBe([
+      '- insert:',
+      `    - id: ${PLUGIN_ROW_ID}`,
+      `      name: ${PACKAGE_NAME}`,
+      '',
+    ].join('\n'))
   })
 })
