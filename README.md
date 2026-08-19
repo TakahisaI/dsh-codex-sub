@@ -3,9 +3,10 @@
 `dsh-codex-sub` is a planned DeepSeek Harness plugin that exposes the pi-ai `openai-codex`
 provider as a normal DSH model route using ChatGPT subscription authentication.
 
-> Status: Milestones 0 through 3 are implemented: repository tooling, pure core contracts, the
-> credential document codec, the secure package-owned file vault, and pi-ai OAuth integration. DSH
-> integration and the CLI are not implemented, so there is no usable plugin yet.
+> Status: Milestones 0 through 4 are implemented: repository tooling, pure core contracts, the
+> credential document codec, the secure package-owned file vault, pi-ai OAuth integration, and the
+> native DSH LLM provider route. The CLI is not implemented, so account login is not yet exposed as
+> a usable package command.
 
 ## Product contract
 

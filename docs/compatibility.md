@@ -46,9 +46,14 @@ Add a verification script that fails when these values drift.
 ```text
 verified combination      start normally
 known incompatible        fail before provider registration
-missing package metadata  fail with unknown compatibility unless in test mode
+missing package metadata  fail closed before provider registration
 newer unverified release  fail closed for public builds
 ```
+
+The production guard loads the supported values from `compatibility.json`, checks Node with the
+documented range, and compares every direct DSH/pi-ai runtime package exactly. Package metadata is
+resolved locally and reduced to name/version only; resolved filesystem paths never enter the
+report or error details.
 
 A development-only environment override may allow experimentation, but it must:
 

@@ -107,9 +107,18 @@ Verify:
 - unsupported DSH options fail rather than disappear;
 - replay state survives an allowed continuation or degrades through DSH's documented path;
 - image input uses DSH attachments only when the model advertises image support.
+- the request signal reaches attachment reads even though the pinned adapter omits it;
+- auth-required and reauth-required codes survive the public DSH stream boundary;
+- the OAuth-only provider wrapper cannot send its internal configured marker and never reads an
+  ambient credential;
+- exact runtime mismatches fail before registration without exposing resolved package paths.
 
 Do not re-test every internal behavior of DSH `PiAiAdapter`; pin only the behaviors on which this
 plugin relies.
+
+After the normal source tests, build the package root and mount that emitted module in the same
+minimal Cordis/LLM composition. The built-entry check must observe the real provider catalog and
+complete effect disposal without OAuth or model network traffic.
 
 ### 1.6 CLI tests
 

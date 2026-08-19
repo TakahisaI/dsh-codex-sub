@@ -49,7 +49,7 @@ update this decision before release.
 Use Cordis fiber disposal as the registration lifetime. Disposal removes the route and emits the
 same topology update used by registration. A duplicate route registration fails atomically with
 DSH's `DUPLICATE_ADAPTER` error and does not retain any non-conflicting route from the rejected
-candidate set. The production plugin will translate the route conflict to
+candidate set. The production plugin translates the route conflict to
 `CODEX_PROVIDER_CONFLICT` at its boundary.
 
 Keep the bundle row addressed to the package root export through `name: dsh-codex-sub`; do not add a
@@ -64,6 +64,8 @@ temporary or source-subpath entry.
   than inferred by querying an otherwise empty Cordis context.
 - The contract test proves the pinned LLM runtime's provider/model registry, duplicate atomicity,
   topology notification, and effect-based cleanup.
+- Milestone 4 implements this live-only registration in the package root plugin entry; no
+  configurable-provider or discovery registration was added.
 - The actual Web selector and installed bundle loader are not imported into this Host-only test.
   Milestone 6 must install the packed tarball in a temporary DSH profile and confirm end-to-end model
   visibility and bundle-row loading.
