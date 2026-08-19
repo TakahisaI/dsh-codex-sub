@@ -1,9 +1,7 @@
-# This workflow is intentionally disabled until the maintainer accepts the initial npm bootstrap
-# decision. Enable it before the public metadata commit, but keep it free of
-# npm authentication, OIDC permission, and publish commands until the first package exists. A
-# future trusted-publishing job must install the pinned npm CLI and consume this workflow artifact;
-# it must not rebuild or repack the candidate.
-name: Release gates (disabled, never publishes)
+# This workflow intentionally contains no npm authentication, OIDC permission, or publish command
+# until the first package exists. A future trusted-publishing job must install the pinned npm CLI
+# and consume this workflow artifact; it must not rebuild or repack the candidate.
+name: Release gates (never publishes)
 
 on:
   workflow_dispatch:

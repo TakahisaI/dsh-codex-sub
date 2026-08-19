@@ -1,6 +1,6 @@
 # ADR 0011: Bootstrap npm ownership before trusted publishing
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-08-19
 
 ## Context
@@ -23,13 +23,13 @@ Relevant upstream contracts:
 - [npm trusted publishers](https://docs.npmjs.com/trusted-publishers/);
 - [`npm publish`](https://docs.npmjs.com/cli/v11/commands/npm-publish/).
 
-## Proposed decision
+## Decision
 
-Do not publish a placeholder or treat a successful name lookup as ownership. The maintainer may
-prepare the npm account, two-factor authentication, and recovery access before release, but must
-wait to establish package ownership until the actual `0.1.0-alpha.0` candidate has passed every
-automated gate, the manual real-account smoke, verification of the selected MIT license, and final
-tarball review.
+Do not publish a placeholder or treat a successful name lookup as ownership. The maintainer has
+prepared the npm account, enabled authorization-and-writes two-factor authentication, and stored
+the generated recovery codes. Package ownership is not established until the actual
+`0.1.0-alpha.0` candidate has passed every automated gate, the manual real-account smoke,
+verification of the selected MIT license, and final tarball review.
 
 Bootstrap the first real Alpha from a clean maintainer-controlled workstation using interactive
 npm authentication with two-factor authentication and the `alpha` dist-tag. Do not create or
@@ -48,17 +48,18 @@ a reviewed follow-up for every later version. Prefer npm's staged-publishing app
 the next published Alpha's provenance and install that exact registry artifact in a clean DSH
 profile.
 
-The maintainer must explicitly accept the one-release provenance exception before this ADR changes
-to accepted. If provenance on the first public artifact is non-negotiable, publication must wait
-for an upstream bootstrap mechanism or use a different package identity whose publisher can
-already be configured; neither alternative is currently established.
+On 2026-08-19 the maintainer explicitly accepted this one-release provenance exception after
+enabling npm two-factor authentication and securing its recovery codes. This acceptance does not
+authorize publication by itself: the exact candidate must still pass the release workflow and
+manual real-account smoke, and the maintainer must explicitly approve the final publish action.
 
 ## Consequences
 
-- npm registration is not a current Milestone 7 preparation task; npm account hardening may be.
+- npm registration occurs only through the first real Alpha publish; the account-hardening gate is
+  complete.
 - `0.1.0-alpha.0` must be a complete release rather than a name-reservation artifact.
 - The first Alpha's release record must state that trusted-publisher provenance is unavailable and
-  link to this decision if the exception is accepted.
+  link to this accepted decision.
 - The release workflow is enabled before the first public metadata commit, but remains a
   non-publishing verification workflow until after the first package exists.
 - A repository token is not introduced as an undocumented bootstrap shortcut.

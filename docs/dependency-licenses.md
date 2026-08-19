@@ -27,8 +27,8 @@ metadata. The project contains no code copied from a third-party DSH-Codex integ
 
 Rerun the production license report after any lockfile or dependency change. Review new license
 expressions, bundled assets, and upstream notice files before publication. The project itself is
-licensed under MIT. It remains `private: true` until the separate publication and npm bootstrap
-gates are complete.
+licensed under MIT. Public Alpha metadata may be prepared before publication, but the exact
+candidate still requires release-workflow and manual-smoke approval.
 
 `pnpm run check:licenses` enforces the reviewed SPDX-expression set. A new expression fails CI and
 requires a fresh license and notice review rather than being accepted automatically.

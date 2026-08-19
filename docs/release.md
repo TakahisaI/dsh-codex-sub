@@ -18,8 +18,8 @@ Direct GitHub dependency installation is not supported initially. It requires an
 - Every release notes the exact verified DSH/pi-ai combination.
 - A DSH or pi-ai compatibility update normally increments the plugin patch prerelease.
 
-The first candidate is therefore `0.1.0-alpha.0`. Draft notes may exist before the package metadata
-is changed, but a version, tag, or registry artifact is created only after every publication
+The first candidate is therefore `0.1.0-alpha.0`. Release-candidate notes and package metadata may
+exist before publication, but a tag or registry artifact is created only after every publication
 prerequisite is complete.
 
 ## Publication prerequisites
@@ -28,23 +28,22 @@ Before the first public package:
 
 - keep the selected MIT license and copyright notice in the candidate;
 - confirm that the intended npm package name remains available immediately before publishing;
-- prepare a maintainer npm account with two-factor authentication and recovery access;
+- prepare a maintainer npm account with two-factor authentication and recovery access (confirmed);
 - enable GitHub branch protection;
 - configure security reporting;
 - verify third-party licenses and notices;
 - pass packed-install and manual smoke gates.
 
-Current automated evidence is complete through Milestone 6, and the project license is MIT. The
-initial npm publishing decision remains a maintainer gate. Registry lookup currently finds no
+Current automated evidence includes the Milestone 7 release gates, the project license is MIT, and
+the initial npm publishing decision is accepted in ADR 0011. Registry lookup currently finds no
 public package named `dsh-codex-sub`, but absence does not establish ownership or reserve the name.
 npm creates a new unscoped package through its first real publish; there is no separate
 package-registration step to perform now.
 
 npm trusted publishing cannot be configured until the package exists. ADR 0011 records the
-proposed bootstrap: publish the complete first Alpha interactively with two-factor authentication,
-then immediately configure OIDC-backed trusted publishing for every later version. The maintainer
-must accept that first-version provenance exception, or choose to defer publication, before the
-non-publishing release workflow is enabled.
+accepted bootstrap: publish the complete first Alpha interactively with two-factor authentication,
+then immediately configure OIDC-backed trusted publishing for every later version. Acceptance does
+not authorize publication before exact-artifact verification, manual smoke, and final approval.
 
 Trusted-publisher administration and publishing require npm CLI `11.15.0` or a separately reviewed
 later version and Node 22.14 or newer. The release workflow pins `11.15.0` for the future publishing
@@ -52,20 +51,21 @@ job. A maintainer workstation with an older npm CLI is preparation-incomplete ev
 version is supported; do not authenticate or publish until the CLI requirement is met.
 
 Use the [real-account smoke record](alpha-smoke-record.md) for the maintainer-controlled gate and
-the [draft Alpha notes](releases/0.1.0-alpha.0.md) for release metadata. Neither document authorizes
-publication.
+the [Alpha release-candidate notes](releases/0.1.0-alpha.0.md) for release metadata. Neither
+document authorizes publication.
 
 ## Release workflow
 
 Blocking CI mirrors the release artifact topology: one Ubuntu/Node 24 job builds and uploads the
 candidate, then all six Linux/macOS and Node cells verify and install that artifact without
-repacking. This keeps the cross-platform artifact handoff executable while the release workflow is
-disabled. The release-state check rejects a missing matrix cell or a consumer that builds or packs.
+repacking. This keeps the cross-platform artifact handoff executable before and after release
+workflow activation. The release-state check rejects a missing matrix cell or a consumer that
+builds or packs.
 
-The repository contains `.github/workflows/release.yml.disabled`. GitHub does not load it as a
-workflow, and it contains no registry authentication or publish command. If enabled later, its
-current scope is limited to source checks, one clean tarball construction, a SHA-256 file, and
-Linux/macOS verification of that exact unpublished workflow artifact. The workflow builds the
+The repository contains the manually dispatched `.github/workflows/release.yml`. It contains no
+registry authentication, OIDC permission, or publish command. Its scope is limited to source
+checks, one clean tarball construction, a SHA-256 file, and Linux/macOS verification of that exact
+unpublished workflow artifact. The workflow builds the
 candidate once; every packed-install job downloads, validates, and installs the same bytes without
 repacking. Its final candidate-ready job is the boundary before manual approval and still never
 publishes. See ADR 0013.
@@ -81,19 +81,17 @@ through bounded extraction. A normal entry is limited to 2 MiB, each README to 5
 to files included in the package; links to repository-only documentation use canonical HTTPS
 GitHub URLs so the npm-rendered and extracted READMEs do not lead to missing files.
 
-Do not rename that file until the maintainer has accepted or replaced ADR 0011's bootstrap
-decision. Rename it to `.github/workflows/release.yml` before the first public
-metadata commit so that commit can pass the release-state gate. Keep the enabled workflow limited
-to verification and artifact construction: do not add npm authentication, `id-token: write`, or a
-publish command until the first package exists and its trusted publisher can be configured.
+Keep the enabled workflow limited to verification and artifact construction: do not add npm
+authentication, `id-token: write`, or a publish command until the first package exists and its
+trusted publisher can be configured.
 
-After those decisions, the intended release sequence is:
+The intended release sequence is:
 
 1. create a release metadata branch and open a PR to protected `main`;
-2. confirm the committed MIT license and accept or replace ADR 0011;
-3. rename the reviewed release gate to `.github/workflows/release.yml` without adding a publish
-   command;
-4. update version, `private`, compatibility data, changelog, and limitations;
+2. confirm the committed MIT license and accepted ADR 0011;
+3. enable the reviewed `.github/workflows/release.yml` gate without adding a publish command;
+4. update version, `private`, changelog, and limitations while preserving verified compatibility
+   metadata;
 5. confirm that `publishConfig` forces the public npm registry, public access, and the `alpha`
    dist-tag;
 6. run `pnpm install --frozen-lockfile` and the complete check matrix, then merge the reviewed

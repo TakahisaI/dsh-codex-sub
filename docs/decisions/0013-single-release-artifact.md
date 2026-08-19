@@ -57,9 +57,10 @@ Treat stdout or stderr capture overflow as a failed packed-install gate. Retaini
 permitted for safe error reporting, but an incomplete capture can never satisfy the sentinel scan.
 
 The first trusted-publishing workflow must use npm CLI `11.15.0` or a separately reviewed later
-version and Node 22.14 or newer. The disabled release workflow pins `11.15.0` for that future job but
-does not install npm, authenticate, request an OIDC token, or publish while ADR 0011 remains
-unaccepted and the package does not exist in the registry.
+version and Node 22.14 or newer. The release workflow pins `11.15.0` for that future job but
+does not install npm, authenticate, request an OIDC token, or publish while the package does not
+exist in the registry. ADR 0011 accepts a separately approved interactive bootstrap for only the
+first complete Alpha.
 
 ## Consequences
 
@@ -78,7 +79,7 @@ unaccepted and the package does not exist in the registry.
   links to omitted package files.
   The topology contract includes block- and flow-style matrix entries, rebuild/repack rejection in
   every non-producer job, the exact verification-only job set, the enabled/disabled workflow rename,
-  and the pre-bootstrap prohibition on publication, npm registry credentials at any workflow scope,
+  and the pre-publication prohibition on publication, npm registry credentials at any workflow scope,
   or any permission beyond a required workflow-level canonical `contents: read` block.
 - Pure fixtures exercise the private-development and public-Alpha release-state branches before the
   first metadata transition, and the package metadata fixes publication to the public npm registry.
