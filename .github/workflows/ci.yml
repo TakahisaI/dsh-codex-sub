@@ -29,8 +29,28 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
 
+  candidate:
+    name: Build candidate artifact
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: node scripts/release-artifact.mjs create --directory "$RUNNER_TEMP/release-artifact"
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact/
+          if-no-files-found: error
+          retention-days: 7
+
   packed-install:
     name: Packed install (${{ matrix.os }}, Node ${{ matrix.node }})
+    needs: candidate
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
@@ -55,8 +75,10 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run build
-      - run: node scripts/release-artifact.mjs create --directory "$RUNNER_TEMP/release-artifact"
+      - uses: actions/download-artifact@v7
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
       - id: release-artifact
         run: >-
           node scripts/release-artifact.mjs verify

@@ -1,6 +1,7 @@
 import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { validateWorkflowContracts } from './workflow-contract.mjs'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const requiredSupportFiles = [
@@ -101,5 +102,15 @@ const privateReportUrl = 'https://github.com/TakahisaI/dsh-codex-sub/security/ad
 if (!securityPolicy.includes(privateReportUrl) || !issueConfig.includes(privateReportUrl)) {
   throw new Error('The private vulnerability reporting URL drifted from support documentation.')
 }
+
+const releaseWorkflowPath = enabledWorkflow
+  ? '.github/workflows/release.yml'
+  : '.github/workflows/release.yml.disabled'
+const [ciWorkflow, releaseWorkflow, compatibility] = await Promise.all([
+  readText('.github/workflows/ci.yml'),
+  readText(releaseWorkflowPath),
+  readText('compatibility.json').then((text) => JSON.parse(text)),
+])
+validateWorkflowContracts({ ciWorkflow, compatibility, releaseWorkflow })
 
 process.stdout.write('Release state and support files are internally consistent.\n')

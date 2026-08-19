@@ -165,10 +165,11 @@ Acceptance:
 
 Implementation evidence:
 
-- the automated gate packs the real tarball and a Host-only probe into a fresh DSH Web profile;
+- the automated gate builds one real candidate tarball, distributes it to every packed-install
+  cell, and packs only the Host probe locally in a fresh DSH Web profile;
 - Ubuntu and macOS cover Node 22.19, 24, and 26;
-- the release gate builds one candidate tarball and passes the same checksum-verified bytes to
-  every platform job without repacking;
+- active CI and the release gate pass one set of checksum-verified candidate bytes to every
+  platform job without repacking;
 - the ordinary model selector was manually confirmed against that packed profile;
 - the release workflow is stored with a disabled extension and contains no publication step.
 
