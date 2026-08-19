@@ -127,7 +127,13 @@ request-scoped bearer token through an internal method.
 
 ### 3.6 DSH provider integration
 
-The DSH layer creates one `PiAiAdapter` profile for `openai-codex`.
+The DSH layer creates one immutable `PiAiAdapter` profile for `openai-codex`. Catalog operations use
+one shared metadata delegate. A model request first resolves OAuth exactly once with the DSH request
+signal, then creates a request-local delegate whose `resolveApiKey` hook returns only that frozen
+token. This preserves cancellation during auth even though the pinned public hook does not receive
+an `AbortSignal` itself. The request-local provider wrapper also records a project `CodexError`
+before pi-ai can normalize it into a generic in-band failure, allowing the DSH boundary to retain
+the stable `CODEX_` code without parsing error text.
 
 Responsibilities:
 
@@ -140,9 +146,19 @@ Responsibilities:
 - register exactly one provider route;
 - report route collisions clearly.
 
-The request-auth provider wrapper may add an api-key-style explicit override to the provider's auth
-surface while preserving its OAuth capability. The wrapper must accept only the explicit token
-supplied by this plugin; it must not discover `OPENAI_API_KEY` or other ambient keys.
+The request-auth provider wrapper adds an api-key-style explicit override to the provider's auth
+surface while preserving its OAuth capability. pi-ai requires an auth method to report configured
+before applying a request override, so that method returns a fixed internal marker. The wrapper's
+wire methods reject the marker and any missing token before calling the upstream provider. Only the
+token supplied by this plugin can reach the provider; the wrapper never discovers `OPENAI_API_KEY`
+or another ambient key and does not mutate the upstream provider object.
+
+The published DSH package exports `PiAiAdapter` and its resolved profile type but not its profile
+materialization helpers. The integration therefore constructs the single fixed profile directly
+from public types, `resolveRetryPolicy()`, and the published Codex provider factory. It does not
+import DSH source subpaths. The pinned adapter also omits the request signal when reading an image
+attachment; a request-local `AttachmentStore` proxy supplies that signal without reimplementing
+message or image conversion. See ADR 0008.
 
 The exact wrapper is verified by a contract test against the pinned pi-ai version rather than by
 relying on undocumented internals.
@@ -156,6 +172,13 @@ The plugin entry is intentionally small:
 3. construct the DSH adapter;
 4. register `openai-codex` on `ctx.llm`;
 5. rely on Cordis effect disposal for unregistration.
+
+The runtime guard reads the verified versions from `compatibility.json`, resolves installed package
+metadata without exposing its paths, and fails closed before registration on a missing, unknown, or
+mismatched Node/DSH/pi-ai combination. A duplicate DSH route is translated from the public
+`DUPLICATE_ADAPTER` failure to `CODEX_PROVIDER_CONFLICT` without changing the existing owner. The
+translation uses the public own `code` data property rather than error-class identity so it also
+works when the host and bundled plugin resolve separate package copies.
 
 The pinned DSH runtime exposes live provider metadata and the adapter-owned catalog through
 `listProviders()` and `listModels()` after `registerAdapter()`. The first release provisionally

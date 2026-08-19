@@ -34,6 +34,7 @@
   },
   "scripts": {
     "build": "tsdown src/index.ts --format esm --dts --out-dir lib --clean",
+    "check:built-entry": "node scripts/check-built-entry.mjs",
     "typecheck": "tsc --noEmit",
     "check:upstream-declarations": "node scripts/check-upstream-declarations.mjs",
     "lint": "oxlint src tests scripts",
@@ -41,7 +42,7 @@
     "check:boundaries": "node scripts/check-core-boundaries.mjs",
     "check:compatibility": "node scripts/check-compatibility.mjs",
     "pack:check": "node scripts/check-pack.mjs",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run check:upstream-declarations && pnpm run test && pnpm run check:boundaries && pnpm run build && pnpm run check:compatibility && pnpm run pack:check"
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run check:upstream-declarations && pnpm run test && pnpm run check:boundaries && pnpm run build && pnpm run check:built-entry && pnpm run check:compatibility && pnpm run pack:check"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
@@ -61,7 +62,7 @@
     "@deepseek-ai/dsh-home-paths": "0.1.0-rc.7",
     "@deepseek-ai/dsh-llm": "0.1.0-rc.7",
     "@deepseek-ai/dsh-llm-pi-ai": "0.1.0-rc.7",
-    "@types/node": "^22.20.0",
+    "@types/node": "22.20.1",
     "oxlint": "1.76.0",
     "tsdown": "0.22.2",
     "typescript": "6.0.3",

@@ -90,7 +90,8 @@ export type CodexAuthStatus =
 
 Status is local and offline. It must not claim that the upstream session is valid. An expired local
 access token still reports `signed-in` with `refreshExpected: true`; the next model request performs
-the refresh.
+the refresh. Known storage failures project to the two storage states; an unexpected programming or
+runtime failure rejects instead of being mislabeled as invalid storage.
 
 ## 6. Authentication service
 
@@ -113,7 +114,19 @@ when the pinned provider does not settle its refresh promise. The current reques
 accepts only the exact access-token `apiKey`; additional upstream auth fields fail explicitly.
 Do not export `CodexRequestAuth` from the package root.
 
-## 7. Error shape
+## 7. DSH request integration
+
+The internal DSH adapter resolves `CodexAuthService.resolveRequestAuth(options.signal)` exactly once
+before constructing the pi-ai stream. The returned bearer token is retained only by that
+request-local delegate and is never stored in provider metadata or a public service. Missing or
+expired authentication reaches the DSH failure vocabulary with its stable `CODEX_` code before
+provider I/O.
+
+The fixed provider profile uses the pi-ai catalog, DSH's normal retry policy, and a 300-second stream
+idle timeout. Unsupported reasoning effort and content combinations remain DSH/pi-ai failures; the
+plugin does not clamp or discard them.
+
+## 8. Error shape
 
 ```ts
 export type CodexErrorCode =
@@ -138,7 +151,7 @@ JSON primitives. Nested objects and arrays are intentionally rejected so callers
 diagnostic after error construction or hide an unbounded secret-bearing object behind a shallow
 freeze.
 
-## 8. CLI JSON
+## 9. CLI JSON
 
 All JSON commands emit exactly one JSON document to stdout and diagnostics to stderr only when the
 command itself cannot produce its schema.
@@ -185,7 +198,7 @@ export interface VersionCheck {
 Reports never include an absolute path, account identifier, token expiry timestamp, email address,
 plan name, authorization URL, or credential contents.
 
-## 9. CLI exit codes
+## 10. CLI exit codes
 
 ```text
 0  success / signed in / compatible

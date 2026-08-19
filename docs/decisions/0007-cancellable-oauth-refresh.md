@@ -69,7 +69,9 @@ dependency declarations. This is the narrow available workaround that keeps all 
 the package's export map; no missing transitive SDK is added as a project runtime dependency. A
 blocking compatibility script runs TypeScript again with declaration checking enabled and accepts
 only the exact pinned Anthropic/Google SDK diagnostics. It fails if the workaround becomes
-unnecessary or if any new declaration error appears.
+unnecessary or if any new declaration error appears. The `@types/node` development dependency is
+pinned exactly so a floating ambient-type update cannot change those expected counts independently
+of the upstream contract under test.
 
 The first release retains the file vault's two-second waiter deadline. The lock holder keeps the
 lock until refresh settles, cancellation wins, or the 30-second deadline expires. A contender

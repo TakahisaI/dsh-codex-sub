@@ -7,3 +7,8 @@ export {
   PROVIDER_DISPLAY_NAME,
   PROVIDER_ID,
 } from './core/constants.js'
+export {
+  apply,
+  inject,
+  name,
+} from './dsh/plugin.js'

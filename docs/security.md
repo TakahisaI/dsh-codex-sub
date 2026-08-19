@@ -92,7 +92,11 @@ Mitigation:
 Mitigation:
 
 - request auth comes only from the plugin-owned OAuth service;
-- the pi-ai provider wrapper must not resolve `OPENAI_API_KEY` or unrelated ambient credentials;
+- the pi-ai provider wrapper resolves no environment variable, file, or unrelated ambient
+  credential;
+- its non-secret configured marker is rejected by the wrapper's stream methods and can never reach
+  the upstream wire implementation;
+- each DSH request resolves one OAuth token before constructing its request-local adapter delegate;
 - missing OAuth produces `CODEX_AUTH_REQUIRED` before network I/O.
 
 ### 3.7 Malformed or oversized credential document
