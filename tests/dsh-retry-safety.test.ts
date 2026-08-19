@@ -16,6 +16,10 @@ import {
   TOOL_OUTCOME_UNKNOWN,
   interruptedTurnClosers,
 } from '@deepseek-ai/dsh-session'
+import type {
+  SessionEvent,
+  SessionHeader,
+} from '@deepseek-ai/dsh-session'
 import JsonlSessionPersistence from '@deepseek-ai/dsh-session-persistence-jsonl'
 import { defineTool } from '@deepseek-ai/dsh-tools'
 import {
@@ -177,6 +181,53 @@ async function waitFor(
       throw new Error('Timed out waiting for the retry-safety fixture.')
     }
     await new Promise((resolve) => setTimeout(resolve, 1))
+  }
+}
+
+function registerRecordTool(
+  ctx: Context,
+  onExecute: (value: string) => void = () => {},
+): void {
+  ctx.tools.register(defineTool({
+    name: 'record_side_effect',
+    description: 'Record one deterministic test-side effect.',
+    parameters: {
+      value: { type: 'string', required: true },
+    },
+    output: {
+      schema: { type: 'string' },
+      render: (_args, value) => [{ type: 'text', text: value }],
+    },
+    async execute(args) {
+      onExecute(args.value)
+      return args.value
+    },
+  }))
+}
+
+async function persistSessionPrefix(
+  persistenceRoot: string,
+  header: SessionHeader,
+  events: readonly SessionEvent[],
+): Promise<string> {
+  const ctx = new Context()
+  await mountAgentLoopTestDependencies(ctx, { tools: { mode: 'native' } })
+  await ctx.plugin(JsonlSessionPersistence, {
+    root: persistenceRoot,
+    compression: 'none',
+    packChunks: false,
+    writeBatchMaxDelayMs: 1,
+  })
+  try {
+    await ctx.sessionPersistence.create(header)
+    await ctx.sessionPersistence.append(header.id, events)
+    const raw = await ctx.sessionPersistence.readRaw(header.id)
+    if (raw === undefined) {
+      throw new Error('The retry-safety persistence fixture was not materialized.')
+    }
+    return raw.content
+  } finally {
+    await ctx.fiber.dispose()
   }
 }
 
@@ -440,7 +491,6 @@ describe('DSH retry safety contracts', () => {
       markEntered = resolve
     })
     const cancellableStream = (signal?: AbortSignal) => {
-      streamCalls += 1
       const events = createAssistantMessageEventStream()
       markEntered?.()
       const abort = (): void => {
@@ -460,14 +510,27 @@ describe('DSH retry safety contracts', () => {
       }
       return events
     }
+    const stream: Provider['stream'] = (model, context, options) => {
+      streamCalls += 1
+      return streamCalls === 1
+        ? cancellableStream(options?.signal)
+        : source.stream(model, context, options)
+    }
+    const streamSimple: Provider['streamSimple'] = (model, context, options) => {
+      streamCalls += 1
+      return streamCalls === 1
+        ? cancellableStream(options?.signal)
+        : source.streamSimple(model, context, options)
+    }
     const provider: Provider = {
       id: source.id,
       name: source.name,
       auth: source.auth,
       getModels: source.getModels.bind(source),
-      stream: (_model, _context, options) => cancellableStream(options?.signal),
-      streamSimple: (_model, _context, options) => cancellableStream(options?.signal),
+      stream,
+      streamSimple,
     }
+    faux.setResponses([fauxAssistantMessage('next turn accepted')])
     const { ctx, handle } = await createAgentHarness(provider, {
       streamIdleTimeoutMs: 1_000,
     })
@@ -486,6 +549,11 @@ describe('DSH retry safety contracts', () => {
         type: 'turn/end',
         data: { reason: { kind: 'aborted', reason: { kind: 'user' } } },
       })
+
+      handle.agent.followup(userMessage('continue after cancellation'))
+      await handle.agent.whenIdle()
+      expect(streamCalls).toBe(2)
+      expect(JSON.stringify(handle.agent.session.deriveMessages())).toContain('next turn accepted')
     } finally {
       await handle.dispose()
       await ctx.fiber.dispose()
@@ -506,26 +574,18 @@ describe('DSH retry safety contracts', () => {
         errorMessage: '503 Service Unavailable',
       }),
       fauxAssistantMessage(toolCall, { stopReason: 'toolUse' }),
+      fauxAssistantMessage('', {
+        stopReason: 'error',
+        errorMessage: '503 Service Unavailable',
+      }),
       fauxAssistantMessage('tool result accepted'),
     ])
     let executions = 0
     const { ctx, handle } = await createAgentHarness(faux.provider, {
       setup(pluginContext) {
-        pluginContext.tools.register(defineTool({
-          name: 'record_side_effect',
-          description: 'Record one deterministic test-side effect.',
-          parameters: {
-            value: { type: 'string', required: true },
-          },
-          output: {
-            schema: { type: 'string' },
-            render: (_args, value) => [{ type: 'text', text: value }],
-          },
-          async execute(args) {
-            executions += 1
-            return args.value
-          },
-        }))
+        registerRecordTool(pluginContext, () => {
+          executions += 1
+        })
       },
     })
 
@@ -534,8 +594,9 @@ describe('DSH retry safety contracts', () => {
       await handle.agent.whenIdle()
 
       const events = handle.agent.session.events
-      expect(faux.state.callCount).toBe(3)
+      expect(faux.state.callCount).toBe(4)
       expect(executions).toBe(1)
+      expect(events.filter((event) => event.type === 'llm/retry')).toHaveLength(2)
       expect(events.filter((event) => event.type === 'tool/call')).toHaveLength(1)
       expect(events.filter((event) => event.type === 'tool/result')).toHaveLength(1)
       expect(events.filter((event) => event.type === 'assistant/message')).toHaveLength(2)
@@ -577,21 +638,9 @@ describe('DSH retry safety contracts', () => {
     let executions = 0
     let replayedToolResults = 0
     const registerTool = (pluginContext: Context): void => {
-      pluginContext.tools.register(defineTool({
-        name: 'record_side_effect',
-        description: 'Record one deterministic test-side effect.',
-        parameters: {
-          value: { type: 'string', required: true },
-        },
-        output: {
-          schema: { type: 'string' },
-          render: (_args, value) => [{ type: 'text', text: value }],
-        },
-        async execute(args) {
-          executions += 1
-          return args.value
-        },
-      }))
+      registerRecordTool(pluginContext, () => {
+        executions += 1
+      })
     }
 
     try {
@@ -642,6 +691,96 @@ describe('DSH retry safety contracts', () => {
         expect(events.filter((event) => event.type === 'tool/call')).toHaveLength(1)
         expect(events.filter((event) => event.type === 'tool/result')).toHaveLength(1)
         expect(JSON.stringify(events)).not.toContain(ACCESS_SENTINEL)
+        expect(raw?.content).not.toContain(ACCESS_SENTINEL)
+      } finally {
+        await resumed.handle.dispose()
+        await resumed.ctx.fiber.dispose()
+      }
+    } finally {
+      await rm(persistenceRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('repairs and resumes a persisted outcome-unknown tool call without executing it again', async () => {
+    const persistenceRoot = await mkdtemp(join(tmpdir(), 'dsh-codex-unknown-outcome-'))
+    const sessionId = SessionId(`retry-safety-unknown-${crypto.randomUUID()}`)
+    const faux = fauxProvider({ provider: PROVIDER_ID, models: [{ id: MODEL_ID }] })
+    faux.setResponses([
+      fauxAssistantMessage(fauxToolCall('record_side_effect', { value: 'uncertain' }, {
+        id: 'outcome-unknown-tool-call',
+      }), { stopReason: 'toolUse' }),
+      fauxAssistantMessage('source turn complete'),
+    ])
+
+    try {
+      const source = await createAgentHarness(faux.provider, {
+        sessionId,
+        setup: registerRecordTool,
+      })
+      let header: SessionHeader
+      let uncertainPrefix: readonly SessionEvent[]
+      try {
+        source.handle.agent.followup(userMessage('create one accepted tool call'))
+        await source.handle.agent.whenIdle()
+        const events = source.handle.agent.session.events
+        const toolCallIndex = events.findIndex((event) => event.type === 'tool/call')
+        expect(toolCallIndex).toBeGreaterThan(0)
+        header = source.handle.agent.session.header
+        uncertainPrefix = events.slice(0, toolCallIndex + 1)
+      } finally {
+        await source.handle.dispose()
+        await source.ctx.fiber.dispose()
+      }
+
+      const persistedPrefix = await persistSessionPrefix(
+        persistenceRoot,
+        header,
+        uncertainPrefix,
+      )
+      expect(persistedPrefix).toContain('"type":"tool/call"')
+      expect(persistedPrefix).not.toContain('"type":"tool/result"')
+
+      let resumedExecutions = 0
+      let recoveryToolResults = 0
+      let recoveryGuidance = ''
+      faux.appendResponses([
+        (context) => {
+          const results = context.messages.filter(
+            (message) => message.role === 'toolResult',
+          )
+          recoveryToolResults = results.length
+          recoveryGuidance = JSON.stringify(results)
+          return fauxAssistantMessage('continued after uncertain outcome')
+        },
+      ])
+      const resumed = await createAgentHarness(faux.provider, {
+        persistenceRoot,
+        resume: true,
+        sessionId,
+        setup(pluginContext) {
+          registerRecordTool(pluginContext, () => {
+            resumedExecutions += 1
+          })
+        },
+      })
+      try {
+        resumed.handle.agent.followup(userMessage('continue without repeating side effects'))
+        await resumed.handle.agent.whenIdle()
+        await resumed.ctx.sessions.flush(resumed.handle.agent.session)
+
+        const events = resumed.handle.agent.session.events
+        const repairedResult = events.find((event) =>
+          event.type === 'tool/result'
+          && event.data.error?.code === TOOL_OUTCOME_UNKNOWN)
+        expect(resumedExecutions).toBe(0)
+        expect(recoveryToolResults).toBe(1)
+        expect(recoveryGuidance).toContain('outcome is unknown')
+        expect(recoveryGuidance).toContain('Do not retry blindly')
+        expect(repairedResult).toBeDefined()
+        expect(events.filter((event) => event.type === 'tool/call')).toHaveLength(1)
+        expect(events.filter((event) => event.type === 'tool/result')).toHaveLength(1)
+        expect(JSON.stringify(events)).not.toContain(ACCESS_SENTINEL)
+        const raw = await resumed.ctx.sessionPersistence.readRaw(sessionId)
         expect(raw?.content).not.toContain(ACCESS_SENTINEL)
       } finally {
         await resumed.handle.dispose()
@@ -712,7 +851,14 @@ describe('DSH retry safety contracts', () => {
       streamSimple: stream,
     }
     faux.setResponses([fauxAssistantMessage('retry accepted')])
-    const { ctx, handle } = await createAgentHarness(provider)
+    let executions = 0
+    const { ctx, handle } = await createAgentHarness(provider, {
+      setup(pluginContext) {
+        registerRecordTool(pluginContext, () => {
+          executions += 1
+        })
+      },
+    })
 
     try {
       handle.agent.followup(userMessage('discard partial output'))
@@ -728,7 +874,18 @@ describe('DSH retry safety contracts', () => {
       expect(JSON.stringify(derived)).not.toContain('discarded reasoning')
       expect(JSON.stringify(derived)).not.toContain('discarded text')
       expect(JSON.stringify(derived)).not.toContain('discarded tool')
-      expect(JSON.stringify(derived)).toContain('retry accepted')
+      expect(JSON.stringify(derived)).not.toContain('partial reasoning')
+      expect(JSON.stringify(derived)).not.toContain('partial text')
+      expect(JSON.stringify(derived)).not.toContain('partial tool')
+      expect(derived).toHaveLength(2)
+      expect(derived[0]).toMatchObject({ role: 'user' })
+      expect(derived[1]).toMatchObject({
+        role: 'assistant',
+        content: [{ type: 'text', text: 'retry accepted' }],
+      })
+      expect(executions).toBe(0)
+      expect(events.filter((event) => event.type === 'tool/call')).toHaveLength(0)
+      expect(events.filter((event) => event.type === 'tool/result')).toHaveLength(0)
     } finally {
       await handle.dispose()
       await ctx.fiber.dispose()

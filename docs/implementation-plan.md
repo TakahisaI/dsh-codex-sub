@@ -240,7 +240,7 @@ Deliverables:
 - deterministic full-agent-loop tests for transient failures, timeouts, cancellation, partial
   streams, retry exhaustion, and tool-call acceptance;
 - exact-once tool execution proof across a failed attempt and an accepted retry;
-- durable JSONL restart/resume proof;
+- durable JSONL restart/resume proof for completed and outcome-unknown tool calls;
 - crash-repair classification proof for unstarted and outcome-unknown tool calls;
 - ADR 0015 recording the pinned DSH event-topology mismatch and ownership decision.
 

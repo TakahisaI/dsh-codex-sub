@@ -49,8 +49,8 @@ Pin this behavior with a full public-agent-loop contract suite using only offici
 packages and pi-ai's public faux provider and event stream. The suite covers pre-output 429, 500,
 503, transport failure, overload, stream timeout, cancellation during streaming and backoff,
 finite exhaustion, partial text/reasoning/tool output, a completed-looking failed tool call,
-crash-repair classifications, and JSONL restart/resume. Every captured durable value is scanned for
-the generated access-token sentinel.
+crash-repair classifications, accepted-tool restart/resume, and persisted outcome-unknown-tool
+restart/resume. Every captured durable value is scanned for the generated access-token sentinel.
 
 Treat the same-turn/same-step observation as an upstream documentation mismatch, not a project
 reason to emulate the documented turn numbering. A future DSH upgrade must rerun this suite and

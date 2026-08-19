@@ -139,13 +139,17 @@ timeouts deterministic and short. Verify:
 - pre-output 429, 500, 503, and transport failures map to DSH's stable retryable codes;
 - a bare unclassified overload is bounded to one `PI_AI_ERROR` attempt;
 - normal retry stops after two repeats, and cancellation during backoff starts no later attempt;
-- stream timeout exhausts the same finite budget, while user cancellation is never retried;
+- stream timeout exhausts the same finite budget, while user cancellation is never retried and a
+  later turn remains usable;
 - failed partial reasoning, text, and tool arguments remain raw chunk records but never enter
   `deriveMessages()`;
 - a complete tool call emitted by a failed attempt does not execute, while the accepted retry's
   identical call executes exactly once;
 - interrupted-session repair distinguishes `TOOL_NOT_STARTED` from `TOOL_OUTCOME_UNKNOWN`;
 - JSONL restart/resume restores one durable tool result without re-executing the tool;
+- JSONL restart/resume converts a persisted call with no result to `TOOL_OUTCOME_UNKNOWN`, exposes
+  the recovery guidance to the model, and does not invoke the registered tool;
+- failure and retry of the LLM request after an accepted tool result do not execute that tool again;
 - the generated access-token sentinel is absent from events, derived messages, and failures.
 
 The pinned DSH implementation records retry attempts inside one turn and step, despite its public
