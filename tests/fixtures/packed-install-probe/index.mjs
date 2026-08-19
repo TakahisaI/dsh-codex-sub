@@ -1,4 +1,4 @@
-import { writeFile } from 'node:fs/promises'
+import { rename, rm, writeFile } from 'node:fs/promises'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const PROVIDER_ID = 'openai-codex'
@@ -71,7 +71,7 @@ export async function apply(ctx) {
   }
 
   const routeAfterConflict = ctx.llm.listProviders().filter(({ id }) => id === PROVIDER_ID)
-  await writeFile(resultPath, `${JSON.stringify({
+  const encodedResult = `${JSON.stringify({
     authFailureCode,
     catalogIdsAreUnique: new Set(modelIds).size === modelIds.length,
     duplicateCode,
@@ -81,5 +81,14 @@ export async function apply(ctx) {
     providerOccurrences: matchingProviders.length,
     resolvedMatches: resolved.provider === PROVIDER_ID && resolved.id === firstModel.id,
     routeOccurrencesAfterConflict: routeAfterConflict.length,
-  })}\n`, { encoding: 'utf8', flag: 'wx' })
+  })}\n`
+  const temporaryResultPath = `${resultPath}.${process.pid}.tmp`
+
+  try {
+    await writeFile(temporaryResultPath, encodedResult, { encoding: 'utf8', flag: 'wx' })
+    await rename(temporaryResultPath, resultPath)
+  } catch (error) {
+    await rm(temporaryResultPath, { force: true })
+    throw error
+  }
 }

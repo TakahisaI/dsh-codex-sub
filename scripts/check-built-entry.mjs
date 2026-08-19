@@ -62,6 +62,7 @@ try {
   if (
     failure === undefined
     || failure.code !== 'CODEX_INCOMPATIBLE_RUNTIME'
+    || failure.safeDetails?.packageName !== '@deepseek-ai/dsh-runtime'
     || JSON.stringify(failure).includes(isolated)
     || inspect(failure).includes('Cannot find module')
     || inspect(failure).includes('[cause]')

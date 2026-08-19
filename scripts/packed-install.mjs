@@ -17,6 +17,7 @@ import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 
 const PACKAGE_NAME = 'dsh-codex-sub'
+const PLUGIN_ROW_ID = 'llm-codex-sub'
 const PROBE_NAME = 'dsh-codex-sub-packed-install-probe'
 const PROVIDER_ID = 'openai-codex'
 const MAX_CAPTURE_BYTES = 4 * 1024 * 1024
@@ -288,6 +289,7 @@ try {
   })
   transcript.push(installedConfig)
   invariant(countExactLine(installedConfig.stdout, 'name: dsh-codex-sub') === 1, 'Expected one plugin row.')
+  invariant(countExactLine(installedConfig.stdout, `- id: ${PLUGIN_ROW_ID}`) === 1, 'Expected the stable plugin row ID.')
   invariant(countExactLine(installedConfig.stdout, '# == dsh-codex-sub') === 1, 'Expected one bundle layer.')
 
   const topology = await inspectDependencyTopology(dshHome, compatibility)
@@ -388,6 +390,7 @@ try {
   })
   transcript.push(removedConfig)
   invariant(countExactLine(removedConfig.stdout, 'name: dsh-codex-sub') === 0, 'Plugin row survived uninstall.')
+  invariant(countExactLine(removedConfig.stdout, `- id: ${PLUGIN_ROW_ID}`) === 0, 'Plugin row ID survived uninstall.')
   invariant(await readFile(authFile, 'utf8') === credentialBytes, 'Uninstall changed package credentials.')
   transcript.push(run(dshExecutable, [
     'plugin', '--profile', 'web', 'exec', PACKAGE_NAME, 'version',
