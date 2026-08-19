@@ -623,6 +623,36 @@ describe('workflow release evidence', () => {
           '    name: Build candidate artifact\n    if: always()\n',
         ),
       },
+      {
+        expected: 'Release source-checks job must not skip or ignore the protected-main gate.',
+        workflow: inputs.releaseWorkflow.replace(
+          '    name: Source checks (Node ${{ matrix.node }})\n',
+          '    name: Source checks (Node ${{ matrix.node }})\n    continue-on-error: true\n',
+        ),
+      },
+      {
+        expected: 'Release candidate-install job must not skip or ignore the protected-main gate.',
+        workflow: inputs.releaseWorkflow.replace(
+          '    name: Candidate install (${{ matrix.os }}, Node ${{ matrix.node }})\n',
+          '    name: Candidate install (${{ matrix.os }}, Node ${{ matrix.node }})\n'
+            + '    continue-on-error: true\n',
+        ),
+      },
+      {
+        expected: 'Release candidate-install job must not skip or ignore the protected-main gate.',
+        workflow: inputs.releaseWorkflow.replace(
+          '      - run: >-\n          pnpm run test:packed-install --\n',
+          '      - continue-on-error: true\n        run: >-\n'
+            + '          pnpm run test:packed-install --\n',
+        ),
+      },
+      {
+        expected: 'Release candidate-ready job must not skip or ignore the protected-main gate.',
+        workflow: inputs.releaseWorkflow.replace(
+          '    name: Candidate ready for staging\n',
+          '    name: Candidate ready for staging\n    if: always()\n',
+        ),
+      },
     ]
     for (const { expected, workflow: releaseWorkflow } of cases) {
       expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(expected)

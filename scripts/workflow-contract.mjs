@@ -351,8 +351,23 @@ function assertNoReleaseGateOverride(job, label) {
   )
 }
 
+function assertReleaseGateChain(workflow, releaseMode) {
+  const jobs = [
+    ['release-ref', 'Release ref verification'],
+    ['source-checks', 'Release source-checks job'],
+    ['candidate', 'Release candidate job'],
+    ['candidate-install', 'Release candidate-install job'],
+    ['candidate-ready', 'Release candidate-ready job'],
+  ]
+  if (releaseMode === 'staged') {
+    jobs.push(['stage-publish', 'Release staging job'])
+  }
+  for (const [jobId, label] of jobs) {
+    assertNoReleaseGateOverride(jobBody(workflow, jobId), label)
+  }
+}
+
 function assertReleaseRefGuard(job) {
-  assertNoReleaseGateOverride(job, 'Release ref verification')
   invariant(
     /^          RELEASE_REF:\s*\$\{\{ github\.ref \}\}\s*$/mu.test(job),
     'Release ref verification must read github.ref explicitly.',
@@ -365,7 +380,6 @@ function assertReleaseRefGuard(job) {
 }
 
 function assertReleaseCandidateDependencies(job) {
-  assertNoReleaseGateOverride(job, 'Release candidate job')
   invariant(
     job.includes('    needs:\n      - release-ref\n      - source-checks\n'),
     'Release candidate job must depend on source-checks and release-ref.',
@@ -439,7 +453,6 @@ function assertStagePublisher(job) {
     + '          --tag alpha\n'
     + '          --access public\n'
     + '          --registry=https://registry.npmjs.org'
-  assertNoReleaseGateOverride(job, 'Release staging job')
   invariant(/^    needs: candidate-ready$/mu.test(job), 'Release staging job must depend on candidate-ready.')
   invariant(
     count(job, PINNED_ACTIONS.downloadArtifact) === 1,
@@ -570,6 +583,7 @@ export function validateWorkflowContracts({
     invariant(releaseMode === 'verification-only', 'Release workflow mode was invalid.')
   }
   assertExactJobSet(releaseWorkflow, releaseJobs, 'Release workflow')
+  assertReleaseGateChain(releaseWorkflow, releaseMode)
   assertArtifactProducer(jobBody(ciWorkflow, 'candidate'), 'CI candidate job')
   assertArtifactConsumer(jobBody(ciWorkflow, 'packed-install'), expected, 'CI')
   assertOnlyProducerMutatesArtifact(ciWorkflow, 'candidate', 'CI')
