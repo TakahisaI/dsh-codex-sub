@@ -35,7 +35,10 @@ import {
   PROVIDER_ID,
 } from '../src/core/constants.js'
 import { CodexError } from '../src/core/errors.js'
-import { CodexDshAdapter } from '../src/dsh/adapter.js'
+import {
+  CodexDshAdapter,
+  withRequestSignal,
+} from '../src/dsh/adapter.js'
 import { createOpenAiCodexRequestProvider } from '../src/piai/request-auth-provider.js'
 
 const MODEL_ID = 'dsh-adapter-fixture-model'
@@ -119,6 +122,89 @@ describe('Codex DSH adapter', () => {
       provider: PROVIDER_ID,
       id: MODEL_ID,
     })
+  })
+
+  it.each([
+    [
+      'unknown model',
+      { ...request(), model: 'unknown-fixture-model' },
+      'UNKNOWN_MODEL',
+    ],
+    [
+      'unsupported stop sequence',
+      { ...request(), stop: ['END'] as string[] },
+      'UNSUPPORTED_OPTION',
+    ],
+  ] as const)('rejects %s before resolving auth', async (_label, options, code) => {
+    const faux = fauxProvider({
+      provider: PROVIDER_ID,
+      models: [{ id: MODEL_ID, reasoning: true }],
+    })
+    const auth = new AuthServiceProbe()
+    const adapter = new CodexDshAdapter({
+      authService: auth,
+      profile: profile(faux.provider),
+    })
+
+    await expect(collect(adapter.stream(options))).rejects.toMatchObject({ code })
+    expect(auth.calls).toBe(0)
+    expect(faux.state.callCount).toBe(0)
+  })
+
+  it('rejects an unsupported reasoning effort before resolving auth', async () => {
+    const faux = fauxProvider({
+      provider: PROVIDER_ID,
+      models: [{ id: MODEL_ID, reasoning: false }],
+    })
+    const auth = new AuthServiceProbe()
+    const adapter = new CodexDshAdapter({
+      authService: auth,
+      profile: profile(faux.provider),
+    })
+
+    await expect(collect(adapter.stream({
+      ...request(),
+      reasoningEffort: ReasoningEffortId('high'),
+    }))).rejects.toMatchObject({ code: 'UNSUPPORTED_REASONING_EFFORT' })
+    expect(auth.calls).toBe(0)
+    expect(faux.state.callCount).toBe(0)
+  })
+
+  it('combines request and attachment-operation cancellation signals', async () => {
+    const ref = Object.freeze({
+      attachmentId: AttachmentId('combined-signal-fixture'),
+      mediaType: 'image/png' as const,
+      bytes: 4,
+      width: 1,
+      height: 1,
+    })
+    const receivedSignals: AbortSignal[] = []
+    const store = {
+      async readImage(_received: typeof ref, signal?: AbortSignal) {
+        if (signal !== undefined) {
+          receivedSignals.push(signal)
+        }
+        return { ref, data: new Uint8Array([137, 80, 78, 71]) }
+      },
+    } as unknown as AttachmentStore
+
+    const firstRequest = new AbortController()
+    const firstOperation = new AbortController()
+    await withRequestSignal(store, firstRequest.signal).readImage(ref, firstOperation.signal)
+    const firstCombined = receivedSignals[0]
+    expect(firstCombined).toBeDefined()
+    expect(firstCombined).not.toBe(firstRequest.signal)
+    expect(firstCombined).not.toBe(firstOperation.signal)
+    firstOperation.abort()
+    expect(firstCombined?.aborted).toBe(true)
+
+    const secondRequest = new AbortController()
+    const secondOperation = new AbortController()
+    await withRequestSignal(store, secondRequest.signal).readImage(ref, secondOperation.signal)
+    const secondCombined = receivedSignals[1]
+    expect(secondCombined).toBeDefined()
+    secondRequest.abort()
+    expect(secondCombined?.aborted).toBe(true)
   })
 
   it('freezes one auth result for reasoning, text, tool, usage, and finish conversion', async () => {

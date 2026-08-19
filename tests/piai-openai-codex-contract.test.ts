@@ -5,6 +5,10 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import { PiAiCodexAuthService } from '../src/piai/auth-service.js'
 import { fromPiAiOAuthCredential } from '../src/piai/credential-conversion.js'
+import {
+  withCodexErrorCapture,
+  withExplicitRequestToken,
+} from '../src/piai/request-auth-provider.js'
 import { MemoryCredentialVault } from './helpers/memory-credential-vault.js'
 
 const ORIGINAL_OPENAI_API_KEY = process.env['OPENAI_API_KEY']
@@ -30,6 +34,18 @@ describe('pinned openai-codex provider public contract', () => {
       refresh: expect.any(Function),
       toAuth: expect.any(Function),
     })
+  })
+
+  it('keeps every public own provider key across request wrappers', () => {
+    const upstream = openaiCodexProvider()
+    const explicit = withExplicitRequestToken(upstream)
+    const captured = withCodexErrorCapture(explicit, () => undefined)
+    const publicOwnKeys = (value: object): string[] => Reflect.ownKeys(value)
+      .map((key) => typeof key === 'symbol' ? key.toString() : key)
+      .sort()
+
+    expect(publicOwnKeys(explicit)).toEqual(publicOwnKeys(upstream))
+    expect(publicOwnKeys(captured)).toEqual(publicOwnKeys(explicit))
   })
 
   it('derives request auth offline from only the package credential', async () => {
