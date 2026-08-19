@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises'
+import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -47,11 +47,17 @@ for (const [name, version] of Object.entries(compatibility.dsh.packages)) {
   expectEqual(`devDependencies.${name}`, packageJson.devDependencies?.[name], version)
 }
 
+const releaseNoteFiles = (await readdir(join(repositoryRoot, 'docs/releases')))
+  .filter((filename) => filename.endsWith('.md'))
+  .sort()
+  .map((filename) => `docs/releases/${filename}`)
+
 for (const filename of [
   'README.md',
   'README.ja.md',
   'docs/known-limitations.md',
   'docs/known-limitations.ja.md',
+  ...releaseNoteFiles,
 ]) {
   const contents = await readText(filename)
   expectIncludes(`${filename}: DSH release`, contents, compatibility.dsh.release)

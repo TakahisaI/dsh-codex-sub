@@ -12,6 +12,10 @@
     "url": "https://github.com/TakahisaI/dsh-codex-sub/issues"
   },
   "homepage": "https://github.com/TakahisaI/dsh-codex-sub#readme",
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
   "type": "module",
   "sideEffects": false,
   "packageManager": "pnpm@11.7.0",

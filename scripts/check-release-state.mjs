@@ -88,6 +88,12 @@ if (
 ) {
   throw new Error('Package registry links drifted from the canonical repository.')
 }
+if (
+  packageJson.publishConfig?.access !== 'public'
+  || packageJson.publishConfig?.tag !== 'alpha'
+) {
+  throw new Error('Publishing metadata must force public access and the alpha dist-tag.')
+}
 
 const privateReportUrl = 'https://github.com/TakahisaI/dsh-codex-sub/security/advisories/new'
 if (!securityPolicy.includes(privateReportUrl) || !issueConfig.includes(privateReportUrl)) {
