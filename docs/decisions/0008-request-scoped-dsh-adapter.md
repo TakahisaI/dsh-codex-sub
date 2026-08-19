@@ -44,16 +44,20 @@ only the access token supplied in the current stream options is accepted.
 Register one long-lived `CodexDshAdapter` with DSH. It delegates catalog and exact-model operations
 to one metadata-only `PiAiAdapter`. For each stream it:
 
-1. calls `CodexAuthService.resolveRequestAuth(options.signal)` exactly once;
-2. converts project `CodexError` values to DSH `LlmError` values with the same stable code and no
+1. creates a lazy, request-local credential callback so DSH resolves the provider, exact model,
+   stop support, and reasoning effort before touching OAuth;
+2. memoizes the first `CodexAuthService.resolveRequestAuth(options.signal)` promise so a valid
+   request resolves auth exactly once and freezes that result for the request;
+3. converts project `CodexError` values to DSH `LlmError` values with the same stable code and no
    serialized cause;
-3. creates a request-local `PiAiAdapter` whose credential callback returns that frozen token and
+4. creates a request-local `PiAiAdapter` whose credential callback returns that frozen token and
    whose provider wrapper captures a project `CodexError` before pi-ai can reduce it to a generic
    in-band error event;
-4. converts that captured failure before yielding any DSH chunk, without parsing an error message;
-5. supplies a request-local `AttachmentStore` proxy that forwards the DSH signal when the pinned
-   adapter omits it;
-6. delegates message conversion, reasoning, tools, replay, usage, timeout, and provider streaming
+5. converts that captured failure before yielding any DSH chunk, without parsing an error message;
+6. supplies a request-local `AttachmentStore` proxy that combines any attachment-operation signal
+   with the DSH request signal, while still supplying the request signal when the pinned adapter
+   omits one;
+7. delegates message conversion, reasoning, tools, replay, usage, timeout, and provider streaming
    to DSH's adapter.
 
 The Cordis entry evaluates exact runtime compatibility before construction or registration, then
@@ -65,6 +69,8 @@ failure is preserved. Cordis owns disposal.
 ## Consequences
 
 - Authentication refresh remains cancellable even though `PiAiAdapter.resolveApiKey` has no signal.
+- Unknown models and unsupported stop/reasoning options fail through DSH preflight without reading
+  or refreshing OAuth credentials.
 - A request holds one access token only in a short-lived closure and never mutates a shared provider.
 - The fixed marker satisfies pi-ai's configured-auth gate but is rejected before provider I/O.
 - Project-owned stream failures keep their stable code even when pi-ai would otherwise turn a

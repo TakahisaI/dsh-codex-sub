@@ -128,10 +128,11 @@ request-scoped bearer token through an internal method.
 ### 3.6 DSH provider integration
 
 The DSH layer creates one immutable `PiAiAdapter` profile for `openai-codex`. Catalog operations use
-one shared metadata delegate. A model request first resolves OAuth exactly once with the DSH request
-signal, then creates a request-local delegate whose `resolveApiKey` hook returns only that frozen
-token. This preserves cancellation during auth even though the pinned public hook does not receive
-an `AbortSignal` itself. The request-local provider wrapper also records a project `CodexError`
+one shared metadata delegate. A model request creates a request-local delegate whose lazy
+`resolveApiKey` hook resolves OAuth exactly once with the DSH request signal, after DSH has resolved
+the provider/model and rejected unsupported stop or reasoning options. The memoized hook returns
+only that frozen token. This preserves cancellation during auth even though the pinned public hook
+does not receive an `AbortSignal` itself. The request-local provider wrapper also records a project `CodexError`
 before pi-ai can normalize it into a generic in-band failure, allowing the DSH boundary to retain
 the stable `CODEX_` code without parsing error text.
 
@@ -234,10 +235,12 @@ network operation. JSON output is one `StatusReportV1` or `DoctorReportV1` docum
 DSH prepares immutable call
     │
     ▼
-PiAiAdapter captures provider/model profile
+PiAiAdapter captures and validates provider/model profile
+    │
+    ├─ invalid model/options → DSH failure without OAuth work
     │
     ▼
-CodexAuthService.resolveRequestAuth()
+lazy CodexAuthService.resolveRequestAuth() (memoized once)
     │
     ├─ credential missing → CODEX_AUTH_REQUIRED
     ├─ token fresh → derive request auth

@@ -68,17 +68,19 @@ function toDshError(error: unknown): never {
   throw error
 }
 
-function withRequestSignal(
+export function withRequestSignal(
   store: AttachmentStore,
   requestSignal: AbortSignal | undefined,
 ): AttachmentStore {
   if (requestSignal === undefined) {
     return store
   }
-  const readImage: AttachmentStore['readImage'] = (reference, signal) => store.readImage(
-    reference,
-    signal ?? requestSignal,
-  )
+  const readImage: AttachmentStore['readImage'] = (reference, signal) => {
+    const combinedSignal = signal === undefined || signal === requestSignal
+      ? requestSignal
+      : AbortSignal.any([requestSignal, signal])
+    return store.readImage(reference, combinedSignal)
+  }
   return new Proxy(store, {
     get(target, property) {
       if (property === 'readImage') {
@@ -158,16 +160,20 @@ export class CodexDshAdapter extends LlmAdapter {
   }
 
   override async * stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
-    let bearerToken: string
-    try {
-      bearerToken = (await this.#authService.resolveRequestAuth(options.signal)).bearerToken
-    } catch (error) {
-      toDshError(error)
-    }
+    let authPromise: Promise<string> | undefined
 
     let delegatedCodexError: CodexError | undefined
     const requestAdapter = this.#createDelegate(
-      async () => bearerToken,
+      async () => {
+        try {
+          authPromise ??= this.#authService
+            .resolveRequestAuth(options.signal)
+            .then(({ bearerToken }) => bearerToken)
+          return await authPromise
+        } catch (error) {
+          toDshError(error)
+        }
+      },
       options.signal,
       (error) => {
         delegatedCodexError ??= error

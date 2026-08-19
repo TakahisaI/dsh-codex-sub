@@ -107,8 +107,12 @@ Verify:
 - unsupported DSH options fail rather than disappear;
 - replay state survives an allowed continuation or degrades through DSH's documented path;
 - image input uses DSH attachments only when the model advertises image support.
-- the request signal reaches attachment reads even though the pinned adapter omits it;
+- the request signal reaches attachment reads even though the pinned adapter omits it, and combines
+  with a future attachment-operation signal when both are present;
 - auth-required and reauth-required codes survive the public DSH stream boundary;
+- unknown models and unsupported stop/reasoning options perform no auth resolution on the direct
+  adapter path;
+- each valid request lazily resolves auth exactly once after DSH preflight;
 - a project error raised after auth and the explicit-token marker both retain their `CODEX_` code
   through the public DSH stream boundary;
 - the OAuth-only provider wrapper cannot send its internal configured marker and never reads an

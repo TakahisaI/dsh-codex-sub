@@ -53,10 +53,7 @@ export function withExplicitRequestToken<TApi extends Api>(provider: Provider<TA
   }
 
   const wrapped: Provider<TApi> = {
-    id: provider.id,
-    name: provider.name,
-    ...(provider.baseUrl === undefined ? {} : { baseUrl: provider.baseUrl }),
-    ...(provider.headers === undefined ? {} : { headers: provider.headers }),
+    ...provider,
     auth: Object.freeze({
       apiKey: EXPLICIT_REQUEST_TOKEN_AUTH,
       oauth: provider.auth.oauth,
@@ -97,11 +94,7 @@ export function withCodexErrorCapture<TApi extends Api>(
   }
 
   const wrapped: Provider<TApi> = {
-    id: provider.id,
-    name: provider.name,
-    ...(provider.baseUrl === undefined ? {} : { baseUrl: provider.baseUrl }),
-    ...(provider.headers === undefined ? {} : { headers: provider.headers }),
-    auth: provider.auth,
+    ...provider,
     getModels: provider.getModels.bind(provider),
     ...(provider.refreshModels === undefined
       ? {}
