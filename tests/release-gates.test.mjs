@@ -840,4 +840,18 @@ describe('release state transitions', () => {
       },
     })).toThrow(`Reviewed release notes are missing for ${String(fixture.packageJson.version)}.`)
   })
+
+  it('rejects a final record whose heading alone was changed to another version', async () => {
+    const fixture = await publicAlphaFixture()
+    const copiedFinalRecord = fixture.bootstrapReleaseRecord.replace(
+      '# 0.1.0-alpha.0 release notes',
+      '# 0.1.0-alpha.1 release notes',
+    )
+    expect(copiedFinalRecord).not.toBe(fixture.bootstrapReleaseRecord)
+    expect(() => validateReleaseState({
+      ...fixture,
+      packageJson: { ...fixture.packageJson, version: '0.1.0-alpha.1' },
+      releaseNotes: { exists: true, text: copiedFinalRecord },
+    })).toThrow('Reviewed release notes are missing for 0.1.0-alpha.1.')
+  })
 })

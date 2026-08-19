@@ -257,12 +257,12 @@ Unit tests reject relative or symbolic-link tarballs, oversized compressed files
 duplicate archive paths, extra artifact entries, checksum or filename mismatch, stdout or stderr
 capture overflow, missing or extra matrix cells in block or flow style, and rebuilds or direct
 repacks in artifact-consumer, candidate-ready, and any later jobs. Pure size checks cover the 2 MiB
-per-entry and 64 KiB manifest limits. Real archive tests use highly compressible fixtures to exceed
-the 512 KiB README and 8 MiB aggregate extracted-content budgets. Packaged README tests reject
-inline or reference-style relative links whose targets are omitted from the tarball. The CI and
-release contracts allow only the exact expected job set. CI requires canonical block-form
-`contents: read` in every permission block. The release workflow requires one read-only workflow
-default and exactly one job-local block
+per-entry, 512 KiB README, 64 KiB manifest, and 8 MiB aggregate limits. Real archive tests also use
+highly compressible fixtures to exceed each of those four extracted-content budgets. Packaged
+README tests reject inline or reference-style relative links whose targets are omitted from the
+tarball. The CI and release contracts allow only the exact expected job set. CI requires canonical
+block-form `contents: read` in every permission block. The release workflow requires one read-only
+workflow default and exactly one job-local block
 containing `contents: read` plus `id-token: write`; that block must belong to the staging job.
 Quoted, flow, inline-comment, workflow-wide OIDC, and `write-all` variants fail closed. The release
 workflow rejects direct publication, automatic staged-package approval or rejection, and npm
@@ -285,7 +285,9 @@ The enabled release gate has an always-executed `release-ref` job that compares 
 staging job must depend on the post-matrix candidate-ready boundary. Pure release-state fixtures
 exercise both the legacy private-development branch and the current published-Alpha branch,
 including rejection of a disabled workflow, incomplete release evidence, wrong dist-tag, direct
-publish command, missing staging job, or workflow-wide OIDC permission.
+publish command, missing staging job, or workflow-wide OIDC permission. Final release evidence must
+also contain exact npm and GitHub prerelease references for the package version; changing only a
+copied record's heading cannot satisfy another version.
 
 Windows is not a first-alpha target because the current vault cannot verify owner-only ACLs there.
 

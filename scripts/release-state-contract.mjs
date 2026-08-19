@@ -12,7 +12,9 @@ function invariant(condition, message) {
   }
 }
 
-function isFinalReleaseRecord(text) {
+function isFinalReleaseRecord(text, version) {
+  const npmReference = `- npm package: [\`dsh-codex-sub@${version}\`](https://www.npmjs.com/package/dsh-codex-sub/v/${version})`
+  const githubReference = `- GitHub prerelease: [\`v${version}\`](https://github.com/TakahisaI/dsh-codex-sub/releases/tag/v${version})`
   return !/\bpending\b/iu.test(text)
     && !text.includes('Draft only.')
     && !text.includes('has not been published')
@@ -20,6 +22,8 @@ function isFinalReleaseRecord(text) {
     && /- Tarball SHA-256: `[0-9a-f]{64}`/u.test(text)
     && /- Manual smoke: PASS/u.test(text)
     && /- Publication date: `\d{4}-\d{2}-\d{2}`/u.test(text)
+    && text.includes(npmReference)
+    && text.includes(githubReference)
 }
 
 function isReleaseCandidate(text) {
@@ -80,14 +84,17 @@ export function validateReleaseState({
     invariant(
       typeof bootstrapReleaseRecord === 'string'
         && isReleaseNotesForVersion(bootstrapReleaseRecord, '0.1.0-alpha.0')
-        && isFinalReleaseRecord(bootstrapReleaseRecord),
+        && isFinalReleaseRecord(bootstrapReleaseRecord, '0.1.0-alpha.0'),
       'The first Alpha release record must retain its final exact-artifact evidence.',
     )
     invariant(
       releaseNotes.exists
         && typeof releaseNotes.text === 'string'
         && isReleaseNotesForVersion(releaseNotes.text, packageJson.version)
-        && (isFinalReleaseRecord(releaseNotes.text) || isReleaseCandidate(releaseNotes.text)),
+        && (
+          isFinalReleaseRecord(releaseNotes.text, packageJson.version)
+          || isReleaseCandidate(releaseNotes.text)
+        ),
       `Reviewed release notes are missing for ${String(packageJson.version)}.`,
     )
   }
