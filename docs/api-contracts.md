@@ -187,10 +187,9 @@ export interface DoctorReportV1 {
   readonly overall: 'compatible' | 'incompatible' | 'degraded' | 'unknown'
   readonly package: { readonly name: string; readonly version: string }
   readonly runtime: {
+    readonly platform: PlatformCheck
     readonly node: VersionCheck
-    readonly dshLlm: VersionCheck
-    readonly dshPiAi: VersionCheck
-    readonly piAi: VersionCheck
+    readonly packages: Readonly<Record<string, VersionCheck>>
   }
   readonly credentialStore: CredentialVaultInspection
   readonly catalog: {
@@ -200,6 +199,12 @@ export interface DoctorReportV1 {
   readonly hints: readonly string[]
 }
 
+export interface PlatformCheck {
+  readonly supported: readonly string[]
+  readonly installed: string
+  readonly status: 'compatible' | 'incompatible'
+}
+
 export interface VersionCheck {
   readonly supported: string
   readonly installed: string | null
@@ -207,13 +212,21 @@ export interface VersionCheck {
 }
 ```
 
+`runtime.packages` contains exactly every DSH, Cordis, and pi-ai package version checked by the
+runtime compatibility guard, keyed by its published package name. For the first Alpha these are
+`@deepseek-ai/cordis`, `@deepseek-ai/dsh-llm`, `@deepseek-ai/dsh-llm-pi-ai`,
+`@deepseek-ai/dsh-attachment`, `@deepseek-ai/dsh-atomic-write`,
+`@deepseek-ai/dsh-home-paths`, and `@earendil-works/pi-ai`. The order is deterministic and follows
+`compatibility.json`; the CLI does not maintain a smaller diagnostic subset.
+
 Reports never include an absolute path, account identifier, token expiry timestamp, email address,
 plan name, authorization URL, or credential contents.
 
-Doctor classifies a known version mismatch as `incompatible`, missing version metadata as `unknown`,
-and a locally unhealthy credential store, unverifiable permissions on a present credential, or an
-empty catalog as `degraded`. An absent credential can still be `compatible` and adds a bounded login
-hint; `status` owns the signed-in/signed-out result.
+Doctor classifies an unsupported operating system or known version mismatch as `incompatible`,
+missing version metadata as `unknown`, and a locally unhealthy credential store, unverifiable
+permissions on a present credential, or an empty catalog as `degraded`. An absent credential can
+still be `compatible` and adds a bounded login hint; `status` owns the signed-in/signed-out result.
+See ADR 0012.
 
 ## 10. CLI exit codes
 

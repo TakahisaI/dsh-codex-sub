@@ -94,8 +94,17 @@ function compatibleRuntime(): RuntimeCompatibilityReport {
   })
   return Object.freeze({
     compatible: true,
-    node: check('^22.19.0 || >=24.0.0'),
+    platform: Object.freeze({
+      supported: Object.freeze(['darwin', 'linux']),
+      installed: 'linux',
+      status: 'compatible' as const,
+    }),
+    node: check('^22.19.0 || ^24.0.0 || ^26.0.0'),
     packages: Object.freeze({
+      '@deepseek-ai/cordis': check('4.0.1'),
+      '@deepseek-ai/dsh-attachment': check('0.1.0-rc.7'),
+      '@deepseek-ai/dsh-atomic-write': check('0.1.0-rc.7'),
+      '@deepseek-ai/dsh-home-paths': check('0.1.0-rc.7'),
       '@deepseek-ai/dsh-llm': check('0.1.0-rc.7'),
       '@deepseek-ai/dsh-llm-pi-ai': check('0.1.0-rc.7'),
       '@earendil-works/pi-ai': check('0.82.1'),
@@ -317,22 +326,53 @@ describe('CLI command orchestration', () => {
       overall: 'compatible',
       package: { name: 'dsh-codex-sub', version: PACKAGE_VERSION },
       runtime: {
+        platform: {
+          supported: ['darwin', 'linux'],
+          installed: 'linux',
+          status: 'compatible',
+        },
         node: {
-          supported: '^22.19.0 || >=24.0.0',
-          installed: '^22.19.0 || >=24.0.0',
+          supported: '^22.19.0 || ^24.0.0 || ^26.0.0',
+          installed: '^22.19.0 || ^24.0.0 || ^26.0.0',
           status: 'compatible',
         },
-        dshLlm: {
-          supported: '0.1.0-rc.7',
-          installed: '0.1.0-rc.7',
-          status: 'compatible',
+        packages: {
+          '@deepseek-ai/cordis': {
+            supported: '4.0.1',
+            installed: '4.0.1',
+            status: 'compatible',
+          },
+          '@deepseek-ai/dsh-llm': {
+            supported: '0.1.0-rc.7',
+            installed: '0.1.0-rc.7',
+            status: 'compatible',
+          },
+          '@deepseek-ai/dsh-llm-pi-ai': {
+            supported: '0.1.0-rc.7',
+            installed: '0.1.0-rc.7',
+            status: 'compatible',
+          },
+          '@deepseek-ai/dsh-attachment': {
+            supported: '0.1.0-rc.7',
+            installed: '0.1.0-rc.7',
+            status: 'compatible',
+          },
+          '@deepseek-ai/dsh-atomic-write': {
+            supported: '0.1.0-rc.7',
+            installed: '0.1.0-rc.7',
+            status: 'compatible',
+          },
+          '@deepseek-ai/dsh-home-paths': {
+            supported: '0.1.0-rc.7',
+            installed: '0.1.0-rc.7',
+            status: 'compatible',
+          },
+          '@earendil-works/pi-ai': {
+            supported: '0.82.1',
+            installed: '0.82.1',
+            status: 'compatible',
+          },
         },
-        dshPiAi: {
-          supported: '0.1.0-rc.7',
-          installed: '0.1.0-rc.7',
-          status: 'compatible',
-        },
-        piAi: { supported: '0.82.1', installed: '0.82.1', status: 'compatible' },
       },
       credentialStore: { state: 'present', formatVersion: 1, permissions: 'owner-only' },
       catalog: { provider: 'openai-codex', modelCount: 7 },
@@ -353,7 +393,7 @@ describe('CLI command orchestration', () => {
       ...incompatible,
       compatible: false,
       node: {
-        supported: '^22.19.0 || >=24.0.0',
+        supported: '^22.19.0 || ^24.0.0 || ^26.0.0',
         installed: '23.0.0',
         status: 'incompatible',
       },

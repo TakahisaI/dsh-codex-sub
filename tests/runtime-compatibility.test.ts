@@ -40,11 +40,17 @@ describe('runtime compatibility', () => {
 
   it('reports the exact pinned package combination as compatible', () => {
     const report = evaluateRuntimeCompatibility({
+      platform: 'linux',
       node: '24.0.0',
       packages: SUPPORTED_PACKAGES,
     })
 
     expect(report.compatible).toBe(true)
+    expect(report.platform).toEqual({
+      supported: ['darwin', 'linux'],
+      installed: 'linux',
+      status: 'compatible',
+    })
     expect(report.node.status).toBe('compatible')
     expect(report.packages).toEqual(
       Object.fromEntries(
@@ -62,7 +68,7 @@ describe('runtime compatibility', () => {
   ] as const)('fails closed for a %s runtime package', (_label, version) => {
     const packages = { ...SUPPORTED_PACKAGES, '@deepseek-ai/dsh-llm': version }
 
-    expect(() => assertRuntimeCompatible({ node: '24.0.0', packages })).toThrowError(
+    expect(() => assertRuntimeCompatible({ platform: 'linux', node: '24.0.0', packages })).toThrowError(
       expect.objectContaining({
         code: 'CODEX_INCOMPATIBLE_RUNTIME',
         safeDetails: {
@@ -74,10 +80,26 @@ describe('runtime compatibility', () => {
     )
   })
 
+  it('fails closed on an unsupported operating system before package registration', () => {
+    expect(() => assertRuntimeCompatible({
+      platform: 'win32',
+      node: '24.0.0',
+      packages: SUPPORTED_PACKAGES,
+    })).toThrowError(expect.objectContaining({
+      code: 'CODEX_INCOMPATIBLE_RUNTIME',
+      safeDetails: {
+        packageName: 'platform',
+        supported: 'darwin, linux',
+        installed: 'win32',
+      },
+    }))
+  })
+
   it('keeps package resolution paths out of printable compatibility failures', () => {
     let failure: unknown
     try {
       assertRuntimeCompatible({
+        platform: 'linux',
         node: '23.0.0',
         packages: SUPPORTED_PACKAGES,
       })
@@ -92,6 +114,7 @@ describe('runtime compatibility', () => {
 
   it('recognizes the installed test runtime through package metadata only', () => {
     const snapshot = inspectInstalledRuntime()
+    expect(['darwin', 'linux']).toContain(snapshot.platform)
     expect(snapshot.packages).toEqual(SUPPORTED_PACKAGES)
     expect(assertRuntimeCompatible(snapshot).compatible).toBe(true)
   })

@@ -124,6 +124,8 @@ Verify:
   ambient credential;
 - duplicate-route translation works with a structurally compatible Host error;
 - exact runtime mismatches fail before registration without exposing resolved package paths.
+- unsupported operating systems fail before registration, and doctor exposes the platform plus
+  every package check used by its overall compatibility result.
 
 Do not re-test every internal behavior of DSH `PiAiAdapter`; pin only the behaviors on which this
 plugin relies.

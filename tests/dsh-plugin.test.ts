@@ -65,6 +65,40 @@ describe('production Cordis plugin', () => {
     expect(ctx.llm.listProviders()).toEqual([])
   })
 
+  it('rejects an unsupported platform before constructing or registering the provider', () => {
+    const originalPlatform = Object.getOwnPropertyDescriptor(process, 'platform')
+    let registerCalls = 0
+    const llm = Object.create(LlmRuntime.prototype) as LlmRuntime
+    Object.defineProperty(llm, 'registerAdapter', {
+      configurable: true,
+      value() {
+        registerCalls += 1
+      },
+    })
+
+    Object.defineProperty(process, 'platform', {
+      configurable: true,
+      enumerable: true,
+      value: 'win32',
+      writable: false,
+    })
+    try {
+      expect(() => plugin.apply({ llm } as Context)).toThrowError(expect.objectContaining({
+        code: 'CODEX_INCOMPATIBLE_RUNTIME',
+        safeDetails: {
+          packageName: 'platform',
+          supported: 'darwin, linux',
+          installed: 'win32',
+        },
+      }))
+      expect(registerCalls).toBe(0)
+    } finally {
+      if (originalPlatform !== undefined) {
+        Object.defineProperty(process, 'platform', originalPlatform)
+      }
+    }
+  })
+
   it('maps duplicate ownership without disturbing the serving adapter', async () => {
     const ctx = new Context()
     const runtimeFiber = ctx.plugin(LlmRuntime)

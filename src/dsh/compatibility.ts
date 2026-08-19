@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url'
 import { LlmRuntime } from '@deepseek-ai/dsh-llm'
 
 import compatibilityDocument from '../../compatibility.json' with { type: 'json' }
-import type { VersionCheck } from '../core/contracts.js'
+import type {
+  PlatformCheck,
+  VersionCheck,
+} from '../core/contracts.js'
 import { CodexError } from '../core/errors.js'
 
 const MAX_PACKAGE_METADATA_BYTES = 64 * 1024
@@ -13,6 +16,7 @@ const MAX_PACKAGE_ROOT_ASCENTS = 4
 
 interface CompatibilityDocument {
   readonly node: string
+  readonly platforms: readonly string[]
   readonly dsh: {
     readonly packages: Readonly<Record<string, string>>
   }
@@ -23,12 +27,14 @@ interface CompatibilityDocument {
 }
 
 export interface InstalledRuntimeSnapshot {
+  readonly platform: string
   readonly node: string
   readonly packages: Readonly<Record<string, string | null | undefined>>
 }
 
 export interface RuntimeCompatibilityReport {
   readonly compatible: boolean
+  readonly platform: PlatformCheck
   readonly node: VersionCheck
   readonly packages: Readonly<Record<string, VersionCheck>>
 }
@@ -36,6 +42,14 @@ export interface RuntimeCompatibilityReport {
 type NumericVersion = readonly [major: number, minor: number, patch: number]
 
 const compatibility = compatibilityDocument as CompatibilityDocument
+const EXPECTED_PACKAGE_VERSIONS: Readonly<Record<string, string>> = Object.freeze({
+  ...compatibility.dsh.packages,
+  [compatibility.piAi.package]: compatibility.piAi.version,
+})
+
+export const RUNTIME_PACKAGE_NAMES: readonly string[] = Object.freeze(
+  Object.keys(EXPECTED_PACKAGE_VERSIONS),
+)
 
 function parseNumericVersion(value: string): NumericVersion | undefined {
   const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value)
@@ -107,10 +121,12 @@ function versionCheck(
   })
 }
 
-function expectedPackageVersions(): Readonly<Record<string, string>> {
+function platformCheck(installed: string): PlatformCheck {
+  const supported = Object.freeze([...compatibility.platforms])
   return Object.freeze({
-    ...compatibility.dsh.packages,
-    [compatibility.piAi.package]: compatibility.piAi.version,
+    supported,
+    installed,
+    status: supported.includes(installed) ? 'compatible' : 'incompatible',
   })
 }
 
@@ -157,10 +173,11 @@ export function inspectInstalledRuntime(): InstalledRuntimeSnapshot {
     string,
     string | null
   >
-  for (const packageName of Object.keys(expectedPackageVersions())) {
+  for (const packageName of RUNTIME_PACKAGE_NAMES) {
     packages[packageName] = packageVersion(packageName)
   }
   return Object.freeze({
+    platform: process.platform,
     node: process.versions.node,
     packages: Object.freeze(packages),
   })
@@ -169,6 +186,7 @@ export function inspectInstalledRuntime(): InstalledRuntimeSnapshot {
 export function evaluateRuntimeCompatibility(
   installed: InstalledRuntimeSnapshot,
 ): RuntimeCompatibilityReport {
+  const platform = platformCheck(installed.platform)
   const nodeCompatible = matchesNodeRange(installed.node, compatibility.node)
   const packages: Record<string, VersionCheck> = Object.create(null) as Record<
     string,
@@ -176,7 +194,7 @@ export function evaluateRuntimeCompatibility(
   >
   let allPackagesCompatible = true
 
-  for (const [packageName, supported] of Object.entries(expectedPackageVersions())) {
+  for (const [packageName, supported] of Object.entries(EXPECTED_PACKAGE_VERSIONS)) {
     const actual = installed.packages[packageName]
     const compatible = actual === supported
     packages[packageName] = versionCheck(supported, actual, compatible)
@@ -184,7 +202,8 @@ export function evaluateRuntimeCompatibility(
   }
 
   return Object.freeze({
-    compatible: nodeCompatible && allPackagesCompatible,
+    compatible: platform.status === 'compatible' && nodeCompatible && allPackagesCompatible,
+    platform,
     node: versionCheck(compatibility.node, installed.node, nodeCompatible),
     packages: Object.freeze(packages),
   })
@@ -194,6 +213,15 @@ export function assertRuntimeCompatible(
   installed: InstalledRuntimeSnapshot = inspectInstalledRuntime(),
 ): RuntimeCompatibilityReport {
   const report = evaluateRuntimeCompatibility(installed)
+  if (report.platform.status !== 'compatible') {
+    throw new CodexError('The installed runtime is not supported.', 'CODEX_INCOMPATIBLE_RUNTIME', {
+      safeDetails: {
+        packageName: 'platform',
+        supported: report.platform.supported.join(', '),
+        installed: report.platform.installed,
+      },
+    })
+  }
   if (report.node.status !== 'compatible') {
     throw new CodexError('The installed runtime is not supported.', 'CODEX_INCOMPATIBLE_RUNTIME', {
       safeDetails: {

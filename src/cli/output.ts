@@ -48,10 +48,11 @@ function installedVersion(value: string | null): string {
 export function writeDoctor(io: CliIo, report: DoctorReportV1): void {
   io.stdout(`Overall: ${report.overall}\n`)
   io.stdout(`Package: ${report.package.name} ${report.package.version}\n`)
+  io.stdout(`Platform: ${report.runtime.platform.installed} (${report.runtime.platform.status})\n`)
   io.stdout(`Node: ${installedVersion(report.runtime.node.installed)} (${report.runtime.node.status})\n`)
-  io.stdout(`DSH LLM: ${installedVersion(report.runtime.dshLlm.installed)} (${report.runtime.dshLlm.status})\n`)
-  io.stdout(`DSH pi-ai: ${installedVersion(report.runtime.dshPiAi.installed)} (${report.runtime.dshPiAi.status})\n`)
-  io.stdout(`pi-ai: ${installedVersion(report.runtime.piAi.installed)} (${report.runtime.piAi.status})\n`)
+  for (const [packageName, check] of Object.entries(report.runtime.packages)) {
+    io.stdout(`${packageName}: ${installedVersion(check.installed)} (${check.status})\n`)
+  }
   io.stdout(`Credential store: ${report.credentialStore.state} (${report.credentialStore.permissions})\n`)
   io.stdout(`Codex catalog models: ${String(report.catalog.modelCount)}\n`)
   for (const hint of report.hints) {

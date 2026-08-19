@@ -2,6 +2,7 @@ import type {
   CodexAuthStatus,
   CredentialVaultInspection,
   DoctorReportV1,
+  PlatformCheck,
   StatusReportV1,
   VersionCheck,
 } from '../core/contracts.js'
@@ -10,11 +11,10 @@ import {
   PROVIDER_ID,
 } from '../core/constants.js'
 import { CodexError } from '../core/errors.js'
-import type { RuntimeCompatibilityReport } from '../dsh/compatibility.js'
-
-const DSH_LLM_PACKAGE = '@deepseek-ai/dsh-llm'
-const DSH_PIAI_PACKAGE = '@deepseek-ai/dsh-llm-pi-ai'
-const PIAI_PACKAGE = '@earendil-works/pi-ai'
+import {
+  RUNTIME_PACKAGE_NAMES,
+  type RuntimeCompatibilityReport,
+} from '../dsh/compatibility.js'
 
 function runtimeFailure(reason: string): CodexError {
   return new CodexError('Runtime diagnostics failed.', 'CODEX_INCOMPATIBLE_RUNTIME', {
@@ -31,6 +31,40 @@ function copyVersionCheck(value: VersionCheck | undefined, reason: string): Vers
     installed: value.installed,
     status: value.status,
   })
+}
+
+function copyPlatformCheck(value: PlatformCheck | undefined): PlatformCheck {
+  if (
+    value === undefined
+    || value.supported.length === 0
+    || value.installed.length === 0
+  ) {
+    throw runtimeFailure('platform')
+  }
+  return Object.freeze({
+    supported: Object.freeze([...value.supported]),
+    installed: value.installed,
+    status: value.status,
+  })
+}
+
+function copyPackageChecks(
+  values: Readonly<Record<string, VersionCheck>>,
+): Readonly<Record<string, VersionCheck>> {
+  if (
+    Object.keys(values).length !== RUNTIME_PACKAGE_NAMES.length
+    || !RUNTIME_PACKAGE_NAMES.every((packageName) => Object.hasOwn(values, packageName))
+  ) {
+    throw runtimeFailure('package_versions')
+  }
+  const packages: Record<string, VersionCheck> = Object.create(null) as Record<
+    string,
+    VersionCheck
+  >
+  for (const packageName of RUNTIME_PACKAGE_NAMES) {
+    packages[packageName] = copyVersionCheck(values[packageName], 'package_versions')
+  }
+  return Object.freeze(packages)
 }
 
 function copyInspection(value: CredentialVaultInspection): CredentialVaultInspection {
@@ -61,11 +95,15 @@ export function createStatusReport(
 }
 
 function doctorOverall(
+  platform: PlatformCheck,
   runtimeChecks: readonly VersionCheck[],
   credentialStore: CredentialVaultInspection,
   modelCount: number,
 ): DoctorReportV1['overall'] {
-  if (runtimeChecks.some((check) => check.status === 'incompatible')) {
+  if (
+    platform.status === 'incompatible'
+    || runtimeChecks.some((check) => check.status === 'incompatible')
+  ) {
     return 'incompatible'
   }
   if (runtimeChecks.some((check) => check.status === 'unknown')) {
@@ -87,11 +125,15 @@ function doctorOverall(
 }
 
 function doctorHints(
+  platform: PlatformCheck,
   runtimeChecks: readonly VersionCheck[],
   credentialStore: CredentialVaultInspection,
   modelCount: number,
 ): readonly string[] {
   const hints: string[] = []
+  if (platform.status === 'incompatible') {
+    hints.push('Run this package on a supported operating system.')
+  }
   if (runtimeChecks.some((check) => check.status === 'incompatible')) {
     hints.push('Install the exact runtime versions verified by this package.')
   } else if (runtimeChecks.some((check) => check.status === 'unknown')) {
@@ -136,23 +178,22 @@ export function createDoctorReport(input: {
     throw runtimeFailure('catalog_count')
   }
 
+  const platform = copyPlatformCheck(input.runtime.platform)
   const node = copyVersionCheck(input.runtime.node, 'node_version')
-  const dshLlm = copyVersionCheck(input.runtime.packages[DSH_LLM_PACKAGE], 'dsh_llm_version')
-  const dshPiAi = copyVersionCheck(input.runtime.packages[DSH_PIAI_PACKAGE], 'dsh_piai_version')
-  const piAi = copyVersionCheck(input.runtime.packages[PIAI_PACKAGE], 'piai_version')
-  const runtimeChecks = [node, ...Object.values(input.runtime.packages)]
+  const packages = copyPackageChecks(input.runtime.packages)
+  const runtimeChecks = [node, ...Object.values(packages)]
   const credentialStore = copyInspection(input.credentialStore)
 
   return Object.freeze({
     schemaVersion: 1,
-    overall: doctorOverall(runtimeChecks, credentialStore, input.modelCount),
+    overall: doctorOverall(platform, runtimeChecks, credentialStore, input.modelCount),
     package: packageInfo(input.version),
-    runtime: Object.freeze({ node, dshLlm, dshPiAi, piAi }),
+    runtime: Object.freeze({ platform, node, packages }),
     credentialStore,
     catalog: Object.freeze({
       provider: PROVIDER_ID,
       modelCount: input.modelCount,
     }),
-    hints: doctorHints(runtimeChecks, credentialStore, input.modelCount),
+    hints: doctorHints(platform, runtimeChecks, credentialStore, input.modelCount),
   })
 }
