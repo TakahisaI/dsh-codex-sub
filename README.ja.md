@@ -6,6 +6,7 @@
 > Milestone 0から7まで完了しています。
 > リポジトリ基盤、core契約、資格情報文書、package-owned file vault、pi-ai OAuth連携、DSHのLLM provider route、CLI、offline diagnostics、packed-install release gateが含まれます。
 > `0.1.0-alpha.0` はnpmの `alpha` dist-tagで公開済みで、対応するGitHub prereleaseもあります。
+> `0.1.0-alpha.1` は次のレビュー対象release candidateで、まだ公開されていません。
 
 ## プラグインが担う範囲
 
@@ -113,3 +114,6 @@ GitHub ActionsはLinux/macOSの全matrixを通過した一つのartifactをstage
 従来型のpublishing tokenは禁止済みで、maintainerが内容を確認して2FAで承認するまで公開されません。
 Alphaのrelease recordは [`docs/releases/`](https://github.com/TakahisaI/dsh-codex-sub/tree/main/docs/releases) にあります。
 実account試験では、[`docs/alpha-smoke-record.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/alpha-smoke-record.md) を使って秘密を含まないpass/failだけを記録します。
+release runは直列化し、進行中のcandidateをcancelしません。
+prerelease中は、明示的な `alpha` tagだけを承認済みの最新Alphaへ進め、npm bootstrapで作られた `latest` tagは `0.1.0-alpha.0` に残します。
+そのため、導入手順では常に `@alpha` を指定します。

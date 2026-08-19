@@ -201,6 +201,32 @@ Acceptance:
 - npm package remains on an alpha dist-tag;
 - the initial npm bootstrap and any provenance exception are explicitly recorded.
 
+## Milestone 8 — Stage-only release proof
+
+Status: in progress for `0.1.0-alpha.1`. This milestone changes release metadata and safeguards,
+not provider, OAuth, credential-storage, model-visible, or compatibility behavior.
+
+Deliverables:
+
+- serialize manual release runs without cancelling an in-progress candidate;
+- mechanically enforce the exact concurrency declaration;
+- record the post-bootstrap `alpha` and `latest` dist-tag policy;
+- prepare reviewed `0.1.0-alpha.1` candidate metadata and release notes;
+- stage the exact six-cell-verified workflow artifact through OIDC;
+- compare the staged download with the workflow artifact before maintainer approval;
+- approve with two-factor authentication, verify the registry artifact, and create a matching
+  GitHub prerelease.
+
+Acceptance:
+
+- overlapping release dispatches cannot race or cancel a candidate;
+- the published bytes match the artifact verified on every supported OS and Node line;
+- `alpha` moves to `0.1.0-alpha.1` while `latest` remains on `0.1.0-alpha.0`;
+- the final release record contains only secret-free commit, checksum, compatibility, and
+  pass/fail evidence;
+- ordinary use in another DSH repository may supply additional behavioral confidence but does not
+  replace the exact-artifact release proof.
+
 ## Deferred milestones
 
 The following require separate proposals and are not implied by the core roadmap:
