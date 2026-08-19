@@ -74,10 +74,12 @@ For each DSH or pi-ai update:
 3. install exact candidate versions;
 4. run typecheck to identify public-contract changes;
 5. run focused pi-ai auth and DSH adapter contract tests;
-6. run the packed-install matrix;
-7. perform a manual real-account smoke when auth or provider behavior changed;
-8. update ADRs and public limitations;
-9. publish a prerelease before promoting the normal dist-tag.
+6. review ADR 0006's configurable-provider decision and whether the documented discovery-namespace
+   list has become a published API;
+7. run the packed-install matrix;
+8. perform a manual real-account smoke when auth or provider behavior changed;
+9. update ADRs and public limitations;
+10. publish a prerelease before promoting the normal dist-tag.
 
 Never merge an automated dependency update solely because compilation passes.
 

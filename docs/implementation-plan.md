@@ -98,7 +98,7 @@ Deliverables:
 - Cordis plugin entry;
 - bundle patch;
 - DSH adapter contract tests;
-- model-picker visibility spike and acceptance test.
+- public DSH registration-path spike and LLM-runtime contract test.
 
 Acceptance:
 
@@ -108,11 +108,13 @@ Acceptance:
 - request cancellation and replay behavior use DSH's adapter contract;
 - no DSH Web, settings, search, or tool registration is added.
 
-Decision point:
+Provisional decision:
 
-If adapter registration alone does not make the provider visible in the current DSH model picker,
-add the smallest Host-only configurable-provider directory registration supported by the public API.
-Do not add a browser card. Record the exact need in an ADR.
+The pinned DSH runtime exposes a live adapter's provider metadata and catalog through its public
+registry after `registerAdapter()` alone. The spike does not exercise the actual model selector, so
+the first release provisionally omits a configurable-provider directory, settings namespace, and
+browser card. Milestone 6 must verify the selector through a packed install and add the smallest
+Host-only directory registration if the live registry is insufficient. See ADR 0006.
 
 ## Milestone 5 — CLI and diagnostics
 
@@ -139,6 +141,7 @@ Deliverables:
 - built export map;
 - tarball content verification;
 - temporary-profile packed install test;
+- packed model-selector visibility acceptance test;
 - install, login, usage, logout, uninstall documentation;
 - security and limitation documentation;
 - release workflow prepared but not enabled until license and registry ownership are decided.
