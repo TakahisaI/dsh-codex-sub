@@ -230,6 +230,30 @@ Acceptance:
 - ordinary use in another DSH repository may supply additional behavioral confidence but does not
   replace the exact-artifact release proof.
 
+## Post-Alpha reliability gate — DSH retry safety
+
+Status: complete in the retry-safety implementation branch. This gate changes tests and documented
+contracts, not runtime behavior.
+
+Deliverables:
+
+- deterministic full-agent-loop tests for transient failures, timeouts, cancellation, partial
+  streams, retry exhaustion, and tool-call acceptance;
+- exact-once tool execution proof across a failed attempt and an accepted retry;
+- durable JSONL restart/resume proof;
+- crash-repair classification proof for unstarted and outcome-unknown tool calls;
+- ADR 0015 recording the pinned DSH event-topology mismatch and ownership decision.
+
+Acceptance:
+
+- no failed partial output enters derived history;
+- no failed attempt executes a tool;
+- cancellation starts no replacement request;
+- normal retry remains finite;
+- resume does not repeat a previously completed tool;
+- no generated secret sentinel reaches durable or model-visible output;
+- no product runtime dependency or retry implementation is added.
+
 ## Deferred milestones
 
 The following require separate proposals and are not implied by the core roadmap:

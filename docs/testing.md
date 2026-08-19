@@ -130,6 +130,29 @@ Verify:
 Do not re-test every internal behavior of DSH `PiAiAdapter`; pin only the behaviors on which this
 plugin relies.
 
+### 1.5a DSH retry-safety contract tests
+
+Mount the official agent-loop test dependencies, this package's adapter, DSH's retry policy, the
+concrete agent loop, and only public pi-ai provider/event fixtures. Keep retry delays and stream
+timeouts deterministic and short. Verify:
+
+- pre-output 429, 500, 503, and transport failures map to DSH's stable retryable codes;
+- a bare unclassified overload is bounded to one `PI_AI_ERROR` attempt;
+- normal retry stops after two repeats, and cancellation during backoff starts no later attempt;
+- stream timeout exhausts the same finite budget, while user cancellation is never retried;
+- failed partial reasoning, text, and tool arguments remain raw chunk records but never enter
+  `deriveMessages()`;
+- a complete tool call emitted by a failed attempt does not execute, while the accepted retry's
+  identical call executes exactly once;
+- interrupted-session repair distinguishes `TOOL_NOT_STARTED` from `TOOL_OUTCOME_UNKNOWN`;
+- JSONL restart/resume restores one durable tool result without re-executing the tool;
+- the generated access-token sentinel is absent from events, derived messages, and failures.
+
+The pinned DSH implementation records retry attempts inside one turn and step, despite its public
+retry README describing fresh numbered turns. Assert the observed topology so a dependency update
+must review that mismatch explicitly; the safety assertion is that only the successful attempt
+produces a surface assistant message. See ADR 0015.
+
 After the normal source tests, build the package root and mount that emitted module in the same
 minimal Cordis/LLM composition. The built-entry check must observe the real provider catalog and
 complete effect disposal without OAuth or model network traffic.
