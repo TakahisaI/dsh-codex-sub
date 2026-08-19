@@ -3,6 +3,10 @@ import { format, inspect } from 'node:util'
 
 import { describe, expect, it } from 'vitest'
 
+import {
+  SHADOWED_PROVIDER_DATA_KEYS,
+  decodeCredentialDocumentValue,
+} from '../src/core/credential-document.js'
 import { CodexError } from '../src/core/errors.js'
 import {
   fromPiAiOAuthCredential,
@@ -60,6 +64,7 @@ describe('pi-ai OAuth credential conversion', () => {
     })
     expect(converted).toEqual(credential)
     expect(converted).not.toBe(credential)
+    expect(SHADOWED_PROVIDER_DATA_KEYS).toEqual(['type', 'access', 'refresh', 'expires'])
   })
 
   it('preserves an own __proto__ provider field without prototype pollution', () => {
@@ -118,12 +123,27 @@ describe('pi-ai OAuth credential conversion', () => {
       }),
       [access, refresh],
     )
+    const providerStringFailure = expectUpstreamFailure(
+      () => fromPiAiOAuthCredential({
+        type: 'oauth',
+        access,
+        refresh,
+        expires: 1_900_000_000_000,
+        providerField: 'x'.repeat(10_000),
+      }),
+      [access, refresh],
+    )
+    expect(providerStringFailure.safeDetails).toEqual({
+      reason: 'credential_shape',
+      validationReason: 'provider_data',
+      jsonReason: 'string_too_long',
+    })
   })
 
-  it('revalidates project documents and rejects shadowing provider data', () => {
+  it('rejects shadowing provider data at the untrusted document boundary', () => {
     const access = `ACCESS_SENTINEL_${randomUUID()}`
     const refresh = `REFRESH_SENTINEL_${randomUUID()}`
-    expect(() => toPiAiOAuthCredential({
+    expect(() => decodeCredentialDocumentValue({
       schemaVersion: 1,
       provider: 'openai-codex',
       credential: {

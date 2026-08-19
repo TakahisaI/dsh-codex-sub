@@ -17,7 +17,13 @@ export const MAX_PROVIDER_DATA_STRING_LENGTH = 8_192
 
 const DOCUMENT_KEYS = ['schemaVersion', 'provider', 'credential'] as const
 const CREDENTIAL_KEYS = ['accessToken', 'refreshToken', 'expiresAt', 'providerData'] as const
-const SHADOWED_PROVIDER_DATA_KEYS = new Set(['type', 'access', 'refresh', 'expires'])
+export const SHADOWED_PROVIDER_DATA_KEYS = Object.freeze([
+  'type',
+  'access',
+  'refresh',
+  'expires',
+] as const)
+const SHADOWED_PROVIDER_DATA_KEY_SET = new Set<string>(SHADOWED_PROVIDER_DATA_KEYS)
 
 export interface CodexCredentialDocumentV1 {
   readonly schemaVersion: typeof CREDENTIAL_SCHEMA_VERSION
@@ -163,7 +169,7 @@ function normalizeProviderData(value: unknown): JsonObject {
     invalidDocument('provider_data', error, jsonFailureReason(error))
   }
 
-  for (const key of SHADOWED_PROVIDER_DATA_KEYS) {
+  for (const key of SHADOWED_PROVIDER_DATA_KEY_SET) {
     if (Object.hasOwn(normalized, key)) {
       invalidDocument('provider_data_shadow')
     }

@@ -108,6 +108,9 @@ export interface CodexAuthService {
 ```
 
 The concrete pi-ai adapter narrows `interaction` to the published `AuthInteraction` type internally.
+Request-auth refresh is bounded to 30 seconds and cancellation releases the credential lock even
+when the pinned provider does not settle its refresh promise. The current request-auth projection
+accepts only the exact access-token `apiKey`; additional upstream auth fields fail explicitly.
 Do not export `CodexRequestAuth` from the package root.
 
 ## 7. Error shape

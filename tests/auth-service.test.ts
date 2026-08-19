@@ -3,6 +3,7 @@ import { format, inspect } from 'node:util'
 
 import type {
   AuthInteraction,
+  ModelAuth,
   OAuthAuth,
   OAuthCredential,
   Provider,
@@ -74,6 +75,7 @@ class OAuthProbe implements OAuthAuth {
   readonly refreshStarted = deferred<void>()
 
   loginCalls = 0
+  refreshCompletions = 0
   refreshCalls = 0
   toAuthCalls = 0
   refreshSignal: AbortSignal | undefined
@@ -81,6 +83,7 @@ class OAuthProbe implements OAuthAuth {
   refreshError: unknown
   refreshGate: Promise<void> | undefined
   toAuthError: unknown
+  toAuthFactory: ((credential: OAuthCredential) => ModelAuth) | undefined
 
   constructor(
     readonly loginCredential: OAuthCredential,
@@ -110,15 +113,16 @@ class OAuthProbe implements OAuthAuth {
     if (this.refreshError !== undefined) {
       throw this.refreshError
     }
+    this.refreshCompletions += 1
     return this.refreshedCredential
   }
 
-  async toAuth(value: OAuthCredential): Promise<{ apiKey: string }> {
+  async toAuth(value: OAuthCredential): Promise<ModelAuth> {
     this.toAuthCalls += 1
     if (this.toAuthError !== undefined) {
       throw this.toAuthError
     }
-    return { apiKey: value.access }
+    return this.toAuthFactory?.(value) ?? { apiKey: value.access }
   }
 }
 
@@ -158,6 +162,66 @@ describe('PiAiCodexAuthService', () => {
     expect(status).toEqual({ state: 'signed-in', refreshExpected: false })
     expect(JSON.stringify(status)).not.toContain(loginCredential.access)
     expect(JSON.stringify(status)).not.toContain(loginCredential.refresh)
+  })
+
+  it.each([
+    'CODEX_AUTH_STORAGE_INVALID' as const,
+    'CODEX_AUTH_STORAGE_INSECURE' as const,
+  ])('preserves %s when Models.login wraps the store failure', async (code) => {
+    const now = 1_800_000_000_000
+    const probe = new OAuthProbe(credential(now + 60_000), credential(now + 120_000))
+    const vault = new MemoryCredentialVault()
+    const storageError = new CodexError('Safe storage failure.', code)
+    vault.modifyError = storageError
+    const service = new PiAiCodexAuthService({
+      provider: providerWithOAuth(probe),
+      vault,
+    })
+
+    await expect(service.login(interaction())).rejects.toBe(storageError)
+  })
+
+  it('rejects an already-aborted interaction before starting provider login', async () => {
+    const now = 1_800_000_000_000
+    const probe = new OAuthProbe(credential(now + 60_000), credential(now + 120_000))
+    const vault = new MemoryCredentialVault()
+    const service = new PiAiCodexAuthService({
+      provider: providerWithOAuth(probe),
+      vault,
+    })
+    const controller = new AbortController()
+    controller.abort(new Error(`CODE_SENTINEL_${randomUUID()}`))
+
+    await expect(service.login({
+      ...interaction(),
+      signal: controller.signal,
+    })).rejects.toMatchObject({
+      name: 'AbortError',
+      message: 'The operation was aborted.',
+    })
+    expect(probe.loginCalls).toBe(0)
+    expect(vault.modifyCalls).toBe(0)
+  })
+
+  it('reports login success when cancellation arrives after the credential commit', async () => {
+    const now = 1_800_000_000_000
+    const loginCredential = credential(now + 60_000)
+    const probe = new OAuthProbe(loginCredential, credential(now + 120_000))
+    const vault = new MemoryCredentialVault()
+    const controller = new AbortController()
+    vault.afterModify = () => {
+      controller.abort()
+    }
+    const service = new PiAiCodexAuthService({
+      provider: providerWithOAuth(probe),
+      vault,
+    })
+
+    await expect(service.login({
+      ...interaction(),
+      signal: controller.signal,
+    })).resolves.toBeUndefined()
+    expect(vault.peek()).toEqual(fromPiAiOAuthCredential(loginCredential))
   })
 
   it('reports signed-out, refresh-expected, invalid, and insecure storage offline', async () => {
@@ -207,6 +271,14 @@ describe('PiAiCodexAuthService', () => {
       state: 'insecure-storage',
       code: 'CODEX_AUTH_STORAGE_INSECURE',
     })
+
+    const programmingError = new TypeError('programming failure')
+    const brokenVault = new MemoryCredentialVault()
+    brokenVault.readError = programmingError
+    await expect(new PiAiCodexAuthService({
+      provider: providerWithOAuth(new OAuthProbe(expired, expired)),
+      vault: brokenVault,
+    }).status()).rejects.toBe(programmingError)
   })
 
   it('fails missing auth before refresh or request-auth derivation and ignores ambient keys', async () => {
@@ -253,6 +325,26 @@ describe('PiAiCodexAuthService', () => {
     expect(auth.bearerToken).toBe(current.access)
     expect(probe.refreshCalls).toBe(0)
     expect(probe.toAuthCalls).toBe(1)
+  })
+
+  it.each([
+    ['baseUrl', (access: string): ModelAuth => ({ apiKey: access, baseUrl: 'https://example.test' })],
+    ['headers', (access: string): ModelAuth => ({ apiKey: access, headers: { 'x-auth': 'value' } })],
+  ])('rejects an unsupported request-auth %s field instead of discarding it', async (_field, auth) => {
+    const now = 1_800_000_000_000
+    const current = credential(now + 60_000)
+    const probe = new OAuthProbe(current, credential(now + 120_000))
+    probe.toAuthFactory = (value) => auth(value.access)
+    const service = new PiAiCodexAuthService({
+      now: () => now,
+      provider: providerWithOAuth(probe),
+      vault: new MemoryCredentialVault(fromPiAiOAuthCredential(current)),
+    })
+
+    await expect(service.resolveRequestAuth()).rejects.toMatchObject({
+      code: 'CODEX_UPSTREAM_PROTOCOL',
+      safeDetails: { reason: 'request_auth_fields' },
+    })
   })
 
   it('refreshes concurrent expired requests once inside the vault writer', async () => {
@@ -341,15 +433,45 @@ describe('PiAiCodexAuthService', () => {
     expect(vault.peek()).toEqual(fromPiAiOAuthCredential(expired))
   })
 
+  it('releases the vault writer after the bounded refresh deadline', async () => {
+    const now = 1_800_000_000_000
+    const expired = credential(now - 1)
+    const probe = new OAuthProbe(expired, credential(now + 60_000))
+    const gate = deferred<void>()
+    probe.refreshGate = gate.promise
+    const vault = new MemoryCredentialVault(fromPiAiOAuthCredential(expired))
+    const service = new PiAiCodexAuthService({
+      now: () => now,
+      provider: providerWithOAuth(probe),
+      refreshTimeoutMs: 10,
+      vault,
+    })
+
+    await expect(service.resolveRequestAuth()).rejects.toMatchObject({
+      code: 'CODEX_REAUTH_REQUIRED',
+    })
+    expect(vault.activeWriters).toBe(0)
+    expect(vault.peek()).toEqual(fromPiAiOAuthCredential(expired))
+    gate.resolve()
+    await vi.waitFor(() => {
+      expect(probe.refreshCompletions).toBe(1)
+    })
+    expect(vault.peek()).toEqual(fromPiAiOAuthCredential(expired))
+    await expect(service.logout()).resolves.toBeUndefined()
+    expect(vault.peek()).toBeUndefined()
+  })
+
   it('passes cancellation into refresh and returns a fixed AbortError', async () => {
     const now = 1_800_000_000_000
     const expired = credential(now - 1)
     const probe = new OAuthProbe(expired, credential(now + 60_000))
     probe.refreshGate = new Promise<void>(() => undefined)
+    const vault = new MemoryCredentialVault(fromPiAiOAuthCredential(expired))
+    vault.wrapOperationErrors = true
     const service = new PiAiCodexAuthService({
       now: () => now,
       provider: providerWithOAuth(probe),
-      vault: new MemoryCredentialVault(fromPiAiOAuthCredential(expired)),
+      vault,
     })
     const controller = new AbortController()
 
@@ -362,6 +484,24 @@ describe('PiAiCodexAuthService', () => {
       message: 'The operation was aborted.',
     })
     expect(probe.refreshSignal).toBe(controller.signal)
+  })
+
+  it('preserves safe storage errors from logout without a ModelsError wrapper', async () => {
+    const now = 1_800_000_000_000
+    const sentinel = `PATH_SENTINEL_${randomUUID()}`
+    const error = new CodexError('Credential storage is insecure.', 'CODEX_AUTH_STORAGE_INSECURE', {
+      cause: new Error(sentinel),
+      safeDetails: { reason: 'directory_symlink' },
+    })
+    const vault = new MemoryCredentialVault(fromPiAiOAuthCredential(credential(now + 60_000)))
+    vault.deleteError = error
+    const service = new PiAiCodexAuthService({
+      provider: providerWithOAuth(new OAuthProbe(credential(now + 1), credential(now + 2))),
+      vault,
+    })
+
+    await expect(service.logout()).rejects.toBe(error)
+    expect(printable(error)).not.toContain(sentinel)
   })
 
   it('maps login failures safely and preserves cancellation separately', async () => {
@@ -445,6 +585,18 @@ describe('PiAiCodexAuthService', () => {
     })).toThrowError(expect.objectContaining({
       code: 'CODEX_UPSTREAM_PROTOCOL',
       safeDetails: { reason: 'provider_auth' },
+    }))
+  })
+
+  it('rejects a non-positive refresh deadline', () => {
+    const now = 1_800_000_000_000
+    expect(() => new PiAiCodexAuthService({
+      provider: providerWithOAuth(new OAuthProbe(credential(now + 1), credential(now + 2))),
+      refreshTimeoutMs: 0,
+      vault: new MemoryCredentialVault(),
+    })).toThrowError(expect.objectContaining({
+      code: 'CODEX_UPSTREAM_PROTOCOL',
+      safeDetails: { reason: 'refresh_timeout' },
     }))
   })
 })

@@ -78,12 +78,24 @@ describe('PiAiCredentialStore', () => {
     const store = new PiAiCredentialStore(vault)
 
     await expect(store.read('other-provider')).resolves.toBeUndefined()
-    await expect(store.delete('other-provider')).resolves.toBeUndefined()
+    await expect(store.delete('other-provider')).rejects.toMatchObject({
+      code: 'CODEX_UPSTREAM_PROTOCOL',
+      safeDetails: { reason: 'provider' },
+    })
     await expect(store.modify('other-provider', async () => undefined)).rejects.toMatchObject({
       code: 'CODEX_UPSTREAM_PROTOCOL',
       safeDetails: { reason: 'provider' },
     })
     expect(vault.peek()).toEqual(initial)
+  })
+
+  it('fails list on invalid storage instead of reporting a silent absence', async () => {
+    const vault = new MemoryCredentialVault()
+    const error = new CodexError('Credential storage is invalid.', 'CODEX_AUTH_STORAGE_INVALID')
+    vault.readError = error
+    const store = new PiAiCredentialStore(vault)
+
+    await expect(store.list()).rejects.toBe(error)
   })
 
   it('rejects a non-OAuth callback result without changing the document', async () => {

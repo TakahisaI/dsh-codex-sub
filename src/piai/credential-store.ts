@@ -34,6 +34,8 @@ export class PiAiCredentialStore implements CredentialStore {
   }
 
   async list(): Promise<readonly CredentialInfo[]> {
+    // A metadata listing still validates storage and fails closed; inspect() would collapse
+    // malformed or unreadable credentials into a non-throwing projection.
     const document = await this.#vault.read()
     if (document === undefined) {
       return Object.freeze([])
@@ -61,8 +63,9 @@ export class PiAiCredentialStore implements CredentialStore {
   }
 
   async delete(providerId: string): Promise<void> {
-    if (providerId === PROVIDER_ID) {
-      await this.#vault.delete()
+    if (providerId !== PROVIDER_ID) {
+      throw unsupportedProvider()
     }
+    await this.#vault.delete()
   }
 }

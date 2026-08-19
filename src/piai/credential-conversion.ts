@@ -7,20 +7,32 @@ import {
   MAX_PROVIDER_DATA_ARRAY_LENGTH,
   MAX_PROVIDER_DATA_DEPTH,
   MAX_PROVIDER_DATA_KEYS,
+  SHADOWED_PROVIDER_DATA_KEYS,
   decodeCredentialDocumentValue,
 } from '../core/credential-document.js'
 import type { CodexCredentialDocument } from '../core/credential-document.js'
 import { PROVIDER_ID } from '../core/constants.js'
-import { CodexError } from '../core/errors.js'
+import { CodexError, isCodexError } from '../core/errors.js'
 import { validateJsonObject } from '../core/json.js'
 import type { JsonObject } from '../core/json.js'
 
-const CANONICAL_PIAI_FIELDS = new Set(['type', 'access', 'refresh', 'expires'])
+const CANONICAL_PIAI_FIELDS = new Set<string>(SHADOWED_PROVIDER_DATA_KEYS)
 
 function unsupportedCredential(reason: string, cause?: unknown): never {
+  const safeDetails: Record<string, string> = { reason }
+  if (isCodexError(cause)) {
+    const validationReason = cause.safeDetails?.['reason']
+    const jsonReason = cause.safeDetails?.['jsonReason']
+    if (typeof validationReason === 'string') {
+      safeDetails['validationReason'] = validationReason
+    }
+    if (typeof jsonReason === 'string') {
+      safeDetails['jsonReason'] = jsonReason
+    }
+  }
   throw new CodexError('The pi-ai OAuth credential is incompatible.', 'CODEX_UPSTREAM_PROTOCOL', {
     cause,
-    safeDetails: { reason },
+    safeDetails,
   })
 }
 
@@ -38,8 +50,7 @@ function normalizePiAiCredential(value: unknown): JsonObject {
   }
 }
 
-export function toPiAiOAuthCredential(value: unknown): OAuthCredential {
-  const document = decodeCredentialDocumentValue(value)
+export function toPiAiOAuthCredential(document: CodexCredentialDocument): OAuthCredential {
   return {
     ...document.credential.providerData,
     type: 'oauth',

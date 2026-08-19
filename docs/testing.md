@@ -52,6 +52,8 @@ Inject a fake provider with OAuth behavior equivalent to the public contract and
 - login persists through `CredentialStore.modify()`;
 - request auth refreshes an expired credential under `modify()`;
 - simultaneous request-auth calls do not double-refresh;
+- cancellation and the service deadline release the writer even when provider refresh does not
+  settle;
 - `undefined` from a modify callback leaves the credential unchanged;
 - refresh failure is translated to `CODEX_REAUTH_REQUIRED` without leaking the cause;
 - provider-specific JSON fields round-trip through the project document;
@@ -63,6 +65,7 @@ Add one focused contract test using the real `openaiCodexProvider()` object with
 - an OAuth auth method exists;
 - catalog models are non-empty;
 - the explicit request-auth wrapper accepts the plugin-supplied token and does not use ambient keys.
+- unsupported `ModelAuth` fields fail instead of being discarded.
 
 If the real provider cannot be tested without network I/O, isolate the untestable line and document
 it as a manual compatibility check rather than mocking undocumented internals.

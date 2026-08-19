@@ -1,4 +1,5 @@
 import {
+  ModelsError,
   createModels,
 } from '@earendil-works/pi-ai'
 import type {
@@ -23,6 +24,8 @@ import { PROVIDER_ID } from '../core/constants.js'
 import { CodexError, isCodexError } from '../core/errors.js'
 import { PiAiCredentialStore } from './credential-store.js'
 
+export const DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 30_000
+
 const NO_AMBIENT_AUTH_CONTEXT: AuthContext = Object.freeze({
   async env(_name: string): Promise<undefined> {
     return undefined
@@ -35,6 +38,7 @@ const NO_AMBIENT_AUTH_CONTEXT: AuthContext = Object.freeze({
 export interface PiAiCodexAuthServiceOptions {
   readonly vault: CodexCredentialVault
   readonly now?: () => number
+  readonly refreshTimeoutMs?: number
   /** Published-provider injection seam for offline contract tests. */
   readonly provider?: Provider
 }
@@ -112,6 +116,80 @@ function throwIfAborted(signal?: AbortSignal): void {
   if (signal?.aborted === true) {
     throw abortFailure()
   }
+}
+
+function storageErrorFromModels(error: unknown): CodexError | undefined {
+  if (!(error instanceof ModelsError) || error.code !== 'auth') {
+    return undefined
+  }
+  const cause = error.cause
+  return isCodexError(cause)
+    && (cause.code === 'CODEX_AUTH_STORAGE_INVALID' || cause.code === 'CODEX_AUTH_STORAGE_INSECURE')
+    ? cause
+    : undefined
+}
+
+function refreshWithDeadline(
+  oauth: OAuthAuth,
+  credential: OAuthCredential,
+  signal: AbortSignal | undefined,
+  timeoutMs: number,
+  markCancelled: () => void,
+): Promise<OAuthCredential> {
+  return new Promise<OAuthCredential>((resolve, reject) => {
+    let settled = false
+    let timeout: ReturnType<typeof setTimeout> | undefined
+
+    const cleanup = (): void => {
+      if (timeout !== undefined) {
+        clearTimeout(timeout)
+      }
+      signal?.removeEventListener('abort', onAbort)
+    }
+    const resolveOnce = (value: OAuthCredential): void => {
+      if (!settled) {
+        settled = true
+        cleanup()
+        resolve(value)
+      }
+    }
+    const rejectOnce = (error: unknown): void => {
+      if (!settled) {
+        settled = true
+        cleanup()
+        reject(error)
+      }
+    }
+    const cancel = (): void => {
+      markCancelled()
+      rejectOnce(new RefreshCancelled())
+    }
+    const onAbort = (): void => {
+      cancel()
+    }
+
+    if (signal?.aborted === true) {
+      cancel()
+      return
+    }
+    signal?.addEventListener('abort', onAbort, { once: true })
+    timeout = setTimeout(() => {
+      rejectOnce(reauthRequired())
+    }, timeoutMs)
+
+    const rejectRefresh = (error: unknown): void => {
+      if (isAbortFailure(error, signal)) {
+        cancel()
+      } else {
+        rejectOnce(reauthRequired(error))
+      }
+    }
+    try {
+      void oauth.refresh(credential, signal).then(resolveOnce, rejectRefresh)
+    } catch (error) {
+      rejectRefresh(error)
+    }
+  })
 }
 
 function readOwnDataProperty(value: object, key: string): unknown {
@@ -192,8 +270,19 @@ function requestTokenFromAuth(value: unknown, credential: OAuthCredential): stri
   }
   let descriptor: PropertyDescriptor | undefined
   try {
+    const prototype = Object.getPrototypeOf(value)
+    if (prototype !== Object.prototype && prototype !== null) {
+      throw upstreamProtocol('request_auth_shape')
+    }
+    const keys = Reflect.ownKeys(value)
+    if (keys.some((key) => typeof key !== 'string' || key !== 'apiKey')) {
+      throw upstreamProtocol('request_auth_fields')
+    }
     descriptor = Object.getOwnPropertyDescriptor(value, 'apiKey')
   } catch (error) {
+    if (isCodexError(error)) {
+      throw error
+    }
     throw upstreamProtocol('request_auth_shape', error)
   }
   if (
@@ -210,16 +299,23 @@ function requestTokenFromAuth(value: unknown, credential: OAuthCredential): stri
 }
 
 function statusFromStorageError(error: unknown): CodexAuthStatus {
-  if (isCodexError(error) && error.code === 'CODEX_AUTH_STORAGE_INSECURE') {
+  if (!isCodexError(error)) {
+    throw error
+  }
+  if (error.code === 'CODEX_AUTH_STORAGE_INSECURE') {
     return Object.freeze({ state: 'insecure-storage', code: error.code })
   }
-  return Object.freeze({ state: 'invalid-storage', code: 'CODEX_AUTH_STORAGE_INVALID' })
+  if (error.code === 'CODEX_AUTH_STORAGE_INVALID') {
+    return Object.freeze({ state: 'invalid-storage', code: error.code })
+  }
+  throw error
 }
 
 export class PiAiCodexAuthService implements CodexAuthServiceContract {
   readonly #models: Models
   readonly #now: () => number
   readonly #oauth: OAuthAuth
+  readonly #refreshTimeoutMs: number
   readonly #store: PiAiCredentialStore
   readonly #vault: CodexCredentialVault
 
@@ -237,6 +333,10 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
     this.#store = new PiAiCredentialStore(options.vault)
     this.#oauth = provider.auth.oauth
     this.#now = options.now ?? Date.now
+    this.#refreshTimeoutMs = options.refreshTimeoutMs ?? DEFAULT_OAUTH_REFRESH_TIMEOUT_MS
+    if (!Number.isSafeInteger(this.#refreshTimeoutMs) || this.#refreshTimeoutMs <= 0) {
+      throw upstreamProtocol('refresh_timeout')
+    }
 
     const models = createModels({
       authContext: NO_AMBIENT_AUTH_CONTEXT,
@@ -251,8 +351,8 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
     let normalizedInteraction: AuthInteraction | undefined
     try {
       normalizedInteraction = normalizeInteraction(interaction, signal)
-      await this.#models.login(PROVIDER_ID, 'oauth', normalizedInteraction)
       throwIfAborted(normalizedInteraction.signal)
+      await this.#models.login(PROVIDER_ID, 'oauth', normalizedInteraction)
     } catch (error) {
       if (isAbortFailure(error, normalizedInteraction?.signal ?? signal)) {
         throw abortFailure()
@@ -267,6 +367,10 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
         )
       ) {
         throw error
+      }
+      const storageError = storageErrorFromModels(error)
+      if (storageError !== undefined) {
+        throw storageError
       }
       throw loginFailed('oauth', error)
     }
@@ -296,9 +400,11 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
     let oauthCredential = requireOAuthCredential(credential)
 
     if (oauthCredential.expires <= this.#now()) {
+      let refreshCancelled = false
       try {
         credential = await this.#store.modify(PROVIDER_ID, async (current) => {
           if (signal?.aborted === true) {
+            refreshCancelled = true
             throw new RefreshCancelled()
           }
           if (current === undefined) {
@@ -308,17 +414,18 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
           if (currentOAuth.expires > this.#now()) {
             return undefined
           }
-          try {
-            return await this.#oauth.refresh(currentOAuth, signal)
-          } catch (error) {
-            if (isAbortFailure(error, signal)) {
-              throw new RefreshCancelled()
-            }
-            throw reauthRequired(error)
-          }
+          return refreshWithDeadline(
+            this.#oauth,
+            currentOAuth,
+            signal,
+            this.#refreshTimeoutMs,
+            () => {
+              refreshCancelled = true
+            },
+          )
         })
       } catch (error) {
-        if (error instanceof RefreshCancelled) {
+        if (refreshCancelled) {
           throw abortFailure()
         }
         throw error
@@ -346,6 +453,6 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
   }
 
   async logout(): Promise<void> {
-    await this.#models.logout(PROVIDER_ID)
+    await this.#store.delete(PROVIDER_ID)
   }
 }

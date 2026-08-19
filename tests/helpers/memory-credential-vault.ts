@@ -23,6 +23,11 @@ export class MemoryCredentialVault implements CodexCredentialVault {
   maxActiveWriters = 0
   modifyCalls = 0
   readCalls = 0
+  afterModify: (() => void) | undefined
+  deleteError: unknown
+  modifyError: unknown
+  readError: unknown
+  wrapOperationErrors = false
 
   #document: CodexCredentialDocument | undefined
   #writerTail: Promise<void> = Promise.resolve()
@@ -33,6 +38,9 @@ export class MemoryCredentialVault implements CodexCredentialVault {
 
   async read(): Promise<CodexCredentialDocument | undefined> {
     this.readCalls += 1
+    if (this.readError !== undefined) {
+      throw this.readError
+    }
     return cloneDocument(this.#document)
   }
 
@@ -42,12 +50,15 @@ export class MemoryCredentialVault implements CodexCredentialVault {
     ) => Promise<CodexCredentialDocument | undefined>,
   ): Promise<CodexCredentialDocument | undefined> {
     this.modifyCalls += 1
-    return this.#withWriter(async () => {
+    if (this.modifyError !== undefined) {
+      throw this.modifyError
+    }
+    const result = await this.#withWriter(async () => {
       let candidate: CodexCredentialDocument | undefined
       try {
         candidate = await operation(cloneDocument(this.#document))
       } catch (error) {
-        if (isCodexError(error)) {
+        if (isCodexError(error) && !this.wrapOperationErrors) {
           throw error
         }
         throw new CodexError('Credential storage is invalid.', 'CODEX_AUTH_STORAGE_INVALID', {
@@ -60,10 +71,15 @@ export class MemoryCredentialVault implements CodexCredentialVault {
       }
       return cloneDocument(this.#document)
     })
+    this.afterModify?.()
+    return result
   }
 
   async delete(): Promise<void> {
     this.deleteCalls += 1
+    if (this.deleteError !== undefined) {
+      throw this.deleteError
+    }
     await this.#withWriter(async () => {
       this.#document = undefined
     })
