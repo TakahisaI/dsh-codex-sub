@@ -556,7 +556,7 @@ describe('PiAiCodexAuthService', () => {
     expect(vault.peek()).toEqual(fromPiAiOAuthCredential(expired))
   })
 
-  it('bounds safe lock-contention retries while the stored credential remains stale', async () => {
+  it('bounds safe lock-contention retries by the shared refresh deadline', async () => {
     const now = 1_800_000_000_000
     const expired = credential(now - 1)
     const sentinel = `PATH_SENTINEL_${randomUUID()}`
@@ -573,6 +573,7 @@ describe('PiAiCodexAuthService', () => {
     const service = new PiAiCodexAuthService({
       now: () => now,
       provider: providerWithOAuth(probe),
+      refreshTimeoutMs: 120,
       vault,
     })
 
@@ -584,10 +585,10 @@ describe('PiAiCodexAuthService', () => {
     }
     expect(failure).toMatchObject({
       code: 'CODEX_AUTH_REFRESH_FAILED',
-      safeDetails: { reason: 'lock_contention' },
+      safeDetails: { reason: 'deadline' },
     })
     expect(printable(failure)).not.toContain(sentinel)
-    expect(vault.modifyCalls).toBe(3)
+    expect(vault.modifyCalls).toBeGreaterThan(1)
     expect(probe.refreshCalls).toBe(0)
   })
 

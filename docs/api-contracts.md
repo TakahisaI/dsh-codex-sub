@@ -114,8 +114,9 @@ Request-auth refresh uses a 30-second pre-expiry window and is bounded to 30 sec
 callers in one service instance share a flight for the same credential generation. A caller's
 cancellation ends only that caller's wait; the shared deadline releases the credential lock even
 when the pinned provider does not settle its refresh promise. Safe file-lock contention is retried
-at most three times while the credential remains stale. The current request-auth projection accepts
-only the exact access-token `apiKey`; additional upstream auth fields fail explicitly.
+while the credential remains stale and the shared deadline remains open. The current request-auth
+projection accepts only the exact access-token `apiKey`; additional upstream auth fields fail
+explicitly.
 Do not export `CodexRequestAuth` from the package root.
 
 ## 7. DSH request integration
@@ -158,9 +159,9 @@ freeze.
 
 `CODEX_AUTH_REFRESH_FAILED` means refresh did not produce a usable credential but the public
 upstream contract did not prove that interactive login is required. Its safe `reason` distinguishes
-`deadline`, `lock_contention`, `credential_changed`, and `provider_unclassified` without inspecting
-an upstream exception message. `CODEX_REAUTH_REQUIRED` is reserved for an explicitly classified
-permanent authentication rejection.
+`deadline` and `provider_unclassified` without inspecting an upstream exception message.
+`CODEX_REAUTH_REQUIRED` is reserved for an explicitly classified permanent authentication
+rejection.
 
 ## 9. CLI JSON
 

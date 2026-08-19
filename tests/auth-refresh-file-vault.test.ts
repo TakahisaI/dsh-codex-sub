@@ -11,7 +11,7 @@ import type {
   Provider,
 } from '@earendil-works/pi-ai'
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 
 import type {
   CodexCredentialVault,
@@ -90,6 +90,7 @@ class SlowOAuth implements OAuthAuth {
 
 class ObservedVault implements CodexCredentialVault {
   lockFailures = 0
+  afterLockFailure: ((count: number) => Promise<void>) | undefined
 
   constructor(readonly inner: FileCredentialVault) {}
 
@@ -111,6 +112,7 @@ class ObservedVault implements CodexCredentialVault {
         && error.safeDetails?.['reason'] === 'lock_failed'
       ) {
         this.lockFailures += 1
+        await this.afterLockFailure?.(this.lockFailures)
       }
       throw error
     }
@@ -200,19 +202,22 @@ describe('OAuth refresh with FileCredentialVault', () => {
 
     const first = firstService.resolveRequestAuth()
     await oauth.started.promise
+    secondVault.afterLockFailure = async (count) => {
+      if (count === 3) {
+        gate.resolve()
+        await first
+      }
+    }
     const second = secondService.resolveRequestAuth()
-    await vi.waitFor(() => {
-      expect(secondVault.lockFailures).toBe(1)
-    }, { timeout: 5_000 })
-    gate.resolve()
 
     await expect(Promise.all([first, second])).resolves.toEqual([
       { bearerToken: refreshed.access },
       { bearerToken: refreshed.access },
     ])
+    expect(secondVault.lockFailures).toBe(3)
     expect(oauth.calls).toBe(1)
     await expect(setupVault.read()).resolves.toEqual(fromPiAiOAuthCredential(refreshed))
-  }, 10_000)
+  }, 15_000)
 
   it('serializes logout after a slow refresh without resurrecting credentials', async () => {
     const now = 1_800_000_000_000

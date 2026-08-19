@@ -27,7 +27,6 @@ import { PiAiCredentialStore } from './credential-store.js'
 export const DEFAULT_OAUTH_REFRESH_TIMEOUT_MS = 30_000
 export const DEFAULT_OAUTH_REFRESH_SKEW_MS = 30_000
 
-const MAX_REFRESH_LOCK_ATTEMPTS = 3
 const REFRESH_LOCK_RETRY_DELAY_MS = 50
 
 const OAUTH_CALLBACK_HOST_ENVIRONMENT_VARIABLE = 'PI_OAUTH_CALLBACK_HOST'
@@ -570,7 +569,7 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
     let expected = initial
 
     try {
-      for (let attempt = 0; attempt < MAX_REFRESH_LOCK_ATTEMPTS; attempt += 1) {
+      for (;;) {
         let credential: OAuthCredential
         try {
           const stored = await waitForCoordinator(
@@ -624,9 +623,6 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
           if (!this.#refreshIsExpected(latestOAuth)) {
             return latestOAuth
           }
-          if (attempt + 1 >= MAX_REFRESH_LOCK_ATTEMPTS) {
-            throw refreshFailed('lock_contention', error)
-          }
           expected = latestOAuth
           await waitForRetry(coordinator.signal)
           continue
@@ -640,7 +636,6 @@ export class PiAiCodexAuthService implements CodexAuthServiceContract {
         }
         expected = credential
       }
-      throw refreshFailed('credential_changed')
     } finally {
       clearTimeout(timeout)
     }

@@ -60,8 +60,7 @@ Request-auth resolution uses the provider's published `OAuthAuth` directly:
 3. run `OAuthAuth.refresh()` inside `CredentialStore.modify()` and race the shared operation against
    a 30-second service deadline;
 4. after a safe `lock_failed`, re-read the document, reuse an externally refreshed credential when
-   available, or retry while the credential is stale, the three-attempt limit is not exhausted, and
-   the shared deadline remains open;
+   available, or retry while the credential is stale and the shared deadline remains open;
 5. derive request auth exactly once from the post-operation credential with `OAuthAuth.toAuth()`;
 6. freeze the resulting access token for that request.
 
