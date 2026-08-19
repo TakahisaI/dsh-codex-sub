@@ -44,6 +44,7 @@ vault and must not be described as stronger durability, indefinite live-writer w
 stale-lock recovery.
 
 The vault maps a waiter timeout to `CODEX_AUTH_STORAGE_INVALID` with `reason: lock_failed` and keeps
-the upstream error, including its absolute lock path, out of printable output. Milestone 3 must
-revisit this two-second exclusion limit before holding the lock across an OAuth refresh: a longer
-refresh would make a concurrent refresh or logout fail closed rather than wait for completion.
+the upstream error, including its absolute lock path, out of printable output. ADR 0007 records the
+Milestone 3 decision to retain this fail-closed waiter limit while holding the lock across OAuth
+refresh. A longer refresh can therefore make a concurrent refresh or logout fail safely rather than
+wait for completion.

@@ -3,9 +3,9 @@
 `dsh-codex-sub` は、ChatGPT契約のOAuth認証を利用し、pi-aiの `openai-codex`
 プロバイダーをDSHの通常LLMモデルとして登録するための新規DeepSeek Harnessプラグインです。
 
-> 現在はMilestone 0から2（リポジトリ基盤、純粋なcore契約、credential document codec、
-> package-owned file vault）まで実装済みです。OAuth、DSH連携、CLIは未実装のため、利用可能な
-> プラグインにはなっていません。
+> 現在はMilestone 0から3（リポジトリ基盤、純粋なcore契約、credential document codec、
+> package-owned file vault、pi-ai OAuth連携）まで実装済みです。DSH連携とCLIは未実装のため、
+> 利用可能なプラグインにはなっていません。
 
 ## 必須要件
 

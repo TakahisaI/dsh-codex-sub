@@ -5,7 +5,10 @@ import { fileURLToPath } from 'node:url'
 import ts from 'typescript'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
+const sourceRoot = join(repositoryRoot, 'src')
 const coreRoot = join(repositoryRoot, 'src', 'core')
+const dshRoot = join(repositoryRoot, 'src', 'dsh')
+const piaiRoot = join(repositoryRoot, 'src', 'piai')
 const sourceExtensions = new Set(['.ts', '.mts', '.cts'])
 
 function isForbiddenCoreImport(specifier) {
@@ -18,6 +21,23 @@ function isForbiddenCoreImport(specifier) {
     || specifier.startsWith('@earendil-works/pi-ai/')
     || specifier === 'react'
     || specifier.startsWith('react/')
+}
+
+function isWithin(path, directory) {
+  const relativePath = relative(directory, path)
+  return relativePath === '' || (!relativePath.startsWith('..') && !relativePath.startsWith('/'))
+}
+
+function isPiAiImport(specifier) {
+  return specifier === '@earendil-works/pi-ai'
+    || specifier.startsWith('@earendil-works/pi-ai/')
+}
+
+function isDshLlmImport(specifier) {
+  return specifier === '@deepseek-ai/dsh-llm'
+    || specifier.startsWith('@deepseek-ai/dsh-llm/')
+    || specifier === '@deepseek-ai/dsh-llm-pi-ai'
+    || specifier.startsWith('@deepseek-ai/dsh-llm-pi-ai/')
 }
 
 function stringLiteralValue(node) {
@@ -125,12 +145,18 @@ async function sourceFiles(directory) {
 }
 
 const violations = []
-for (const path of await sourceFiles(coreRoot)) {
+for (const path of await sourceFiles(sourceRoot)) {
   const source = await readFile(path, 'utf8')
   const facts = sourceFacts(source, path)
   for (const specifier of facts.specifiers) {
-    if (isForbiddenCoreImport(specifier)) {
+    if (isWithin(path, coreRoot) && isForbiddenCoreImport(specifier)) {
       violations.push(`${relative(repositoryRoot, path)} (forbidden import: ${specifier})`)
+    }
+    if (!isWithin(path, piaiRoot) && isPiAiImport(specifier)) {
+      violations.push(`${relative(repositoryRoot, path)} (pi-ai import outside src/piai: ${specifier})`)
+    }
+    if (!isWithin(path, dshRoot) && isDshLlmImport(specifier)) {
+      violations.push(`${relative(repositoryRoot, path)} (DSH LLM import outside src/dsh: ${specifier})`)
     }
   }
   if (facts.hasDefaultExport) {
@@ -142,4 +168,4 @@ if (violations.length > 0) {
   throw new Error(`Core boundary violation: ${violations.join(', ')}`)
 }
 
-process.stdout.write('Core import boundaries are valid.\n')
+process.stdout.write('Source import boundaries are valid.\n')

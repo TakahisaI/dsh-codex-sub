@@ -115,6 +115,11 @@ It exposes only semantic operations:
 - resolve request auth, allowing pi-ai to refresh under the store lock;
 - logout.
 
+At the pinned pi-ai version, `Models.getAuth()` has no public cancellation input. Request-auth
+resolution therefore composes the provider's published `OAuthAuth.refresh()` and
+`OAuthAuth.toAuth()` methods with `CredentialStore.modify()` directly. This preserves cancellation
+without moving refresh outside the vault lock; see ADR 0007.
+
 It never exposes stored credentials as a public API. The DSH integration receives only a
 request-scoped bearer token through an internal method.
 
