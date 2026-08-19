@@ -50,12 +50,17 @@ Test only published behavior at the pinned version.
 Inject a fake provider with OAuth behavior equivalent to the public contract and verify:
 
 - login persists through `CredentialStore.modify()`;
-- request auth refreshes an expired credential under `modify()`;
-- simultaneous request-auth calls do not double-refresh;
-- cancellation and the service deadline release the writer even when provider refresh does not
-  settle;
+- request auth refreshes a credential that expires inside the 30-second skew under `modify()`;
+- simultaneous request-auth calls on one service share one same-generation refresh;
+- cancelling one waiter does not invalidate the refresh for another waiter;
+- the service deadline releases the writer even when provider refresh does not settle;
+- real file-vault tests cover one service instance, multiple service instances that cross the
+  upstream lock wait deadline, and logout serialization;
+- lock contention recovery reuses an externally refreshed credential and never removes the lock;
 - `undefined` from a modify callback leaves the credential unchanged;
-- refresh failure is translated to `CODEX_REAUTH_REQUIRED` without leaking the cause;
+- deadline and unclassified refresh failures use `CODEX_AUTH_REFRESH_FAILED` without leaking the
+  cause or being mislabeled as requiring login;
+- no test infers `invalid_grant` by parsing an upstream exception message;
 - provider-specific JSON fields round-trip through the project document;
 - request auth contains the access token only in the internal return value.
 

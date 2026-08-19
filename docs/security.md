@@ -166,7 +166,10 @@ These limitations must be stated honestly. Do not describe plaintext local token
 - The plugin itself does not implement general-purpose fetch, proxy, search, image, or URL tools.
 - OAuth and model network calls are delegated to the pinned pi-ai provider.
 - OAuth refresh is bounded at the service boundary so a stalled provider request cannot hold the
-  package credential lock indefinitely.
+  package credential lock indefinitely. Caller cancellation does not cancel refresh work shared by
+  another request; the independent coordinator deadline remains authoritative.
+- Refresh lock-contention recovery only re-reads or retries through the vault API. It never removes
+  a lock or writes outside the cross-process exclusion boundary.
 - No arbitrary base URL or header configuration is exposed.
 - No telemetry endpoint exists.
 

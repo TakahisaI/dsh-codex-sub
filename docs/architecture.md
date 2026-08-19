@@ -112,15 +112,16 @@ It exposes only semantic operations:
 
 - begin/complete login through an `AuthInteraction`;
 - read local status without network access;
-- resolve request auth, allowing pi-ai to refresh under the store lock;
+- resolve request auth, sharing same-generation refresh work under the store lock;
 - logout.
 
 At the pinned pi-ai version, `Models.getAuth()` has no public cancellation input and the published
 Codex refresh operation does not settle a stalled fetch when its signal is aborted. Request-auth
 resolution therefore composes `OAuthAuth.refresh()` and `OAuthAuth.toAuth()` with
-`CredentialStore.modify()` directly, while the service races refresh against cancellation and a
-30-second deadline. Login uses Models with safe storage-error recovery; logout deletes through the
-credential store directly. See ADR 0007.
+`CredentialStore.modify()` directly. Callers share refresh by credential generation, caller
+cancellation is waiter-local, and a separate coordinator enforces the 30-second deadline. Login
+uses Models with safe storage-error recovery; logout deletes through the credential store directly.
+See ADR 0007.
 
 It never exposes stored credentials as a public API. The DSH integration receives only a
 request-scoped bearer token through an internal method.
@@ -244,9 +245,12 @@ lazy CodexAuthService.resolveRequestAuth() (memoized once)
     │
     ├─ credential missing → CODEX_AUTH_REQUIRED
     ├─ token fresh → derive request auth
-    └─ token expired → CredentialStore.modify() under file lock
-                           ├─ refresh succeeds → atomic write
-                           └─ refresh fails → CODEX_REAUTH_REQUIRED
+    └─ token expires within 30s → join/create same-generation refresh flight
+                                  └─ CredentialStore.modify() under file lock
+                                     ├─ refresh succeeds → atomic write
+                                     ├─ lock contention → bounded re-read/retry
+                                     └─ unclassified/deadline failure
+                                        → CODEX_AUTH_REFRESH_FAILED
     │
     ▼
 freeze token for this request
