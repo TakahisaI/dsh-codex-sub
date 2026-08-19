@@ -125,12 +125,15 @@ export type CodexErrorCode =
 
 export class CodexError extends Error {
   readonly code: CodexErrorCode
-  readonly safeDetails?: Readonly<Record<string, JsonValue>>
+  readonly safeDetails?: Readonly<Record<string, JsonPrimitive>>
 }
 ```
 
 `message` and `safeDetails` must be safe to print. Causes remain internal and are passed to DSH where
-supported without serializing their contents.
+supported without serializing their contents. `safeDetails` is a detached, frozen, flat record of
+JSON primitives. Nested objects and arrays are intentionally rejected so callers cannot mutate a
+diagnostic after error construction or hide an unbounded secret-bearing object behind a shallow
+freeze.
 
 ## 8. CLI JSON
 

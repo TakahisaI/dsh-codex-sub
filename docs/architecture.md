@@ -87,8 +87,10 @@ The document contains no display metadata, email address, plan name, usage, or h
 - clone-on-read and clone-on-return;
 - logout deletion.
 
-The first implementation may use DSH's published atomic-write and home-path utilities, isolated in
-`src/storage/**` so they can be replaced later.
+The first implementation uses DSH's published atomic-write and home-path utilities, isolated in
+`src/storage/**` so they can be replaced later. POSIX reads reject symbolic links at the final
+document component with both metadata inspection and `O_NOFOLLOW`; Windows reports owner-only ACL
+verification as unsupported while retaining bounded reads and writer serialization.
 
 ### 3.4 pi-ai credential-store adapter
 

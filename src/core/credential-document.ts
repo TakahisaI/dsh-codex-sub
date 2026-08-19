@@ -4,7 +4,7 @@ import {
   utf8ByteLength,
   validateJsonObject,
 } from './json.js'
-import type { JsonObject, JsonValue } from './json.js'
+import type { JsonObject, JsonPrimitive } from './json.js'
 
 export const CREDENTIAL_SCHEMA_VERSION = 1 as const
 export const MAX_CREDENTIAL_DOCUMENT_BYTES = 65_536
@@ -52,7 +52,7 @@ function invalidDocument(
   cause?: unknown,
   jsonReason?: string,
 ): never {
-  const safeDetails: Record<string, JsonValue> = { reason }
+  const safeDetails: Record<string, JsonPrimitive> = { reason }
   if (jsonReason !== undefined) {
     safeDetails['jsonReason'] = jsonReason
   }
