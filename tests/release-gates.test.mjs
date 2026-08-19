@@ -281,7 +281,7 @@ describe('workflow release evidence', () => {
       + '    steps:\n'
       + '      - run: pnpm pack\n'
     expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(
-      'Release workflow replacement-artifact job must not pack the package.',
+      'Release workflow job set did not match the verification-only contract.',
     )
   })
 
@@ -289,6 +289,8 @@ describe('workflow release evidence', () => {
     const inputs = await repositoryInputs()
     const cases = [
       '      - run: npm login',
+      '      - run: pnpm login',
+      '      - run: touch .npmrc',
       '      - run: touch ~/.npmrc',
       '      - run: npm whoami\n        env:\n          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}',
       '      - uses: actions/setup-node@v7\n        with:\n          registry-url: https://registry.npmjs.org',
@@ -302,5 +304,28 @@ describe('workflow release evidence', () => {
         'Release workflow must not contain npm registry credential plumbing.',
       )
     }
+  })
+
+  it('rejects registry credentials in workflow-level environment variables', async () => {
+    const inputs = await repositoryInputs()
+    const releaseWorkflow = inputs.releaseWorkflow.replace(
+      'env:\n  TRUSTED_PUBLISHING_NPM_VERSION: 11.15.0',
+      'env:\n  TRUSTED_PUBLISHING_NPM_VERSION: 11.15.0\n'
+        + '  NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(
+      'Release workflow must not contain npm registry credential plumbing.',
+    )
+  })
+
+  it('requires workflow-level permissions even when a job has canonical permissions', async () => {
+    const inputs = await repositoryInputs()
+    const ciWorkflow = inputs.ciWorkflow.replace(
+      'permissions:\n  contents: read\n\n',
+      '',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
+      'CI workflow must declare exactly one workflow-level permissions block.',
+    )
   })
 })

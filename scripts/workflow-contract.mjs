@@ -62,6 +62,15 @@ function workflowJobs(workflow) {
   return names.map((name) => ({ body: jobBody(workflow, name), name }))
 }
 
+function assertExactJobSet(workflow, expected, label) {
+  const actual = workflowJobs(workflow).map((job) => job.name).sort()
+  const sortedExpected = [...expected].sort()
+  invariant(
+    JSON.stringify(actual) === JSON.stringify(sortedExpected),
+    `${label} job set did not match the verification-only contract.`,
+  )
+}
+
 function workflowJobsBody(workflow) {
   const marker = '\njobs:\n'
   const start = workflow.indexOf(marker)
@@ -279,7 +288,11 @@ function assertReadOnlyWorkflowPermissions(workflow, label) {
   const declarations = lines
     .map((line, index) => ({ index, line }))
     .filter(({ line }) => /^\s*(?:permissions|'permissions'|"permissions")\s*:/u.test(line))
-  invariant(declarations.length > 0, `${label} permissions were missing.`)
+  const workflowDeclarations = declarations.filter(({ line }) => indentation(line) === 0)
+  invariant(
+    workflowDeclarations.length === 1,
+    `${label} must declare exactly one workflow-level permissions block.`,
+  )
 
   for (const declaration of declarations) {
     const parentIndent = indentation(declaration.line)
@@ -299,17 +312,16 @@ function assertReadOnlyWorkflowPermissions(workflow, label) {
 }
 
 function assertNoRegistryCredentials(workflow) {
-  const jobs = workflowJobsBody(workflow)
   const forbidden = [
     /\b(?:NODE_AUTH_TOKEN|NPM_TOKEN)\b/iu,
     /\bsecrets(?:\.|\[)/iu,
     /_authToken/iu,
-    /(?:^|[/\\])\.npmrc\b/mu,
+    /\.npmrc\b/iu,
     /\b(?:always-auth|registry-url)\s*:/iu,
-    /\bnpm\s+(?:adduser|login)\b/iu,
+    /\b(?:npm|pnpm|yarn\s+npm)\s+(?:adduser|login)\b/iu,
   ]
   invariant(
-    forbidden.every((pattern) => !pattern.test(jobs)),
+    forbidden.every((pattern) => !pattern.test(workflow)),
     'Release workflow must not contain npm registry credential plumbing.',
   )
 }
@@ -322,6 +334,16 @@ function assertNonPublishingWorkflow(workflow, label) {
 
 export function validateWorkflowContracts({ ciWorkflow, compatibility, releaseWorkflow }) {
   const expected = expectedPackedInstallMatrix(compatibility)
+  assertExactJobSet(
+    ciWorkflow,
+    ['candidate', 'check', 'dependency-review', 'packed-install'],
+    'CI workflow',
+  )
+  assertExactJobSet(
+    releaseWorkflow,
+    ['candidate', 'candidate-install', 'candidate-ready', 'source-checks'],
+    'Release workflow',
+  )
   assertArtifactProducer(jobBody(ciWorkflow, 'candidate'), 'CI candidate job')
   assertArtifactConsumer(jobBody(ciWorkflow, 'packed-install'), expected, 'CI')
   assertOnlyProducerMutatesArtifact(ciWorkflow, 'candidate', 'CI')
