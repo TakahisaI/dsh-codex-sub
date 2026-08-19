@@ -448,6 +448,36 @@ describe('FileCredentialVault', () => {
     await expect(modifyingVault.read()).resolves.toBeUndefined()
   })
 
+  it('fails a timed-out lock waiter without exposing the lock path', async () => {
+    const fixture = makeCredential(0)
+    const holdingVault = new FileCredentialVault()
+    const waitingVault = new FileCredentialVault()
+    await holdingVault.modify(async () => fixture.document)
+
+    const entered = Promise.withResolvers<void>()
+    const release = Promise.withResolvers<void>()
+    const holdingModify = holdingVault.modify(async (current) => {
+      entered.resolve()
+      await release.promise
+      return withSequence(current, 1)
+    })
+    await entered.promise
+
+    try {
+      const error = await expectSafeFailure(
+        waitingVault.delete(),
+        fixture.sentinels,
+        'CODEX_AUTH_STORAGE_INVALID',
+      )
+      expect(error.safeDetails).toEqual({ reason: 'lock_failed' })
+    } finally {
+      release.resolve()
+      await holdingModify
+    }
+
+    expect(sequenceOf(await holdingVault.read())).toBe(1)
+  }, 10_000)
+
   it('preserves the committed document when the callback rejects or its candidate is invalid', async () => {
     const fixture = makeCredential(1)
     const callbackSentinel = `CODE_SENTINEL_${randomUUID()}`

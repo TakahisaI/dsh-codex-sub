@@ -37,6 +37,13 @@ bounded-read, atomicity, and concurrency behavior, but reports owner-only permis
 unsupported because this release does not verify Windows ACLs.
 
 The upstream atomic replacement contract is atomic but not crash-durable because it does not fsync
-the file or parent directory. Its writer lock also leaves orphan recovery to an operator after a
-process exits while holding the lock. These limitations are accepted for the first file vault and
-must not be described as stronger durability or automatic stale-lock recovery.
+the file or parent directory. Its writer-lock waiters back off for a fixed two-second deadline and
+then fail; a contender never removes the existing lock. A process that exits while holding the lock
+therefore leaves orphan recovery to an operator. These limitations are accepted for the first file
+vault and must not be described as stronger durability, indefinite live-writer waiting, or automatic
+stale-lock recovery.
+
+The vault maps a waiter timeout to `CODEX_AUTH_STORAGE_INVALID` with `reason: lock_failed` and keeps
+the upstream error, including its absolute lock path, out of printable output. Milestone 3 must
+revisit this two-second exclusion limit before holding the lock across an OAuth refresh: a longer
+refresh would make a concurrent refresh or logout fail closed rather than wait for completion.

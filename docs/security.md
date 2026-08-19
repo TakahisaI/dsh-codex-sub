@@ -63,7 +63,8 @@ Mitigation:
 - one cross-process lock for modify and delete;
 - atomic replace within the same directory;
 - fsync/atomic helper behavior verified by tests or upstream contract;
-- bounded retry/stale-lock policy documented by the chosen lock utility;
+- the pinned lock helper backs off for two seconds, then fails closed without removing the existing
+  lock;
 - decode the candidate before committing it.
 
 ### 3.4 Refresh races rotate the token twice
