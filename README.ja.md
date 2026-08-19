@@ -5,7 +5,7 @@
 
 > 現在は Milestone 0 から 6 まで実装済みで、Milestone 7のAlpha公開準備を進めています。
 > リポジトリ基盤、core契約、資格情報文書、package-owned file vault、pi-ai OAuth連携、DSHのLLM provider route、CLI、offline diagnostics、packed-install release gateが含まれます。
-> packageはまだ公開しておらず、公開には末尾に記載したmaintainerの判断が残っています。
+> packageはまだ公開しておらず、公開には同一artifactの検証と実account smokeが残っています。
 
 ## プラグインが担う範囲
 
@@ -35,14 +35,14 @@ Codex へ最初に渡す指示は [`CODEX_BOOTSTRAP_PROMPT.md`](https://github.c
 
 ## ローカル tarball の導入
 
-package はまだ private です。
-ローカルで生成した tarball を試す場合は、次の手順で build、pack、DSH Web profile への追加を行います。
+Alpha metadataは準備済みですが、packageはまだ公開していません。
+ローカルで生成したcandidateを試す場合は、次の手順でbuild、pack、DSH Web profileへの追加を行います。
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm run build
 pnpm pack
-dsh plugin --profile web add ./dsh-codex-sub-0.0.0-development.tgz \
+dsh plugin --profile web add ./dsh-codex-sub-0.1.0-alpha.0.tgz \
   --save-exact \
   --allow-build=@google/genai \
   --allow-build=protobufjs
@@ -111,10 +111,9 @@ credential、authorization URLまたはcode、account identifier、完全なenvi
 ## 公開前に残る判断
 
 このprojectは [MIT License](https://github.com/TakahisaI/dsh-codex-sub/blob/main/LICENSE) で公開します。
-公開前に、最初のnpm公開をどのようにbootstrapするかをmaintainerが決める必要があります。
+npm初回公開のbootstrap方針はADR 0011として承認済みですが、このmetadata変更だけでは公開しません。
 npm package nameには独立した予約手続きがなく、最初の実releaseのpublishによって所有権が成立します。
-packageが存在するまでOIDC trusted publishingを設定できないため、ADR 0011に初回だけの例外案を記録しています。
-この判断と残りのrelease gateが完了するまでは `private: true` を維持します。
-release workflow は無効な file として置かれており、publish step を含みません。
-Alphaのdraft release notesは [`docs/releases/`](https://github.com/TakahisaI/dsh-codex-sub/tree/main/docs/releases) にあります。
+packageが存在するまでOIDC trusted publishingを設定できないため、ADR 0011に初回だけの例外を記録しています。
+有効化したrelease workflowはcandidateの構築と検証だけを行い、npm credential、OIDC permission、publish stepを含みません。
+Alphaのrelease-candidate notesは [`docs/releases/`](https://github.com/TakahisaI/dsh-codex-sub/tree/main/docs/releases) にあります。
 実account試験では、[`docs/alpha-smoke-record.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/alpha-smoke-record.md) を使って秘密を含まないpass/failだけを記録します。

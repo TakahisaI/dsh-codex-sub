@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.1.0-alpha.0 (release candidate)
 
 ### Added
 
@@ -17,4 +17,4 @@
   and fixture-tested private/public release-state transitions.
 - Bounded archive extraction and package-aware README link validation for the npm tarball.
 
-The first public version has not been tagged or published.
+This candidate has not been tagged or published.

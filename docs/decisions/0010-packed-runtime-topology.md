@@ -71,6 +71,6 @@ fresh contract review.
 - A second physical DSH LLM runtime is rejected even when its version string matches.
 - Adding a supported Node major or operating system requires CI evidence and an update to
   `compatibility.json`, package metadata, and this decision or a successor ADR.
-- `release.yml.disabled` can build and checksum an artifact but cannot run as a GitHub workflow or
-  publish anything until the maintainer accepts the initial npm bootstrap decision. The MIT license
-  is selected; package-name ownership is established only by the first real release.
+- The release workflow may build and checksum an artifact after the maintainer accepts the initial
+  npm bootstrap decision, but it cannot publish. The MIT license is selected; package-name
+  ownership is established only by the first real release.

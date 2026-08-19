@@ -251,7 +251,7 @@ Blocking CI:
 Blocking CI builds one candidate on Ubuntu/Node 24 and uploads its tarball plus `SHA256SUMS` once.
 All six packed-install cells download, checksum, validate, and install those same bytes without a
 package build or repack. The release-state check derives the exact six-cell matrix from
-`compatibility.json` and rejects drift in either active CI or the disabled release workflow.
+`compatibility.json` and rejects drift in either active CI or the enabled release workflow.
 
 Unit tests reject relative or symbolic-link tarballs, oversized compressed files, allowlist drift,
 duplicate archive paths, extra artifact entries, checksum or filename mismatch, stdout or stderr
@@ -272,11 +272,11 @@ operating-system archive and artifact clients.
 The workflow contract also requires every third-party Action, including a named step whose
 `uses:` key is on the following line, to match a reviewed full commit SHA. It rejects conditional
 or ignored protected-main guards before candidate construction.
-The disabled release gate has an always-executed `release-ref` job that compares `github.ref` with
+The enabled release gate has an always-executed `release-ref` job that compares `github.ref` with
 `refs/heads/main`; candidate construction must depend on both that guard and source checks. Pure
-release-state fixtures exercise both the current private package and the future public Alpha branch,
-including rejection of a disabled workflow, draft notes, wrong dist-tag, publish command, or OIDC
-permission.
+release-state fixtures exercise both the legacy private-development branch and the current public
+Alpha metadata branch, including rejection of a disabled workflow, draft notes, wrong dist-tag,
+publish command, or OIDC permission.
 
 Windows is not a first-alpha target because the current vault cannot verify owner-only ACLs there.
 

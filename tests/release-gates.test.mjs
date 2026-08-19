@@ -76,6 +76,19 @@ async function packageTarball(overrides = new Map()) {
   return tarball
 }
 
+async function readReleaseWorkflow() {
+  for (const path of ['../.github/workflows/release.yml', '../.github/workflows/release.yml.disabled']) {
+    try {
+      return await readFile(new URL(path, import.meta.url), 'utf8')
+    } catch (error) {
+      if (error?.code !== 'ENOENT') {
+        throw error
+      }
+    }
+  }
+  throw new Error('Release workflow was missing.')
+}
+
 describe('package tarball fail-closed validation', () => {
   it('rejects relative paths before reading the filesystem', async () => {
     await expect(validatePackageTarball('candidate.tgz')).rejects.toThrow(
@@ -264,19 +277,6 @@ describe('release artifact fail-closed validation', () => {
 })
 
 describe('workflow release evidence', () => {
-  async function readReleaseWorkflow() {
-    for (const path of ['../.github/workflows/release.yml', '../.github/workflows/release.yml.disabled']) {
-      try {
-        return await readFile(new URL(path, import.meta.url), 'utf8')
-      } catch (error) {
-        if (error?.code !== 'ENOENT') {
-          throw error
-        }
-      }
-    }
-    throw new Error('Release workflow was missing.')
-  }
-
   async function repositoryInputs() {
     const [ciWorkflow, releaseWorkflow, compatibilityText] = await Promise.all([
       readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
@@ -554,14 +554,14 @@ describe('release state transitions', () => {
       readFile(new URL('../docs/decisions/0011-npm-trusted-publishing-bootstrap.md', import.meta.url), 'utf8'),
       readFile(new URL('../package.json', import.meta.url), 'utf8'),
       readFile(new URL('../docs/releases/0.1.0-alpha.0.md', import.meta.url), 'utf8'),
-      readFile(new URL('../.github/workflows/release.yml.disabled', import.meta.url), 'utf8'),
+      readReleaseWorkflow(),
       readFile(new URL('../SECURITY.md', import.meta.url), 'utf8'),
     ])
     return {
       ciWorkflow,
       compatibility: JSON.parse(compatibilityText),
-      disabledWorkflowExists: true,
-      enabledWorkflowExists: false,
+      disabledWorkflowExists: false,
+      enabledWorkflowExists: true,
       issueConfig,
       licenseExists: true,
       npmBootstrapDecision,
@@ -573,29 +573,25 @@ describe('release state transitions', () => {
   }
 
   async function publicAlphaFixture() {
+    return repositoryFixture()
+  }
+
+  async function privateDevelopmentFixture() {
     const fixture = await repositoryFixture()
     return {
       ...fixture,
-      disabledWorkflowExists: false,
-      enabledWorkflowExists: true,
-      npmBootstrapDecision: fixture.npmBootstrapDecision.replace(
-        '- Status: proposed',
-        '- Status: accepted',
-      ),
+      disabledWorkflowExists: true,
+      enabledWorkflowExists: false,
       packageJson: {
         ...fixture.packageJson,
-        private: false,
-        version: '0.1.0-alpha.0',
-      },
-      releaseNotes: {
-        exists: true,
-        text: fixture.releaseNotes.text.replace('Draft only.', 'Release candidate.'),
+        private: true,
+        version: '0.0.0-development',
       },
     }
   }
 
-  it('accepts the current private state and a complete public Alpha fixture', async () => {
-    const privateFixture = await repositoryFixture()
+  it('accepts the legacy private state and the current public Alpha state', async () => {
+    const privateFixture = await privateDevelopmentFixture()
     const publicFixture = await publicAlphaFixture()
     expect(() => validateReleaseState(privateFixture)).not.toThrow()
     expect(() => validateReleaseState(publicFixture)).not.toThrow()

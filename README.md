@@ -6,8 +6,8 @@ provider as a normal DSH model route using ChatGPT subscription authentication.
 > Status: Milestones 0 through 6 are implemented: repository tooling, pure core contracts, the
 > credential document codec, the secure package-owned file vault, pi-ai OAuth integration, and the
 > native DSH LLM provider route, plus the package CLI, offline diagnostics, and packed-install
-> release gates. Milestone 7 Alpha preparation is in progress. No package version has been
-> published, and publication remains blocked on the maintainer decisions listed below.
+> release gates. Milestone 7 Alpha validation is in progress. No package version has been
+> published, and publication remains blocked on exact-artifact verification and manual smoke.
 
 ## Product contract
 
@@ -66,14 +66,14 @@ for the account, storage, platform, and product boundaries of the first Alpha.
 
 ## Install a packed build
 
-The package is still private. To test a local tarball, build and pack it, then add the resulting
-`.tgz` file to a DSH Web profile:
+The Alpha metadata is prepared, but the package has not been published. To test a local candidate,
+build and pack it, then add the resulting `.tgz` file to a DSH Web profile:
 
 ```sh
 pnpm install --frozen-lockfile
 pnpm run build
 pnpm pack
-dsh plugin --profile web add ./dsh-codex-sub-0.0.0-development.tgz \
+dsh plugin --profile web add ./dsh-codex-sub-0.1.0-alpha.0.tgz \
   --save-exact \
   --allow-build=@google/genai \
   --allow-build=protobufjs
@@ -148,12 +148,11 @@ Report suspected vulnerabilities privately through
 ## Publication blocker
 
 The project is licensed under the
-[MIT License](https://github.com/TakahisaI/dsh-codex-sub/blob/main/LICENSE). It remains
-`private: true` until the
-initial npm publishing bootstrap is accepted and the remaining release gates pass. npm has no
-separate package-name reservation step; the first real publish establishes ownership. ADR 0011
-records the proposed one-release bootstrap before OIDC trusted publishing can be configured. The
-release workflow remains stored as a disabled file and has no publish step. Draft Alpha notes and
-the secret-free manual-smoke record are available under
+[MIT License](https://github.com/TakahisaI/dsh-codex-sub/blob/main/LICENSE).
+The initial npm publishing bootstrap in ADR 0011 is accepted, but this metadata change does not
+publish the package. npm has no separate package-name reservation step; the first real publish
+establishes ownership. The enabled release workflow only constructs and verifies a candidate; it
+has no npm credential, OIDC permission, or publish step. Alpha release-candidate notes and the
+secret-free manual-smoke record are available under
 [`docs/releases/`](https://github.com/TakahisaI/dsh-codex-sub/tree/main/docs/releases) and
 [`docs/alpha-smoke-record.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/alpha-smoke-record.md).
