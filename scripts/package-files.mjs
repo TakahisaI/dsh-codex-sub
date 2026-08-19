@@ -7,6 +7,7 @@ export const PACKAGE_FILE_ALLOWLIST = Object.freeze([
   'lib/index.mjs',
   'lib/runtime.d.mts',
   'lib/runtime.mjs',
+  'LICENSE',
   'package.json',
   'README.ja.md',
   'README.md',

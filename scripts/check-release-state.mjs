@@ -17,6 +17,7 @@ const requiredSupportFiles = [
   'docs/known-limitations.ja.md',
   'docs/known-limitations.md',
   'docs/releases/0.1.0-alpha.0.md',
+  'LICENSE',
 ]
 
 async function exists(filename) {
@@ -55,8 +56,8 @@ const enabledWorkflow = await exists('.github/workflows/release.yml')
 const disabledWorkflow = await exists('.github/workflows/release.yml.disabled')
 
 if (packageJson.private === true) {
-  if (packageJson.version !== '0.0.0-development' || packageJson.license !== 'UNLICENSED') {
-    throw new Error('A private development package must remain versioned and licensed as blocked.')
+  if (packageJson.version !== '0.0.0-development' || packageJson.license !== 'MIT') {
+    throw new Error('A private development package must keep its development version and MIT license.')
   }
   if (enabledWorkflow || !disabledWorkflow) {
     throw new Error('The publishing workflow must remain disabled while publication is blocked.')
@@ -68,8 +69,8 @@ if (packageJson.private === true) {
   if (!/^\d+\.\d+\.\d+-alpha\.\d+$/u.test(packageJson.version)) {
     throw new Error('A public package version must be an explicit Alpha prerelease.')
   }
-  if (packageJson.license === 'UNLICENSED' || !await exists('LICENSE')) {
-    throw new Error('A public package requires a selected license and committed LICENSE file.')
+  if (packageJson.license !== 'MIT' || !await exists('LICENSE')) {
+    throw new Error('A public package requires the selected MIT license and committed LICENSE file.')
   }
   if (!enabledWorkflow || disabledWorkflow) {
     throw new Error('A public package requires the reviewed release workflow to be enabled once.')

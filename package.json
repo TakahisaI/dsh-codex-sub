@@ -3,7 +3,7 @@
   "version": "0.0.0-development",
   "description": "ChatGPT subscription authentication and OpenAI Codex models for DeepSeek Harness.",
   "private": true,
-  "license": "UNLICENSED",
+  "license": "MIT",
   "repository": {
     "type": "git",
     "url": "git+https://github.com/TakahisaI/dsh-codex-sub.git"
@@ -43,6 +43,7 @@
     "lib",
     "cordis.patch.yml",
     "compatibility.json",
+    "LICENSE",
     "README.md",
     "README.ja.md"
   ],

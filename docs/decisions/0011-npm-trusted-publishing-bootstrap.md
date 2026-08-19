@@ -28,7 +28,8 @@ Relevant upstream contracts:
 Do not publish a placeholder or treat a successful name lookup as ownership. The maintainer may
 prepare the npm account, two-factor authentication, and recovery access before release, but must
 wait to establish package ownership until the actual `0.1.0-alpha.0` candidate has passed every
-automated gate, the manual real-account smoke, license selection, and final tarball review.
+automated gate, the manual real-account smoke, verification of the selected MIT license, and final
+tarball review.
 
 Bootstrap the first real Alpha from a clean maintainer-controlled workstation using interactive
 npm authentication with two-factor authentication and the `alpha` dist-tag. Do not create or

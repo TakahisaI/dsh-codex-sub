@@ -143,10 +143,10 @@ Report suspected vulnerabilities privately through [`SECURITY.md`](SECURITY.md).
 
 ## Publication blocker
 
-A project license and the initial npm publishing bootstrap must be selected before the package is
-made non-private or published. npm has no separate package-name reservation step; the first real
-publish establishes ownership. ADR 0011 records the proposed one-release bootstrap before OIDC
-trusted publishing can be configured. The repository intentionally uses `UNLICENSED` and
-`private: true`; its release workflow remains stored as a disabled file and has no publish step.
-Draft Alpha notes and the secret-free manual-smoke record are available under
-[`docs/releases/`](docs/releases/) and [`docs/alpha-smoke-record.md`](docs/alpha-smoke-record.md).
+The project is licensed under the [MIT License](LICENSE). It remains `private: true` until the
+initial npm publishing bootstrap is accepted and the remaining release gates pass. npm has no
+separate package-name reservation step; the first real publish establishes ownership. ADR 0011
+records the proposed one-release bootstrap before OIDC trusted publishing can be configured. The
+release workflow remains stored as a disabled file and has no publish step. Draft Alpha notes and
+the secret-free manual-smoke record are available under [`docs/releases/`](docs/releases/) and
+[`docs/alpha-smoke-record.md`](docs/alpha-smoke-record.md).

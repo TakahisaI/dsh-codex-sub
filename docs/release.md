@@ -26,7 +26,7 @@ prerequisite is complete.
 
 Before the first public package:
 
-- choose and commit a license;
+- keep the selected MIT license and copyright notice in the candidate;
 - confirm that the intended npm package name remains available immediately before publishing;
 - prepare a maintainer npm account with two-factor authentication and recovery access;
 - enable GitHub branch protection;
@@ -34,11 +34,11 @@ Before the first public package:
 - verify third-party licenses and notices;
 - pass packed-install and manual smoke gates.
 
-Current automated evidence is complete through Milestone 6. The project license and initial npm
-publishing decision remain maintainer gates. Registry lookup currently finds no public package
-named `dsh-codex-sub`, but absence does not establish ownership or reserve the name. npm creates a
-new unscoped package through its first real publish; there is no separate package-registration step
-to perform now.
+Current automated evidence is complete through Milestone 6, and the project license is MIT. The
+initial npm publishing decision remains a maintainer gate. Registry lookup currently finds no
+public package named `dsh-codex-sub`, but absence does not establish ownership or reserve the name.
+npm creates a new unscoped package through its first real publish; there is no separate
+package-registration step to perform now.
 
 npm trusted publishing cannot be configured until the package exists. ADR 0011 records the
 proposed bootstrap: publish the complete first Alpha interactively with two-factor authentication,
@@ -65,8 +65,8 @@ candidate once; every packed-install job downloads, validates, and installs the 
 repacking. Its final candidate-ready job is the boundary before manual approval and still never
 publishes. See ADR 0013.
 
-Do not rename that file until the maintainer has selected the license and accepted or replaced ADR
-0011's bootstrap decision. Rename it to `.github/workflows/release.yml` before the first public
+Do not rename that file until the maintainer has accepted or replaced ADR 0011's bootstrap
+decision. Rename it to `.github/workflows/release.yml` before the first public
 metadata commit so that commit can pass the release-state gate. Keep the enabled workflow limited
 to verification and artifact construction: do not add npm authentication, `id-token: write`, or a
 publish command until the first package exists and its trusted publisher can be configured.
@@ -74,7 +74,7 @@ publish command until the first package exists and its trusted publisher can be 
 After those decisions, the intended release sequence is:
 
 1. create a release branch;
-2. select the license and accept or replace ADR 0011;
+2. confirm the committed MIT license and accept or replace ADR 0011;
 3. rename the reviewed release gate to `.github/workflows/release.yml` without adding a publish
    command;
 4. update version, `private`, compatibility data, changelog, and limitations;
