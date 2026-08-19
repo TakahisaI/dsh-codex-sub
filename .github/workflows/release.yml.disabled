@@ -1,6 +1,8 @@
 # This workflow is intentionally disabled until the maintainer selects a license and accepts the
 # initial npm bootstrap decision. Enable it before the public metadata commit, but keep it free of
-# npm authentication, OIDC permission, and publish commands until the first package exists.
+# npm authentication, OIDC permission, and publish commands until the first package exists. A
+# future trusted-publishing job must install the pinned npm CLI and consume this workflow artifact;
+# it must not rebuild or repack the candidate.
 name: Release gates (disabled, never publishes)
 
 on:
@@ -9,8 +11,12 @@ on:
 permissions:
   contents: read
 
+env:
+  TRUSTED_PUBLISHING_NPM_VERSION: 11.15.0
+
 jobs:
-  verify:
+  source-checks:
+    name: Source checks (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -27,10 +33,10 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
-      - run: pnpm run test:packed-install
 
-  artifact:
-    needs: verify
+  candidate:
+    name: Build candidate artifact
+    needs: source-checks
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -40,10 +46,67 @@ jobs:
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm run build
-      - run: mkdir -p release-artifact
-      - run: pnpm pack --pack-destination release-artifact
-      - run: sha256sum release-artifact/*.tgz > release-artifact/SHA256SUMS
+      - run: node scripts/release-artifact.mjs create --directory "$RUNNER_TEMP/release-artifact"
       - uses: actions/upload-artifact@v6
         with:
           name: dsh-codex-sub-unpublished
-          path: release-artifact/
+          path: ${{ runner.temp }}/release-artifact/
+          if-no-files-found: error
+          retention-days: 7
+
+  candidate-install:
+    name: Candidate install (${{ matrix.os }}, Node ${{ matrix.node }})
+    needs: candidate
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            node: 22.19.0
+          - os: ubuntu-latest
+            node: 24
+          - os: ubuntu-latest
+            node: 26
+          - os: macos-latest
+            node: 22.19.0
+          - os: macos-latest
+            node: 24
+          - os: macos-latest
+            node: 26
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@v7
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:packed-install --
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
+
+  candidate-ready:
+    name: Candidate ready for manual approval (never publishes)
+    needs: candidate-install
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@v7
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"

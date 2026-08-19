@@ -15,6 +15,8 @@ import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
+import { parseArgs } from 'node:util'
+import { validatePackageTarball } from './package-tarball.mjs'
 
 const PACKAGE_NAME = 'dsh-codex-sub'
 const PLUGIN_ROW_ID = 'llm-codex-sub'
@@ -43,10 +45,18 @@ function parseJson(text, label) {
 }
 
 function appendCapture(target, chunk) {
-  if (target.value.length >= MAX_CAPTURE_BYTES) {
+  const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
+  const remaining = MAX_CAPTURE_BYTES - target.bytes
+  if (remaining <= 0) {
+    target.truncated = true
     return
   }
-  target.value += String(chunk).slice(0, MAX_CAPTURE_BYTES - target.value.length)
+  const captured = bytes.subarray(0, remaining)
+  target.value += captured.toString('utf8')
+  target.bytes += captured.length
+  if (bytes.length > remaining) {
+    target.truncated = true
+  }
 }
 
 function redactTestOutput(text) {
@@ -81,6 +91,25 @@ function run(command, arguments_, options = {}) {
 
 function countExactLine(text, line) {
   return text.split(/\r?\n/u).filter((candidate) => candidate.trim() === line).length
+}
+
+function parseCommandLine(arguments_) {
+  const normalizedArguments = arguments_[0] === '--' ? arguments_.slice(1) : arguments_
+  const { values } = parseArgs({
+    args: normalizedArguments,
+    allowPositionals: false,
+    options: {
+      'package-tarball': { type: 'string' },
+    },
+    strict: true,
+  })
+  if (values['package-tarball'] !== undefined) {
+    invariant(
+      isAbsolute(values['package-tarball']),
+      '--package-tarball must be an absolute path.',
+    )
+  }
+  return values['package-tarball']
 }
 
 async function waitForProbe(child, resultPath) {
@@ -210,6 +239,7 @@ async function inspectDependencyTopology(dshHome, compatibility) {
   }
 }
 
+const suppliedPackageTarball = parseCommandLine(process.argv.slice(2))
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'dsh-codex-sub-packed-install-'))
 const artifactDirectory = join(temporaryRoot, 'artifacts')
 const dshHome = join(temporaryRoot, 'dsh-home')
@@ -236,17 +266,26 @@ try {
     NO_COLOR: '1',
   }
 
-  run('pnpm', ['run', 'build'], { env: environment, label: 'build' })
-  const packageReport = parseJson(run('pnpm', [
-    'pack',
-    '--pack-destination',
-    artifactDirectory,
-    '--json',
-  ], { env: environment, label: 'package pack' }).stdout, 'package pack')
-  const packageTarball = isAbsolute(packageReport.filename)
-    ? packageReport.filename
-    : join(artifactDirectory, packageReport.filename)
-  const packedFiles = packageReport.files.map(({ path }) => path).sort()
+  let packageTarball
+  let packedFiles
+  if (suppliedPackageTarball === undefined) {
+    run('pnpm', ['run', 'build'], { env: environment, label: 'build' })
+    const packageReport = parseJson(run('pnpm', [
+      'pack',
+      '--pack-destination',
+      artifactDirectory,
+      '--json',
+    ], { env: environment, label: 'package pack' }).stdout, 'package pack')
+    packageTarball = isAbsolute(packageReport.filename)
+      ? packageReport.filename
+      : join(artifactDirectory, packageReport.filename)
+    const validated = await validatePackageTarball(packageTarball)
+    packedFiles = validated.packedFiles
+  } else {
+    const validated = await validatePackageTarball(suppliedPackageTarball)
+    packageTarball = validated.canonicalPath
+    packedFiles = validated.packedFiles
+  }
 
   const probeReport = parseJson(run('pnpm', [
     '--dir',
@@ -293,7 +332,10 @@ try {
   invariant(countExactLine(installedConfig.stdout, '# == dsh-codex-sub') === 1, 'Expected one bundle layer.')
 
   const topology = await inspectDependencyTopology(dshHome, compatibility)
-  const bootOutput = { stderr: { value: '' }, stdout: { value: '' } }
+  const bootOutput = {
+    stderr: { bytes: 0, truncated: false, value: '' },
+    stdout: { bytes: 0, truncated: false, value: '' },
+  }
   const previousNodeOptions = environment.NODE_OPTIONS?.trim()
   const bootEnvironment = {
     ...environment,
@@ -321,6 +363,9 @@ try {
     await stopChild(child)
   }
   transcript.push({ status: child.exitCode, stdout: bootOutput.stdout.value, stderr: bootOutput.stderr.value })
+  if (bootOutput.stdout.truncated || bootOutput.stderr.truncated) {
+    throw new Error('DSH output exceeded the packed-install capture limit.')
+  }
   if (bootFailure !== undefined) {
     throw new Error(
       `${String(bootFailure)}\n${redactTestOutput(

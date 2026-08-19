@@ -12,6 +12,7 @@ const requiredSupportFiles = [
   'SECURITY.md',
   'docs/alpha-smoke-record.md',
   'docs/decisions/0011-npm-trusted-publishing-bootstrap.md',
+  'docs/decisions/0013-single-release-artifact.md',
   'docs/dependency-licenses.md',
   'docs/known-limitations.ja.md',
   'docs/known-limitations.md',

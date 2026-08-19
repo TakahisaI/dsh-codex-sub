@@ -46,6 +46,11 @@ then immediately configure OIDC-backed trusted publishing for every later versio
 must accept that first-version provenance exception, or choose to defer publication, before the
 non-publishing release workflow is enabled.
 
+Trusted-publisher administration and publishing require npm CLI `11.15.0` or a separately reviewed
+later version and Node 22.14 or newer. The release workflow pins `11.15.0` for the future publishing
+job. A maintainer workstation with an older npm CLI is preparation-incomplete even when its Node
+version is supported; do not authenticate or publish until the CLI requirement is met.
+
 Use the [real-account smoke record](alpha-smoke-record.md) for the maintainer-controlled gate and
 the [draft Alpha notes](releases/0.1.0-alpha.0.md) for release metadata. Neither document authorizes
 publication.
@@ -54,8 +59,11 @@ publication.
 
 The repository contains `.github/workflows/release.yml.disabled`. GitHub does not load it as a
 workflow, and it contains no registry authentication or publish command. If enabled later, its
-current scope is limited to the full checks, packed installs, tarball construction, a SHA-256 file,
-and an unpublished workflow artifact.
+current scope is limited to source checks, one clean tarball construction, a SHA-256 file, and
+Linux/macOS verification of that exact unpublished workflow artifact. The workflow builds the
+candidate once; every packed-install job downloads, validates, and installs the same bytes without
+repacking. Its final candidate-ready job is the boundary before manual approval and still never
+publishes. See ADR 0013.
 
 Do not rename that file until the maintainer has selected the license and accepted or replaced ADR
 0011's bootstrap decision. Rename it to `.github/workflows/release.yml` before the first public
@@ -72,16 +80,21 @@ After those decisions, the intended release sequence is:
 4. update version, `private`, compatibility data, changelog, and limitations;
 5. confirm that `publishConfig` forces public access and the `alpha` dist-tag;
 6. run `pnpm install --frozen-lockfile` and the complete check matrix;
-7. build and inspect the tarball;
-8. install the exact tarball into a clean DSH profile;
-9. complete required manual smoke;
+7. run the release gate so it builds one tarball, records its SHA-256, and verifies those same bytes
+   on Linux and macOS across every supported Node line;
+8. download that workflow artifact and install the exact tarball into a clean DSH profile;
+9. complete required manual smoke against that tarball and record its SHA-256;
 10. tag the exact commit;
-11. for the first package only, publish interactively with two-factor authentication;
+11. for the first package only, install npm CLI `11.15.0`, verify the candidate checksum again, and
+    publish that exact tarball interactively with two-factor authentication;
 12. install the exact published artifact into a clean profile and record the bootstrap provenance
     exception;
 13. configure trusted publishing for the exact release workflow immediately after the package
     exists;
 14. add reviewed OIDC publishing for every later version and verify its provenance.
+
+A publish or approval job added later must depend on the candidate-install jobs and download their
+workflow artifact. Rebuilding or repacking after verification invalidates the release evidence.
 
 No workflow may publish from an unreviewed dependency-update branch.
 

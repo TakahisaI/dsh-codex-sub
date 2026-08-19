@@ -43,7 +43,11 @@ jobs:
           - os: ubuntu-latest
             node: 26
           - os: macos-latest
+            node: 22.19.0
+          - os: macos-latest
             node: 24
+          - os: macos-latest
+            node: 26
     steps:
       - uses: actions/checkout@v7
       - uses: actions/setup-node@v7
@@ -51,7 +55,16 @@ jobs:
           node-version: ${{ matrix.node }}
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run test:packed-install
+      - run: pnpm run build
+      - run: node scripts/release-artifact.mjs create --directory "$RUNNER_TEMP/release-artifact"
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:packed-install --
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
 
   dependency-review:
     if: github.event_name == 'pull_request'
