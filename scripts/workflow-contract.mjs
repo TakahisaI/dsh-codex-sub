@@ -207,9 +207,20 @@ function count(text, pattern) {
 }
 
 function assertPinnedActions(workflow, label) {
+  const pins = Object.values(PINNED_ACTIONS)
+  invariant(
+    pins.every((pin) => /^[^@\s]+@[0-9a-f]{40}$/u.test(pin)),
+    'Reviewed action pins must use full commit SHAs.',
+  )
   const allowed = new Set(Object.values(PINNED_ACTIONS))
-  const actions = [...workflow.matchAll(/^\s+- uses:\s*(\S+)(?:\s+#.*)?$/gmu)]
+  const actions = [...workflow.matchAll(
+    /^\s*(?:-\s*)?(?:uses|'uses'|"uses")\s*:\s*(\S+?)(?:\s+#.*)?$/gmu,
+  )]
     .map((match) => match[1])
+  invariant(
+    !/^\s*-\s*\{[^\n}]*?(?:uses|'uses'|"uses")\s*:/mu.test(workflow),
+    `${label} actions must use block-style reviewed full commit SHAs.`,
+  )
   invariant(actions.length > 0, `${label} contained no actions.`)
   invariant(
     actions.every((action) => action !== undefined && allowed.has(action)),
@@ -301,8 +312,15 @@ function assertArtifactFinalizer(job, label) {
   assertNoArtifactMutation(job, label)
 }
 
+function assertNoReleaseGateOverride(job, label) {
+  invariant(
+    !/^\s*(?:-\s*)?(?:(?:if|continue-on-error)|'(?:if|continue-on-error)'|"(?:if|continue-on-error)")\s*:/mu.test(job),
+    `${label} must not skip or ignore the protected-main gate.`,
+  )
+}
+
 function assertReleaseRefGuard(job) {
-  invariant(!/^    if:/mu.test(job), 'Release ref verification must run instead of skipping.')
+  assertNoReleaseGateOverride(job, 'Release ref verification')
   invariant(
     /^          RELEASE_REF:\s*\$\{\{ github\.ref \}\}\s*$/mu.test(job),
     'Release ref verification must read github.ref explicitly.',
@@ -315,6 +333,7 @@ function assertReleaseRefGuard(job) {
 }
 
 function assertReleaseCandidateDependencies(job) {
+  assertNoReleaseGateOverride(job, 'Release candidate job')
   invariant(
     job.includes('    needs:\n      - release-ref\n      - source-checks\n'),
     'Release candidate job must depend on source-checks and release-ref.',

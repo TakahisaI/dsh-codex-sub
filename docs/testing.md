@@ -266,7 +266,9 @@ enabled release-workflow filename so the activation rename cannot bypass or brea
 active CI handoff remains the cross-platform integration proof for the operating-system archive and
 artifact clients.
 
-The workflow contract also requires every third-party Action to match a reviewed full commit SHA.
+The workflow contract also requires every third-party Action, including a named step whose
+`uses:` key is on the following line, to match a reviewed full commit SHA. It rejects conditional
+or ignored protected-main guards before candidate construction.
 The disabled release gate has an always-executed `release-ref` job that compares `github.ref` with
 `refs/heads/main`; candidate construction must depend on both that guard and source checks. Pure
 release-state fixtures exercise both the current private package and the future public Alpha branch,

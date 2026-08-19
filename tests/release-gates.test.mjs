@@ -335,9 +335,34 @@ describe('workflow release evidence', () => {
 
   it('requires reviewed full commit SHAs for every workflow action', async () => {
     const inputs = await repositoryInputs()
-    const ciWorkflow = inputs.ciWorkflow.replace(PINNED_ACTIONS.checkout, 'actions/checkout@v7')
+    const cases = [
+      inputs.ciWorkflow.replace(PINNED_ACTIONS.checkout, 'actions/checkout@v7'),
+      inputs.ciWorkflow.replace(
+        `      - uses: ${PINNED_ACTIONS.checkout}`,
+        '      - name: Movable checkout\n        uses: actions/checkout@v7',
+      ),
+    ]
+    for (const ciWorkflow of cases) {
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
+        'CI workflow actions must use reviewed full commit SHAs.',
+      )
+    }
+  })
+
+  it('keeps the reviewed action allowlist on full commit SHAs', () => {
+    expect(
+      Object.values(PINNED_ACTIONS).every((pin) => /^[^@\s]+@[0-9a-f]{40}$/u.test(pin)),
+    ).toBe(true)
+  })
+
+  it('rejects flow-style action steps instead of leaving them uninspected', async () => {
+    const inputs = await repositoryInputs()
+    const ciWorkflow = inputs.ciWorkflow.replace(
+      `      - uses: ${PINNED_ACTIONS.checkout}`,
+      '      - { uses: actions/checkout@v7 }',
+    )
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
-      'CI workflow actions must use reviewed full commit SHAs.',
+      'CI workflow actions must use block-style reviewed full commit SHAs.',
     )
   })
 
@@ -353,13 +378,43 @@ describe('workflow release evidence', () => {
       '    name: Verify release ref\n    if: github.ref == \'refs/heads/main\'\n',
     )
     expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow: skippedGuard })).toThrow(
-      'Release ref verification must run instead of skipping.',
+      'Release ref verification must not skip or ignore the protected-main gate.',
     )
 
     const missingDependency = inputs.releaseWorkflow.replace('      - release-ref\n', '')
     expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow: missingDependency })).toThrow(
       'Release candidate job must depend on source-checks and release-ref.',
     )
+  })
+
+  it('rejects every conditional or ignored protected-main gate', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      {
+        expected: 'Release ref verification must not skip or ignore the protected-main gate.',
+        workflow: inputs.releaseWorkflow.replace(
+          '    name: Verify release ref\n',
+          '    name: Verify release ref\n    continue-on-error: true\n',
+        ),
+      },
+      {
+        expected: 'Release ref verification must not skip or ignore the protected-main gate.',
+        workflow: inputs.releaseWorkflow.replace(
+          '      - name: Require protected main\n',
+          '      - name: Require protected main\n        if: false\n',
+        ),
+      },
+      {
+        expected: 'Release candidate job must not skip or ignore the protected-main gate.',
+        workflow: inputs.releaseWorkflow.replace(
+          '    name: Build candidate artifact\n',
+          '    name: Build candidate artifact\n    if: always()\n',
+        ),
+      },
+    ]
+    for (const { expected, workflow: releaseWorkflow } of cases) {
+      expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(expected)
+    }
   })
 })
 
