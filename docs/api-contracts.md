@@ -198,11 +198,16 @@ export interface VersionCheck {
 Reports never include an absolute path, account identifier, token expiry timestamp, email address,
 plan name, authorization URL, or credential contents.
 
+Doctor classifies a known version mismatch as `incompatible`, missing version metadata as `unknown`,
+and a locally unhealthy credential store, unverifiable permissions on a present credential, or an
+empty catalog as `degraded`. An absent credential can still be `compatible` and adds a bounded login
+hint; `status` owns the signed-in/signed-out result.
+
 ## 10. CLI exit codes
 
 ```text
 0  success / signed in / compatible
-1  expected negative state (signed out, incompatible doctor result)
+1  expected negative state (signed out, or any doctor result other than compatible)
 2  invalid command-line usage
 3  storage or runtime failure
 4  login cancelled

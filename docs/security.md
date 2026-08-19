@@ -118,8 +118,13 @@ Mitigation during CLI login:
 - allow HTTPS only, with no username/password;
 - accept loopback HTTP only when explicitly required by the upstream callback contract and never as
   the authorization destination;
+- reject an explicit pi-ai OAuth callback bind host unless it is the loopback literal
+  `127.0.0.1` or `::1`;
 - do not persist or include the URL in diagnostics;
 - cancel the login on invalid events.
+- do not open a browser automatically in the first release;
+- read secret and manual-code prompts through a non-echoing terminal path;
+- propagate cancellation to pending prompts and remove their listeners.
 
 ### 3.9 Supply-chain or incompatible upstream change
 
