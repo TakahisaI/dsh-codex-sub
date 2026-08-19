@@ -11,18 +11,63 @@ import {
   getCodexErrorCause,
   isCodexError,
 } from '../src/core/errors.js'
+import type { JsonPrimitive } from '../src/core/json.js'
 
 describe('CodexError', () => {
   it('carries a stable code and frozen safe details', () => {
+    const details: Record<string, JsonPrimitive> = { operation: 'request' }
     const error = new CodexError('Authentication is required.', 'CODEX_AUTH_REQUIRED', {
-      safeDetails: { operation: 'request' },
+      safeDetails: details,
     })
+
+    details['operation'] = 'mutated'
 
     expect(error).toBeInstanceOf(Error)
     expect(isCodexError(error)).toBe(true)
     expect(error.code).toBe('CODEX_AUTH_REQUIRED')
     expect(error.safeDetails).toEqual({ operation: 'request' })
+    expect(error.safeDetails).not.toBe(details)
     expect(Object.isFrozen(error.safeDetails)).toBe(true)
+    expect(() => {
+      const mutable = error.safeDetails as Record<string, JsonPrimitive>
+      mutable['operation'] = 'mutated again'
+    }).toThrow(TypeError)
+  })
+
+  it('rejects nested or otherwise non-primitive safe details', () => {
+    const nested = {
+      diagnostic: { mutable: true },
+    } as unknown as Readonly<Record<string, JsonPrimitive>>
+    const nonFinite = {
+      diagnostic: Number.POSITIVE_INFINITY,
+    } as Readonly<Record<string, JsonPrimitive>>
+
+    expect(() => new CodexError('Invalid details.', 'CODEX_UPSTREAM_PROTOCOL', {
+      safeDetails: nested,
+    })).toThrow('CodexError safe details must be a plain record of JSON primitives.')
+    expect(() => new CodexError('Invalid details.', 'CODEX_UPSTREAM_PROTOCOL', {
+      safeDetails: nonFinite,
+    })).toThrow('CodexError safe details must be a plain record of JSON primitives.')
+  })
+
+  it('does not expose a failure thrown while inspecting safe details', () => {
+    const sentinel = `ACCESS_SENTINEL_${randomUUID()}`
+    const hostileDetails = new Proxy({}, {
+      getPrototypeOf() {
+        throw new Error(sentinel)
+      },
+    }) as Readonly<Record<string, JsonPrimitive>>
+
+    expect(() => new CodexError('Invalid details.', 'CODEX_UPSTREAM_PROTOCOL', {
+      safeDetails: hostileDetails,
+    })).toThrow('CodexError safe details must be a plain record of JSON primitives.')
+    try {
+      new CodexError('Invalid details.', 'CODEX_UPSTREAM_PROTOCOL', {
+        safeDetails: hostileDetails,
+      })
+    } catch (error) {
+      expect(inspect(error)).not.toContain(sentinel)
+    }
   })
 
   it('does not serialize or print an internal cause', () => {
