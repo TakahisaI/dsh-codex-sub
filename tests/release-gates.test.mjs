@@ -156,6 +156,24 @@ describe('package tarball fail-closed validation', () => {
     )
   })
 
+  it('rejects a highly compressed oversized normal entry from the actual archive', async () => {
+    const tarball = await packageTarball(new Map([
+      ['lib/runtime.mjs', Buffer.alloc(PACKAGE_ENTRY_LIMIT_BYTES + 1, 0x61)],
+    ]))
+    await expect(validatePackageTarball(tarball)).rejects.toThrow(
+      `Package tarball entry lib/runtime.mjs must be at most ${String(PACKAGE_ENTRY_LIMIT_BYTES)} bytes.`,
+    )
+  })
+
+  it('rejects a highly compressed oversized manifest from the actual archive', async () => {
+    const tarball = await packageTarball(new Map([
+      ['package.json', Buffer.alloc(PACKAGE_JSON_LIMIT_BYTES + 1, 0x61)],
+    ]))
+    await expect(validatePackageTarball(tarball)).rejects.toThrow(
+      `Package tarball entry package.json must be at most ${String(PACKAGE_JSON_LIMIT_BYTES)} bytes.`,
+    )
+  })
+
   it('rejects highly compressed entries whose combined size exceeds the total budget', async () => {
     const largeEntry = Buffer.alloc(PACKAGE_ENTRY_LIMIT_BYTES, 0x61)
     const tarball = await packageTarball(new Map([

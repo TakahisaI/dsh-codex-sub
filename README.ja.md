@@ -110,7 +110,7 @@ credential、authorization URLまたはcode、account identifier、完全なenvi
 
 ## 公開前に残る判断
 
-このprojectは [MIT License](LICENSE) で公開します。
+このprojectは [MIT License](https://github.com/TakahisaI/dsh-codex-sub/blob/main/LICENSE) で公開します。
 公開前に、最初のnpm公開をどのようにbootstrapするかをmaintainerが決める必要があります。
 npm package nameには独立した予約手続きがなく、最初の実releaseのpublishによって所有権が成立します。
 packageが存在するまでOIDC trusted publishingを設定できないため、ADR 0011に初回だけの例外案を記録しています。

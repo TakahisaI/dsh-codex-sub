@@ -147,7 +147,9 @@ Report suspected vulnerabilities privately through
 
 ## Publication blocker
 
-The project is licensed under the [MIT License](LICENSE). It remains `private: true` until the
+The project is licensed under the
+[MIT License](https://github.com/TakahisaI/dsh-codex-sub/blob/main/LICENSE). It remains
+`private: true` until the
 initial npm publishing bootstrap is accepted and the remaining release gates pass. npm has no
 separate package-name reservation step; the first real publish establishes ownership. ADR 0011
 records the proposed one-release bootstrap before OIDC trusted publishing can be configured. The
