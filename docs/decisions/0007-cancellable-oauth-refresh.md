@@ -72,12 +72,13 @@ exactly the access token as `apiKey`. The service fails with `CODEX_UPSTREAM_PRO
 `baseUrl`, or another field appears, because the project request-auth contract cannot represent
 those fields without silently discarding them.
 
-Caller cancellation remains a fixed `AbortError`. The service deadline, exhausted lock contention,
-and an unclassified provider refresh failure use `CODEX_AUTH_REFRESH_FAILED` with a fixed safe
-reason. `CODEX_REAUTH_REQUIRED` is reserved for a failure that an upstream contract can identify as
-requiring renewed user authentication. The pinned pi-ai contract cannot make that identification,
-so this package does not infer it from an exception message. This is an explicit unresolved upstream
-assumption rather than a guessed `invalid_grant` parser.
+Caller cancellation remains a fixed `AbortError`. The shared service deadline—including lock
+contention that remains stale until that deadline—and an unclassified provider refresh failure use
+`CODEX_AUTH_REFRESH_FAILED` with a fixed safe reason. `CODEX_REAUTH_REQUIRED` is reserved for a
+failure that an upstream contract can identify as requiring renewed user authentication. The pinned
+pi-ai contract cannot make that identification, so this package does not infer it from an exception
+message. This is an explicit unresolved upstream assumption rather than a guessed `invalid_grant`
+parser.
 
 The service never calls provider API-key resolution and injects an auth context that returns no
 ambient environment or filesystem credentials.
