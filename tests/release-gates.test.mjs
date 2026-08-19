@@ -26,7 +26,11 @@ import {
   assertReleaseChecksum,
   selectReleaseTarball,
 } from '../scripts/release-artifact-contract.mjs'
-import { validateWorkflowContracts } from '../scripts/workflow-contract.mjs'
+import { validateReleaseState } from '../scripts/release-state-contract.mjs'
+import {
+  PINNED_ACTIONS,
+  validateWorkflowContracts,
+} from '../scripts/workflow-contract.mjs'
 
 const temporaryDirectories = []
 
@@ -183,8 +187,8 @@ describe('workflow release evidence', () => {
   it('rejects rebuilding inside a candidate consumer', async () => {
     const inputs = await repositoryInputs()
     const ciWorkflow = inputs.ciWorkflow.replace(
-      '      - uses: actions/download-artifact@v7',
-      '      - run: pnpm run build\n      - uses: actions/download-artifact@v7',
+      `      - uses: ${PINNED_ACTIONS.downloadArtifact}`,
+      `      - run: pnpm run build\n      - uses: ${PINNED_ACTIONS.downloadArtifact}`,
     )
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
       'CI must not rebuild the package.',
@@ -194,8 +198,8 @@ describe('workflow release evidence', () => {
   it('rejects a direct package repack inside a candidate consumer', async () => {
     const inputs = await repositoryInputs()
     const ciWorkflow = inputs.ciWorkflow.replace(
-      '      - uses: actions/download-artifact@v7',
-      '      - run: pnpm pack\n      - uses: actions/download-artifact@v7',
+      `      - uses: ${PINNED_ACTIONS.downloadArtifact}`,
+      `      - run: pnpm pack\n      - uses: ${PINNED_ACTIONS.downloadArtifact}`,
     )
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
       'CI must not pack the package.',
@@ -246,9 +250,9 @@ describe('workflow release evidence', () => {
     ]
     for (const [command, expectedMessage] of cases) {
       const releaseWorkflow = inputs.releaseWorkflow.replace(
-        '          node-version: 24\n      - uses: actions/download-artifact@v7',
+        `          node-version: 24\n      - uses: ${PINNED_ACTIONS.downloadArtifact}`,
         `          node-version: 24\n      - run: ${command}\n`
-          + '      - uses: actions/download-artifact@v7',
+          + `      - uses: ${PINNED_ACTIONS.downloadArtifact}`,
       )
       expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(expectedMessage)
     }
@@ -293,12 +297,12 @@ describe('workflow release evidence', () => {
       '      - run: touch .npmrc',
       '      - run: touch ~/.npmrc',
       '      - run: npm whoami\n        env:\n          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}',
-      '      - uses: actions/setup-node@v7\n        with:\n          registry-url: https://registry.npmjs.org',
+      `      - uses: ${PINNED_ACTIONS.setupNode}\n        with:\n          registry-url: https://registry.npmjs.org`,
     ]
     for (const step of cases) {
       const releaseWorkflow = inputs.releaseWorkflow.replace(
-        '      - uses: actions/checkout@v7\n      - uses: actions/setup-node@v7',
-        `${step}\n      - uses: actions/checkout@v7\n      - uses: actions/setup-node@v7`,
+        `      - uses: ${PINNED_ACTIONS.checkout}`,
+        `${step}\n      - uses: ${PINNED_ACTIONS.checkout}`,
       )
       expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(
         'Release workflow must not contain npm registry credential plumbing.',
@@ -327,5 +331,145 @@ describe('workflow release evidence', () => {
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
       'CI workflow must declare exactly one workflow-level permissions block.',
     )
+  })
+
+  it('requires reviewed full commit SHAs for every workflow action', async () => {
+    const inputs = await repositoryInputs()
+    const ciWorkflow = inputs.ciWorkflow.replace(PINNED_ACTIONS.checkout, 'actions/checkout@v7')
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
+      'CI workflow actions must use reviewed full commit SHAs.',
+    )
+  })
+
+  it('requires an executing protected-main ref guard before candidate construction', async () => {
+    const inputs = await repositoryInputs()
+    const wrongRef = inputs.releaseWorkflow.replace('refs/heads/main', 'refs/heads/release')
+    expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow: wrongRef })).toThrow(
+      'Release ref verification must fail outside protected main.',
+    )
+
+    const skippedGuard = inputs.releaseWorkflow.replace(
+      '    name: Verify release ref\n',
+      '    name: Verify release ref\n    if: github.ref == \'refs/heads/main\'\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow: skippedGuard })).toThrow(
+      'Release ref verification must run instead of skipping.',
+    )
+
+    const missingDependency = inputs.releaseWorkflow.replace('      - release-ref\n', '')
+    expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow: missingDependency })).toThrow(
+      'Release candidate job must depend on source-checks and release-ref.',
+    )
+  })
+})
+
+describe('release state transitions', () => {
+  async function repositoryFixture() {
+    const [
+      ciWorkflow,
+      compatibilityText,
+      issueConfig,
+      npmBootstrapDecision,
+      packageText,
+      releaseNotesText,
+      releaseWorkflow,
+      securityPolicy,
+    ] = await Promise.all([
+      readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
+      readFile(new URL('../compatibility.json', import.meta.url), 'utf8'),
+      readFile(new URL('../.github/ISSUE_TEMPLATE/config.yml', import.meta.url), 'utf8'),
+      readFile(new URL('../docs/decisions/0011-npm-trusted-publishing-bootstrap.md', import.meta.url), 'utf8'),
+      readFile(new URL('../package.json', import.meta.url), 'utf8'),
+      readFile(new URL('../docs/releases/0.1.0-alpha.0.md', import.meta.url), 'utf8'),
+      readFile(new URL('../.github/workflows/release.yml.disabled', import.meta.url), 'utf8'),
+      readFile(new URL('../SECURITY.md', import.meta.url), 'utf8'),
+    ])
+    return {
+      ciWorkflow,
+      compatibility: JSON.parse(compatibilityText),
+      disabledWorkflowExists: true,
+      enabledWorkflowExists: false,
+      issueConfig,
+      licenseExists: true,
+      npmBootstrapDecision,
+      packageJson: JSON.parse(packageText),
+      releaseNotes: { exists: true, text: releaseNotesText },
+      releaseWorkflow,
+      securityPolicy,
+    }
+  }
+
+  async function publicAlphaFixture() {
+    const fixture = await repositoryFixture()
+    return {
+      ...fixture,
+      disabledWorkflowExists: false,
+      enabledWorkflowExists: true,
+      npmBootstrapDecision: fixture.npmBootstrapDecision.replace(
+        '- Status: proposed',
+        '- Status: accepted',
+      ),
+      packageJson: {
+        ...fixture.packageJson,
+        private: false,
+        version: '0.1.0-alpha.0',
+      },
+      releaseNotes: {
+        exists: true,
+        text: fixture.releaseNotes.text.replace('Draft only.', 'Release candidate.'),
+      },
+    }
+  }
+
+  it('accepts the current private state and a complete public Alpha fixture', async () => {
+    const privateFixture = await repositoryFixture()
+    const publicFixture = await publicAlphaFixture()
+    expect(() => validateReleaseState(privateFixture)).not.toThrow()
+    expect(() => validateReleaseState(publicFixture)).not.toThrow()
+  })
+
+  it('rejects a public Alpha while the release workflow remains disabled', async () => {
+    const fixture = await publicAlphaFixture()
+    expect(() => validateReleaseState({
+      ...fixture,
+      disabledWorkflowExists: true,
+      enabledWorkflowExists: false,
+    })).toThrow('A public package requires the reviewed release workflow to be enabled once.')
+  })
+
+  it('rejects publication commands or OIDC permission in the public Alpha state', async () => {
+    const fixture = await publicAlphaFixture()
+    const publishWorkflow = fixture.releaseWorkflow.replace(
+      '      - name: Require protected main',
+      '      - run: npm publish\n      - name: Require protected main',
+    )
+    expect(() => validateReleaseState({ ...fixture, releaseWorkflow: publishWorkflow })).toThrow(
+      'Release workflow must not contain a publish operation.',
+    )
+
+    const oidcWorkflow = fixture.releaseWorkflow.replace(
+      'permissions:\n  contents: read',
+      'permissions:\n  contents: read\n  id-token: write',
+    )
+    expect(() => validateReleaseState({ ...fixture, releaseWorkflow: oidcWorkflow })).toThrow(
+      'Release workflow permissions must use a block containing only contents: read.',
+    )
+  })
+
+  it('rejects a wrong public dist-tag or draft release notes', async () => {
+    const fixture = await publicAlphaFixture()
+    expect(() => validateReleaseState({
+      ...fixture,
+      packageJson: {
+        ...fixture.packageJson,
+        publishConfig: { ...fixture.packageJson.publishConfig, tag: 'latest' },
+      },
+    })).toThrow(
+      'Publishing metadata must force the public npm registry, public access, and the alpha dist-tag.',
+    )
+    expect(() => validateReleaseState({
+      ...fixture,
+      releaseNotes: { exists: true, text: '> Draft only. Not published.' },
+    })).toThrow('Final release notes are missing for 0.1.0-alpha.0.')
   })
 })

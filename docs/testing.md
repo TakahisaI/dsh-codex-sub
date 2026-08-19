@@ -266,6 +266,13 @@ enabled release-workflow filename so the activation rename cannot bypass or brea
 active CI handoff remains the cross-platform integration proof for the operating-system archive and
 artifact clients.
 
+The workflow contract also requires every third-party Action to match a reviewed full commit SHA.
+The disabled release gate has an always-executed `release-ref` job that compares `github.ref` with
+`refs/heads/main`; candidate construction must depend on both that guard and source checks. Pure
+release-state fixtures exercise both the current private package and the future public Alpha branch,
+including rejection of a disabled workflow, draft notes, wrong dist-tag, publish command, or OIDC
+permission.
+
 Windows is not a first-alpha target because the current vault cannot verify owner-only ACLs there.
 
 Non-blocking scheduled canaries:

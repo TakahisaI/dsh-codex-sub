@@ -1,7 +1,7 @@
 import { access, readFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { validateWorkflowContracts } from './workflow-contract.mjs'
+import { validateReleaseState } from './release-state-contract.mjs'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const requiredSupportFiles = [
@@ -50,67 +50,33 @@ const packageJson = JSON.parse(await readText('package.json'))
 const npmBootstrapDecision = await readText(
   'docs/decisions/0011-npm-trusted-publishing-bootstrap.md',
 )
-const expectedRepository = 'git+https://github.com/TakahisaI/dsh-codex-sub.git'
-const expectedIssues = 'https://github.com/TakahisaI/dsh-codex-sub/issues'
-const expectedHomepage = 'https://github.com/TakahisaI/dsh-codex-sub#readme'
 const enabledWorkflow = await exists('.github/workflows/release.yml')
 const disabledWorkflow = await exists('.github/workflows/release.yml.disabled')
-
-if (packageJson.private === true) {
-  if (packageJson.version !== '0.0.0-development' || packageJson.license !== 'MIT') {
-    throw new Error('A private development package must keep its development version and MIT license.')
-  }
-  if (enabledWorkflow || !disabledWorkflow) {
-    throw new Error('The publishing workflow must remain disabled while publication is blocked.')
-  }
-} else {
-  if (!npmBootstrapDecision.includes('- Status: accepted')) {
-    throw new Error('The npm bootstrap decision must be accepted before publication is enabled.')
-  }
-  if (!/^\d+\.\d+\.\d+-alpha\.\d+$/u.test(packageJson.version)) {
-    throw new Error('A public package version must be an explicit Alpha prerelease.')
-  }
-  if (packageJson.license !== 'MIT' || !await exists('LICENSE')) {
-    throw new Error('A public package requires the selected MIT license and committed LICENSE file.')
-  }
-  if (!enabledWorkflow || disabledWorkflow) {
-    throw new Error('A public package requires the reviewed release workflow to be enabled once.')
-  }
-  const notesPath = `docs/releases/${packageJson.version}.md`
-  if (!await exists(notesPath) || (await readText(notesPath)).includes('Draft only.')) {
-    throw new Error(`Final release notes are missing for ${packageJson.version}.`)
-  }
-}
-
 const securityPolicy = await readText('SECURITY.md')
 const issueConfig = await readText('.github/ISSUE_TEMPLATE/config.yml')
-if (
-  packageJson.repository?.url !== expectedRepository
-  || packageJson.bugs?.url !== expectedIssues
-  || packageJson.homepage !== expectedHomepage
-) {
-  throw new Error('Package registry links drifted from the canonical repository.')
-}
-if (
-  packageJson.publishConfig?.access !== 'public'
-  || packageJson.publishConfig?.tag !== 'alpha'
-) {
-  throw new Error('Publishing metadata must force public access and the alpha dist-tag.')
-}
-
-const privateReportUrl = 'https://github.com/TakahisaI/dsh-codex-sub/security/advisories/new'
-if (!securityPolicy.includes(privateReportUrl) || !issueConfig.includes(privateReportUrl)) {
-  throw new Error('The private vulnerability reporting URL drifted from support documentation.')
-}
-
 const releaseWorkflowPath = enabledWorkflow
   ? '.github/workflows/release.yml'
   : '.github/workflows/release.yml.disabled'
-const [ciWorkflow, releaseWorkflow, compatibility] = await Promise.all([
+const releaseNotesPath = `docs/releases/${String(packageJson.version)}.md`
+const releaseNotesExists = await exists(releaseNotesPath)
+const [ciWorkflow, releaseWorkflow, compatibility, releaseNotesText] = await Promise.all([
   readText('.github/workflows/ci.yml'),
   readText(releaseWorkflowPath),
   readText('compatibility.json').then((text) => JSON.parse(text)),
+  releaseNotesExists ? readText(releaseNotesPath) : undefined,
 ])
-validateWorkflowContracts({ ciWorkflow, compatibility, releaseWorkflow })
+validateReleaseState({
+  ciWorkflow,
+  compatibility,
+  disabledWorkflowExists: disabledWorkflow,
+  enabledWorkflowExists: enabledWorkflow,
+  issueConfig,
+  licenseExists: await exists('LICENSE'),
+  npmBootstrapDecision,
+  packageJson,
+  releaseNotes: { exists: releaseNotesExists, text: releaseNotesText },
+  releaseWorkflow,
+  securityPolicy,
+})
 
 process.stdout.write('Release state and support files are internally consistent.\n')

@@ -170,6 +170,8 @@ Implementation evidence:
 - Ubuntu and macOS cover Node 22.19, 24, and 26;
 - active CI and the release gate pass one set of checksum-verified candidate bytes to every
   platform job without repacking;
+- the release gate rejects every ref except protected `main`, and all third-party Actions use
+  reviewed full commit SHAs;
 - the ordinary model selector was manually confirmed against that packed profile;
 - the release workflow is stored with a disabled extension and contains no publication step.
 
