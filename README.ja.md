@@ -3,9 +3,9 @@
 `dsh-codex-sub` は、pi-ai の `openai-codex` プロバイダーを DeepSeek Harness（DSH）の通常のモデル経路として登録するプラグインです。
 認証には OpenAI Platform API キーではなく、ChatGPT 契約の OAuth を使います。
 
-> 現在は Milestone 0 から 6 まで実装済みです。
-> リポジトリ基盤、core 契約、資格情報文書、package-owned file vault、pi-ai OAuth 連携、DSH の LLM provider route、CLI、offline diagnostics、packed-install release gate が含まれます。
-> 公開には、末尾に記載した maintainer の判断が残っています。
+> 現在は Milestone 0 から 6 まで実装済みで、Milestone 7のAlpha公開準備を進めています。
+> リポジトリ基盤、core契約、資格情報文書、package-owned file vault、pi-ai OAuth連携、DSHのLLM provider route、CLI、offline diagnostics、packed-install release gateが含まれます。
+> packageはまだ公開しておらず、公開には末尾に記載したmaintainerの判断が残っています。
 
 ## プラグインが担う範囲
 
@@ -20,6 +20,18 @@ DSH へ LLM provider route を一つ追加します。
 
 実装上の拘束条件は [`AGENTS.md`](AGENTS.md) にあります。
 Codex へ最初に渡す指示は [`CODEX_BOOTSTRAP_PROMPT.md`](CODEX_BOOTSTRAP_PROMPT.md) にあります。
+
+## 検証済みの組み合わせ
+
+| 構成要素 | 検証済みの値 |
+| --- | --- |
+| DeepSeek Harness | `0.1.0-rc.7` |
+| `@deepseek-ai/cordis` | `4.0.1` |
+| `@earendil-works/pi-ai` | `0.82.1` |
+| Node.js | `^22.19.0 || ^24.0.0 || ^26.0.0` |
+| OS | LinuxとmacOS |
+
+最初のAlphaにおけるaccount、storage、platform、productの境界は、[既知の制約](docs/known-limitations.ja.md)にまとめています。
 
 ## ローカル tarball の導入
 
@@ -88,8 +100,20 @@ ChatGPT 契約の資格情報は OpenAI Platform API key ではありません�
 
 このプロジェクトは OpenAI、ChatGPT、Codex、DeepSeek、DeepSeek Harness、earendil-works の公式プロジェクトではなく、各組織の承認を受けたものでもありません。
 
+## supportとsecurity
+
+installまたは動作の問題は、repositoryのIssue formから報告してください。
+添付する情報は、正確なversionとsanitize済みの `doctor --json` だけです。
+credential、authorization URLまたはcode、account identifier、完全なenvironment dump、local path、model conversationは投稿しないでください。
+
+脆弱性の疑いは、[`SECURITY.md`](SECURITY.md) に記載した非公開窓口から報告してください。
+
 ## 公開前に必要な判断
 
-公開前に、project license、npm package name の所有権、trusted publishing の方式を maintainer が決める必要があります。
+公開前に、project licenseと、最初のnpm公開をどのようにbootstrapするかをmaintainerが決める必要があります。
+npm package nameには独立した予約手続きがなく、最初の実releaseのpublishによって所有権が成立します。
+packageが存在するまでOIDC trusted publishingを設定できないため、ADR 0011に初回だけの例外案を記録しています。
 それまでは `UNLICENSED` と `private: true` を維持します。
 release workflow は無効な file として置かれており、publish step を含みません。
+Alphaのdraft release notesは [`docs/releases/`](docs/releases/) にあります。
+実account試験では、[`docs/alpha-smoke-record.md`](docs/alpha-smoke-record.md) を使って秘密を含まないpass/failだけを記録します。

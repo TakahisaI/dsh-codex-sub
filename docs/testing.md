@@ -214,6 +214,8 @@ Any occurrence is a test failure.
 ## 3. Manual real-account smoke test
 
 Run only on a maintainer-controlled machine. Never store output in CI artifacts.
+Use [`alpha-smoke-record.md`](alpha-smoke-record.md) and record only the candidate identity plus
+`PASS`, a sanitized issue reference, or a justified `DEFERRED` result for each step.
 
 1. Install a packed prerelease into a fresh DSH profile.
 2. Run the package login command and complete ChatGPT OAuth.

@@ -1,0 +1,31 @@
+name: Feature request
+description: Propose a use case without expanding the provider-only core by convenience.
+title: "[Feature] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The core package intentionally excludes Web account UI, multiple accounts, usage or quota,
+        search, image-fetching tools, Fast Mode, MCP, App Server, and another agent loop. A future
+        capability may require a separate package or ADR.
+  - type: textarea
+    id: use-case
+    attributes:
+      label: User problem
+      description: Describe the workflow and why DSH's existing behavior does not cover it.
+    validations:
+      required: true
+  - type: textarea
+    id: boundary
+    attributes:
+      label: Suggested ownership boundary
+      description: State whether this belongs in the provider plugin, DSH, pi-ai, or a separate package.
+    validations:
+      required: true
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: I reviewed the documented non-goals and explained why this request needs a new seam.
+          required: true

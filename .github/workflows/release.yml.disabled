@@ -1,5 +1,5 @@
 # This workflow is intentionally disabled until the maintainer selects a license,
-# confirms npm package ownership, and chooses the trusted-publishing setup.
+# completes the initial npm bootstrap, and configures trusted publishing.
 name: Release gates (disabled, never publishes)
 
 on:

@@ -171,6 +171,10 @@ Implementation evidence:
 
 ## Milestone 7 — Alpha validation
 
+Status: in progress. Documentation, support, and secret-safe recording can be prepared before the
+release, but real-account OAuth, license selection, acceptance or replacement of ADR 0011's npm
+bootstrap proposal, and publication remain manual gates.
+
 Deliverables:
 
 - manual real-account smoke record;
@@ -184,7 +188,8 @@ Acceptance:
 - all release gates pass;
 - no open release-blocking security issue;
 - public documentation does not imply official endorsement or guaranteed ChatGPT access;
-- npm package remains on an alpha dist-tag.
+- npm package remains on an alpha dist-tag;
+- the initial npm bootstrap and any provenance exception are explicitly recorded.
 
 ## Deferred milestones
 

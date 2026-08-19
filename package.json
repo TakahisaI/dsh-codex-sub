@@ -4,6 +4,14 @@
   "description": "ChatGPT subscription authentication and OpenAI Codex models for DeepSeek Harness.",
   "private": true,
   "license": "UNLICENSED",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/TakahisaI/dsh-codex-sub.git"
+  },
+  "bugs": {
+    "url": "https://github.com/TakahisaI/dsh-codex-sub/issues"
+  },
+  "homepage": "https://github.com/TakahisaI/dsh-codex-sub#readme",
   "type": "module",
   "sideEffects": false,
   "packageManager": "pnpm@11.7.0",
@@ -49,9 +57,11 @@
     "test": "vitest run",
     "check:boundaries": "node scripts/check-core-boundaries.mjs",
     "check:compatibility": "node scripts/check-compatibility.mjs",
+    "check:licenses": "node scripts/check-dependency-licenses.mjs",
+    "check:release-state": "node scripts/check-release-state.mjs",
     "test:packed-install": "node scripts/packed-install.mjs",
     "pack:check": "node scripts/check-pack.mjs",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run check:upstream-declarations && pnpm run test && pnpm run check:boundaries && pnpm run build && pnpm run check:built-entry && pnpm run check:built-cli && pnpm run check:compatibility && pnpm run pack:check"
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run check:upstream-declarations && pnpm run test && pnpm run check:boundaries && pnpm run build && pnpm run check:built-entry && pnpm run check:built-cli && pnpm run check:compatibility && pnpm run check:licenses && pnpm run check:release-state && pnpm run pack:check"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
