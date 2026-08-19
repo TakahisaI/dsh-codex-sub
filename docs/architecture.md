@@ -148,6 +148,11 @@ The plugin entry is intentionally small:
 4. register `openai-codex` on `ctx.llm`;
 5. rely on Cordis effect disposal for unregistration.
 
+The pinned DSH contract exposes live provider metadata and the adapter-owned catalog through
+`listProviders()` and `listModels()` after `registerAdapter()`. That is the Host seam used for model
+selection. The plugin does not register a configurable-provider directory or model-discovery
+namespace because it owns no user-editable provider settings or dormant route. See ADR 0006.
+
 There is no Web server injection, settings card, search service, tool registration, or session
 event registration.
 

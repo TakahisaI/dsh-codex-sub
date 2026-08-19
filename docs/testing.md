@@ -71,6 +71,12 @@ it as a manual compatibility check rather than mocking undocumented internals.
 
 Mount a minimal Cordis context with DSH's LLM runtime and a fake pi-ai provider factory.
 
+The registration-path spike separately mounts the pinned public LLM runtime with a fake
+`LlmAdapter` and verifies that `registerAdapter()` alone exposes provider and model metadata through
+the Host model-selection seam. It also pins duplicate-registration atomicity, effect disposal, the
+absence of configurable-provider and model-discovery registrations, and the package-root bundle
+row. End-to-end Web selector visibility remains a packed-install test.
+
 Verify:
 
 - registration owns exactly `openai-codex`;

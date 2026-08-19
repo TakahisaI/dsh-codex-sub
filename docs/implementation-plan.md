@@ -108,11 +108,12 @@ Acceptance:
 - request cancellation and replay behavior use DSH's adapter contract;
 - no DSH Web, settings, search, or tool registration is added.
 
-Decision point:
+Resolved decision:
 
-If adapter registration alone does not make the provider visible in the current DSH model picker,
-add the smallest Host-only configurable-provider directory registration supported by the public API.
-Do not add a browser card. Record the exact need in an ADR.
+The pinned DSH release exposes a live adapter's provider metadata and catalog through the public
+Host model-selection seam after `registerAdapter()` alone. The first release therefore does not add
+a configurable-provider directory, settings namespace, or browser card. Milestone 6 must still
+verify the actual selector through a packed install. See ADR 0006.
 
 ## Milestone 5 — CLI and diagnostics
 
