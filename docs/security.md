@@ -133,7 +133,8 @@ Mitigation:
 - exact verified versions in `compatibility.json` and release dependencies;
 - package-lock integrity through pnpm;
 - dependency review and provenance checks;
-- packed-install tests;
+- packed-install tests that verify Host dependency identity and block provider `fetch` while signed
+  out;
 - scheduled non-publishing canaries;
 - fail closed on unsupported runtime combinations.
 
@@ -148,6 +149,9 @@ The first release does not attempt to protect against:
 - upstream account suspension, policy changes, quota changes, or model withdrawal;
 - memory scraping from the running process;
 - Windows owner-only ACL hardening beyond what the selected filesystem utility can guarantee.
+
+Windows is therefore outside the first-alpha supported operating systems rather than being treated
+as a partially secured target.
 
 These limitations must be stated honestly. Do not describe plaintext local token storage as encrypted.
 

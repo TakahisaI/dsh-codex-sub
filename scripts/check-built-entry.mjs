@@ -1,3 +1,9 @@
+import { copyFile, mkdtemp, rm } from 'node:fs/promises'
+import { inspect } from 'node:util'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
+
 import { Context } from '@deepseek-ai/cordis'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 
@@ -42,4 +48,29 @@ if (ctx.get('llm') !== undefined) {
   throw new Error('Built plugin smoke test did not dispose the LLM runtime.')
 }
 
-process.stdout.write('Built package entry registers and disposes the Codex route.\n')
+const isolated = await mkdtemp(join(tmpdir(), 'dsh-codex-sub-built-entry-'))
+try {
+  const isolatedEntry = join(isolated, 'index.mjs')
+  await copyFile(new URL('../lib/index.mjs', import.meta.url), isolatedEntry)
+  const isolatedRoot = await import(pathToFileURL(isolatedEntry).href)
+  let failure
+  try {
+    await isolatedRoot.apply({})
+  } catch (error) {
+    failure = error
+  }
+  if (
+    failure === undefined
+    || failure.code !== 'CODEX_INCOMPATIBLE_RUNTIME'
+    || failure.safeDetails?.packageName !== '@deepseek-ai/dsh-runtime'
+    || JSON.stringify(failure).includes(isolated)
+    || inspect(failure).includes('Cannot find module')
+    || inspect(failure).includes('[cause]')
+  ) {
+    throw new Error('A missing runtime module did not fail with a safe compatibility error.')
+  }
+} finally {
+  await rm(isolated, { force: true, recursive: true })
+}
+
+process.stdout.write('Built package entry registers the route and safely rejects a missing runtime.\n')

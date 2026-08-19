@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
+import { Context } from '@deepseek-ai/cordis'
+import LlmRuntime from '@deepseek-ai/dsh-llm'
 
 import { CodexError } from '../src/core/errors.js'
 import {
   assertRuntimeCompatible,
+  assertHostLlmRuntime,
   evaluateRuntimeCompatibility,
   inspectInstalledRuntime,
   matchesNodeRange,
@@ -18,15 +21,21 @@ const SUPPORTED_PACKAGES = Object.freeze({
   '@earendil-works/pi-ai': '0.82.1',
 })
 
+class AlternateLlmRuntime extends LlmRuntime {}
+
 describe('runtime compatibility', () => {
   it('evaluates the supported Node range without optimistic major-version gaps', () => {
-    expect(matchesNodeRange('22.19.0', '^22.19.0 || >=24.0.0')).toBe(true)
-    expect(matchesNodeRange('22.99.0', '^22.19.0 || >=24.0.0')).toBe(true)
-    expect(matchesNodeRange('22.18.9', '^22.19.0 || >=24.0.0')).toBe(false)
-    expect(matchesNodeRange('23.9.0', '^22.19.0 || >=24.0.0')).toBe(false)
-    expect(matchesNodeRange('24.0.0', '^22.19.0 || >=24.0.0')).toBe(true)
-    expect(matchesNodeRange('26.1.0', '^22.19.0 || >=24.0.0')).toBe(true)
-    expect(matchesNodeRange('invalid', '^22.19.0 || >=24.0.0')).toBe(false)
+    const range = '^22.19.0 || ^24.0.0 || ^26.0.0'
+    expect(matchesNodeRange('22.19.0', range)).toBe(true)
+    expect(matchesNodeRange('22.99.0', range)).toBe(true)
+    expect(matchesNodeRange('22.18.9', range)).toBe(false)
+    expect(matchesNodeRange('23.9.0', range)).toBe(false)
+    expect(matchesNodeRange('24.0.0', range)).toBe(true)
+    expect(matchesNodeRange('25.1.0', range)).toBe(false)
+    expect(matchesNodeRange('26.1.0', range)).toBe(true)
+    expect(matchesNodeRange('27.0.0', range)).toBe(false)
+    expect(matchesNodeRange('26.1.0-rc.1', range)).toBe(false)
+    expect(matchesNodeRange('invalid', range)).toBe(false)
   })
 
   it('reports the exact pinned package combination as compatible', () => {
@@ -85,5 +94,36 @@ describe('runtime compatibility', () => {
     const snapshot = inspectInstalledRuntime()
     expect(snapshot.packages).toEqual(SUPPORTED_PACKAGES)
     expect(assertRuntimeCompatible(snapshot).compatible).toBe(true)
+  })
+
+  it('ties the accepted host service to the verified dsh-llm module identity', async () => {
+    const ctx = new Context()
+    const runtimeFiber = ctx.plugin(LlmRuntime)
+    await runtimeFiber
+    try {
+      expect(() => assertHostLlmRuntime(ctx.llm)).not.toThrow()
+    } finally {
+      await runtimeFiber.dispose()
+    }
+  })
+
+  it('rejects another host constructor identity even when plugin metadata resolves as verified', async () => {
+    expect(inspectInstalledRuntime().packages['@deepseek-ai/dsh-llm']).toBe('0.1.0-rc.7')
+
+    const ctx = new Context()
+    const runtimeFiber = ctx.plugin(AlternateLlmRuntime)
+    await runtimeFiber
+    try {
+      expect(() => assertHostLlmRuntime(ctx.llm)).toThrowError(expect.objectContaining({
+        code: 'CODEX_INCOMPATIBLE_RUNTIME',
+        safeDetails: {
+          packageName: '@deepseek-ai/dsh-llm:host',
+          supported: '0.1.0-rc.7',
+          installed: 'unverified',
+        },
+      }))
+    } finally {
+      await runtimeFiber.dispose()
+    }
   })
 })

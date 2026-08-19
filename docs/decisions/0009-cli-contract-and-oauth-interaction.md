@@ -68,5 +68,5 @@ an already-completed CLI command hang indefinitely.
 - Hidden prompt handling and SIGINT cleanup require dedicated stream and cancellation tests.
 - Forced process termination trades general-purpose embedding of the executable module for a
   deterministic command lifecycle; the library entry remains unaffected.
-- Packed DSH profile invocation remains a Milestone 6 installation test; Milestone 5 verifies the
-  emitted executable directly.
+- Milestone 6 verifies `status`, `doctor`, and `logout` through the executable installed from the
+  packed tarball; Milestone 5 retains the direct emitted-executable checks.

@@ -2,6 +2,8 @@ import { readFileSync } from 'node:fs'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { LlmRuntime } from '@deepseek-ai/dsh-llm'
+
 import compatibilityDocument from '../../compatibility.json' with { type: 'json' }
 import type { VersionCheck } from '../core/contracts.js'
 import { CodexError } from '../core/errors.js'
@@ -36,7 +38,7 @@ type NumericVersion = readonly [major: number, minor: number, patch: number]
 const compatibility = compatibilityDocument as CompatibilityDocument
 
 function parseNumericVersion(value: string): NumericVersion | undefined {
-  const match = /^(\d+)\.(\d+)\.(\d+)(?:[-+].*)?$/.exec(value)
+  const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value)
   if (match === null) {
     return undefined
   }
@@ -213,4 +215,20 @@ export function assertRuntimeCompatible(
     }
   }
   return report
+}
+
+export function assertHostLlmRuntime(runtime: unknown): void {
+  if (
+    runtime === null
+    || (typeof runtime !== 'object' && typeof runtime !== 'function')
+    || Object.getPrototypeOf(runtime)?.constructor !== LlmRuntime
+  ) {
+    throw new CodexError('The installed runtime is not supported.', 'CODEX_INCOMPATIBLE_RUNTIME', {
+      safeDetails: {
+        packageName: '@deepseek-ai/dsh-llm:host',
+        supported: compatibility.dsh.packages['@deepseek-ai/dsh-llm'] ?? 'unknown',
+        installed: 'unverified',
+      },
+    })
+  }
 }

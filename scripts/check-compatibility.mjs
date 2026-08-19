@@ -19,7 +19,13 @@ function expectEqual(label, actual, expected) {
 }
 
 expectEqual('engines.node', packageJson.engines?.node, compatibility.node)
+expectEqual('os', JSON.stringify(packageJson.os), JSON.stringify(compatibility.platforms))
 expectEqual('packageManager', packageJson.packageManager, compatibility.packageManager)
+expectEqual(
+  'devDependencies.@deepseek-ai/dsh',
+  packageJson.devDependencies?.['@deepseek-ai/dsh'],
+  compatibility.dsh.release,
+)
 expectEqual(
   `dependencies.${compatibility.piAi.package}`,
   packageJson.dependencies?.[compatibility.piAi.package],

@@ -2,7 +2,7 @@
 
 ## Distribution
 
-Initial supported distribution forms:
+Planned supported distribution forms after the publication prerequisites are resolved:
 
 1. npm prerelease with built artifacts;
 2. locally generated `pnpm pack` tarball.
@@ -32,6 +32,16 @@ Before the first public package:
 
 ## Release workflow
 
+The repository contains `.github/workflows/release.yml.disabled`. GitHub does not load it as a
+workflow, and it contains no registry authentication or publish command. If enabled later, its
+current scope is limited to the full checks, packed installs, tarball construction, a SHA-256 file,
+and an unpublished workflow artifact.
+
+Do not rename or extend that file until the maintainer has selected the license, confirmed npm
+package-name ownership, and chosen the trusted-publishing mechanism.
+
+After those decisions, the intended release sequence is:
+
 1. create a release branch;
 2. update version, compatibility data, changelog, and limitations;
 3. run `pnpm install --frozen-lockfile`;
@@ -44,6 +54,10 @@ Before the first public package:
 10. verify npm provenance and install the published artifact into a clean profile.
 
 No workflow may publish from an unreviewed dependency-update branch.
+
+The first alpha supports Linux and macOS on the Node lines recorded in `compatibility.json`.
+Windows publication is blocked until owner-only credential ACL verification and a blocking packed
+install job exist.
 
 ## Support posture
 

@@ -1,0 +1,48 @@
+# This workflow is intentionally disabled until the maintainer selects a license,
+# confirms npm package ownership, and chooses the trusted-publishing setup.
+name: Release gates (disabled, never publishes)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node:
+          - 22.19.0
+          - 24
+          - 26
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: ${{ matrix.node }}
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+      - run: pnpm run test:packed-install
+
+  artifact:
+    needs: verify
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run build
+      - run: mkdir -p release-artifact
+      - run: pnpm pack --pack-destination release-artifact
+      - run: sha256sum release-artifact/*.tgz > release-artifact/SHA256SUMS
+      - uses: actions/upload-artifact@v6
+        with:
+          name: dsh-codex-sub-unpublished
+          path: release-artifact/

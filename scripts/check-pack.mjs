@@ -7,6 +7,8 @@ const requiredFiles = new Set([
   'lib/bin.mjs',
   'lib/index.d.mts',
   'lib/index.mjs',
+  'lib/runtime.d.mts',
+  'lib/runtime.mjs',
   'package.json',
   'README.ja.md',
   'README.md',

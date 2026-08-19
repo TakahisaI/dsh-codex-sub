@@ -210,6 +210,9 @@ as unknown model, unsupported content, cancellation, or stream timeout.
 
 ## Change policy
 
+Pull requests use squash merge unless the maintainer explicitly requests another merge strategy.
+Do not rewrite existing shared `main` history to retrofit this policy.
+
 Every PR must state:
 
 - the requirement it implements;

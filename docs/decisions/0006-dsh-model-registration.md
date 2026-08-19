@@ -66,9 +66,10 @@ temporary or source-subpath entry.
   topology notification, and effect-based cleanup.
 - Milestone 4 implements this live-only registration in the package root plugin entry; no
   configurable-provider or discovery registration was added.
-- The actual Web selector and installed bundle loader are not imported into this Host-only test.
-  Milestone 6 must install the packed tarball in a temporary DSH profile and confirm end-to-end model
-  visibility and bundle-row loading.
+- The Host-only contract test does not import the Web selector or installed bundle loader.
+  Milestone 6 subsequently installed the packed tarball in a fresh DSH Web profile and confirmed one
+  bundle row plus the provider-owned catalog in the ordinary selector. No configurable-provider or
+  discovery registration was needed.
 - Any DSH compatibility update must rerun this contract and review the configurable-provider
   decision, including whether the documentation-only discovery-list method has become a published
   API.

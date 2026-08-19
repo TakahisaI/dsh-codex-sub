@@ -18,6 +18,6 @@ imports in `src/piai/**` and DSH LLM imports in `src/dsh/**`.
 
 - Dependency updates require a compatibility PR and release.
 - Runtime checks can fail before provider registration.
-- Duplicate pi-ai installations must be detected by packed-install tests; peer/dependency placement
-  is chosen based on that test rather than assumption.
+- The packed-install gate accepts the verified two-copy pi-ai topology while requiring all DSH
+  peers to resolve to the Host; ADR 0010 records the evidence and fail-closed identity check.
 - Community bridge plugins are not implementation dependencies or sources.

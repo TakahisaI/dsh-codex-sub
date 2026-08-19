@@ -14,8 +14,8 @@ const expectedDiagnostics = [
   },
   {
     count: 1,
-    name: 'Google GenAI optional MCP client type',
-    pattern: /@google\/genai\/dist\/node\/node\.d\.ts\(.+\): error TS2307: Cannot find module '@modelcontextprotocol\/sdk\/client\/index\.js'/u,
+    name: 'MCP SDK HeadersInit browser global',
+    pattern: /@modelcontextprotocol\/sdk\/dist\/esm\/shared\/transport\.d\.ts\(.+\): error TS2304: Cannot find name 'HeadersInit'/u,
   },
   {
     count: 2,

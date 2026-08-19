@@ -1,28 +1,72 @@
 # dsh-codex-sub
 
-`dsh-codex-sub` は、ChatGPT契約のOAuth認証を利用し、pi-aiの `openai-codex`
-プロバイダーをDSHの通常LLMモデルとして登録するための新規DeepSeek Harnessプラグインです。
+`dsh-codex-sub` は、pi-ai の `openai-codex` プロバイダーを DeepSeek Harness（DSH）の通常のモデル経路として登録するプラグインです。
+認証には OpenAI Platform API キーではなく、ChatGPT 契約の OAuth を使います。
 
-> 現在はMilestone 0から5（リポジトリ基盤、純粋なcore契約、credential document codec、
-> package-owned file vault、pi-ai OAuth連携、DSHのネイティブLLM provider route、CLIとoffline
-> diagnostics）まで実装済みです。仮のDSH profileへpacked installするrelease gateはMilestone 6で
-> 実施します。
+> 現在は Milestone 0 から 6 まで実装済みです。
+> リポジトリ基盤、core 契約、資格情報文書、package-owned file vault、pi-ai OAuth 連携、DSH の LLM provider route、CLI、offline diagnostics、packed-install release gate が含まれます。
+> 公開には、末尾に記載した maintainer の判断が残っています。
 
-## 必須要件
+## プラグインが担う範囲
 
-1. OpenAI Platform APIキーではなく、ChatGPT/Codex OAuthを使う。
-2. CodexモデルをDSHの通常モデルピッカーへ表示する。
-3. Agent Loop、ツール、承認、セッション、添付、コンパクション、復旧はDSHが所有する。
+このプラグインは、次の三つの要件を同時に満たします。
 
-このプロジェクトはCodexをサブエージェントとして呼び出すものではありません。DSHへLLM
-Providerを一つ追加するだけのプラグインです。
+1. ChatGPT/Codex OAuth を使って認証する。
+2. Codex モデルを DSH の通常のモデルピッカーへ表示する。
+3. Agent Loop、ツール、承認、セッション、添付、コンパクション、復旧を DSH に任せる。
 
-Codexへ最初に渡す指示は [`CODEX_BOOTSTRAP_PROMPT.md`](CODEX_BOOTSTRAP_PROMPT.md)、
+このプロジェクトは Codex をサブエージェントとして呼び出す bridge ではありません。
+DSH へ LLM provider route を一つ追加します。
+
 実装上の拘束条件は [`AGENTS.md`](AGENTS.md) にあります。
+Codex へ最初に渡す指示は [`CODEX_BOOTSTRAP_PROMPT.md`](CODEX_BOOTSTRAP_PROMPT.md) にあります。
+
+## ローカル tarball の導入
+
+package はまだ private です。
+ローカルで生成した tarball を試す場合は、次の手順で build、pack、DSH Web profile への追加を行います。
+
+```sh
+pnpm install --frozen-lockfile
+pnpm run build
+pnpm pack
+dsh plugin --profile web add ./dsh-codex-sub-0.0.0-development.tgz \
+  --save-exact \
+  --allow-build=@google/genai \
+  --allow-build=protobufjs
+dsh plugin --profile web exec dsh-codex-sub login
+dsh web
+```
+
+二つの build approval は、この package ではなく、固定した DSH Web の依存関係に必要です。
+導入後、DSH のモデルピッカーには **OpenAI Codex (ChatGPT)** の配下に provider-owned catalog が表示されます。
+このプラグインは profile の default model と global search route を変更しません。
+
+サインインせずに導入状態を確認する場合は、次の command を実行します。
+
+```sh
+dsh plugin --profile web exec dsh-codex-sub status --json
+dsh plugin --profile web exec dsh-codex-sub doctor --json
+```
+
+## logout と uninstall
+
+uninstall は `$DSH_HOME/dsh-codex-sub/auth.json` を残します。
+package を入れ直すと、保存済みの資格情報を再利用します。
+
+資格情報も削除する場合は、uninstall より先に logout を実行します。
+
+```sh
+dsh plugin --profile web exec dsh-codex-sub logout
+dsh plugin --profile web remove dsh-codex-sub
+```
+
+logout が削除するのは `auth.json` だけです。
+package-owned directory にある別の file は削除しません。
 
 ## CLI
 
-package executableは次のcommandを提供します。
+package executable は次の command を提供します。
 
 ```sh
 dsh-codex-sub login
@@ -32,7 +76,20 @@ dsh-codex-sub doctor --json
 dsh-codex-sub version
 ```
 
-`status` と `doctor` はlocalかつofflineです。`login` は検証済みのHTTPS認証先を表示しますが、
-browserを自動では開きません。secretとmanual codeの入力はterminalへechoしません。JSON commandは
-version付きdocumentを一つだけ出力し、credential内容、account identifier、token timestamp、認証URL、
-local pathを含めません。
+`status` と `doctor` は local かつ offline です。
+`login` は検証済みの HTTPS 認証先を表示しますが、browser を自動では開きません。
+secret と manual code の入力は terminal へ echo しません。
+JSON command は version 付き document を一つだけ出力し、credential 内容、account identifier、token timestamp、認証 URL、local path を含めません。
+
+## upstream の制約
+
+ChatGPT の利用資格、model availability、quota、backend behavior、OAuth behavior は upstream が管理しており、変更される可能性があります。
+ChatGPT 契約の資格情報は OpenAI Platform API key ではありません。
+
+このプロジェクトは OpenAI、ChatGPT、Codex、DeepSeek、DeepSeek Harness、earendil-works の公式プロジェクトではなく、各組織の承認を受けたものでもありません。
+
+## 公開前に必要な判断
+
+公開前に、project license、npm package name の所有権、trusted publishing の方式を maintainer が決める必要があります。
+それまでは `UNLICENSED` と `private: true` を維持します。
+release workflow は無効な file として置かれており、publish step を含みません。

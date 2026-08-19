@@ -1,0 +1,16 @@
+{
+  "name": "dsh-codex-sub-packed-install-probe",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "files": [
+    "cordis.patch.yml",
+    "index.mjs"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

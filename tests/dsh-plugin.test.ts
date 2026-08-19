@@ -93,20 +93,21 @@ describe('production Cordis plugin', () => {
     ])
   })
 
-  it('maps duplicate ownership reported by a distinct host package copy', () => {
+  it('maps duplicate ownership reported by a structurally compatible host error', () => {
     const hostFailure = Object.defineProperty(new Error('duplicate route'), 'code', {
       configurable: true,
       enumerable: true,
       value: 'DUPLICATE_ADAPTER',
       writable: true,
     })
-    const ctx = {
-      llm: {
-        registerAdapter() {
-          throw hostFailure
-        },
+    const llm = Object.create(LlmRuntime.prototype) as LlmRuntime
+    Object.defineProperty(llm, 'registerAdapter', {
+      configurable: true,
+      value() {
+        throw hostFailure
       },
-    } as unknown as Context
+    })
+    const ctx = { llm } as Context
 
     expect(() => plugin.apply(ctx)).toThrowError(expect.objectContaining({
       code: 'CODEX_PROVIDER_CONFLICT',
