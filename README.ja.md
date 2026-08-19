@@ -108,12 +108,13 @@ credential、authorization URLまたはcode、account identifier、完全なenvi
 
 脆弱性の疑いは、[`SECURITY.md`](SECURITY.md) に記載した非公開窓口から報告してください。
 
-## 公開前に必要な判断
+## 公開前に残る判断
 
-公開前に、project licenseと、最初のnpm公開をどのようにbootstrapするかをmaintainerが決める必要があります。
+このprojectは [MIT License](LICENSE) で公開します。
+公開前に、最初のnpm公開をどのようにbootstrapするかをmaintainerが決める必要があります。
 npm package nameには独立した予約手続きがなく、最初の実releaseのpublishによって所有権が成立します。
 packageが存在するまでOIDC trusted publishingを設定できないため、ADR 0011に初回だけの例外案を記録しています。
-それまでは `UNLICENSED` と `private: true` を維持します。
+この判断と残りのrelease gateが完了するまでは `private: true` を維持します。
 release workflow は無効な file として置かれており、publish step を含みません。
 Alphaのdraft release notesは [`docs/releases/`](docs/releases/) にあります。
 実account試験では、[`docs/alpha-smoke-record.md`](docs/alpha-smoke-record.md) を使って秘密を含まないpass/failだけを記録します。

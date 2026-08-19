@@ -151,7 +151,8 @@ Deliverables:
 - packed model-selector visibility acceptance test;
 - install, login, usage, logout, uninstall documentation;
 - security and limitation documentation;
-- release workflow prepared but not enabled until license and registry ownership are decided.
+- release workflow prepared but not enabled until the npm bootstrap decision is accepted and the
+  first real release establishes registry ownership.
 
 Acceptance:
 

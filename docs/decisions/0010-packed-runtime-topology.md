@@ -72,5 +72,5 @@ fresh contract review.
 - Adding a supported Node major or operating system requires CI evidence and an update to
   `compatibility.json`, package metadata, and this decision or a successor ADR.
 - `release.yml.disabled` can build and checksum an artifact but cannot run as a GitHub workflow or
-  publish anything until the maintainer resolves the license, package-name ownership, and trusted
-  publishing decisions.
+  publish anything until the maintainer accepts the initial npm bootstrap decision. The MIT license
+  is selected; package-name ownership is established only by the first real release.
