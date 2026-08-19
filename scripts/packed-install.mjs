@@ -16,6 +16,10 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 import { parseArgs } from 'node:util'
+import {
+  appendCapture,
+  assertCaptureComplete,
+} from './capture-output.mjs'
 import { validatePackageTarball } from './package-tarball.mjs'
 
 const PACKAGE_NAME = 'dsh-codex-sub'
@@ -41,21 +45,6 @@ function parseJson(text, label) {
     return JSON.parse(text)
   } catch {
     throw new Error(`${label} did not emit valid JSON.`)
-  }
-}
-
-function appendCapture(target, chunk) {
-  const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk))
-  const remaining = MAX_CAPTURE_BYTES - target.bytes
-  if (remaining <= 0) {
-    target.truncated = true
-    return
-  }
-  const captured = bytes.subarray(0, remaining)
-  target.value += captured.toString('utf8')
-  target.bytes += captured.length
-  if (bytes.length > remaining) {
-    target.truncated = true
   }
 }
 
@@ -351,8 +340,8 @@ try {
     shell: false,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
-  child.stdout.on('data', (chunk) => appendCapture(bootOutput.stdout, chunk))
-  child.stderr.on('data', (chunk) => appendCapture(bootOutput.stderr, chunk))
+  child.stdout.on('data', (chunk) => appendCapture(bootOutput.stdout, chunk, MAX_CAPTURE_BYTES))
+  child.stderr.on('data', (chunk) => appendCapture(bootOutput.stderr, chunk, MAX_CAPTURE_BYTES))
   let probeText
   let bootFailure
   try {
@@ -363,9 +352,7 @@ try {
     await stopChild(child)
   }
   transcript.push({ status: child.exitCode, stdout: bootOutput.stdout.value, stderr: bootOutput.stderr.value })
-  if (bootOutput.stdout.truncated || bootOutput.stderr.truncated) {
-    throw new Error('DSH output exceeded the packed-install capture limit.')
-  }
+  assertCaptureComplete(bootOutput.stdout, bootOutput.stderr)
   if (bootFailure !== undefined) {
     throw new Error(
       `${String(bootFailure)}\n${redactTestOutput(

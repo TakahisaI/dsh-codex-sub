@@ -36,7 +36,7 @@ function parseJson(text, label) {
   }
 }
 
-function compareFiles(actualFiles) {
+export function assertPackageFiles(actualFiles) {
   const expected = new Set(PACKAGE_FILE_ALLOWLIST)
   const actual = new Set(actualFiles)
   const missing = [...expected].filter((path) => !actual.has(path))
@@ -84,7 +84,7 @@ export async function validatePackageTarball(packageTarball) {
     'Package tarball contained an entry outside the package directory.',
   )
   const packedFiles = entries.map((entry) => entry.slice(PACKAGE_PREFIX.length)).sort()
-  compareFiles(packedFiles)
+  assertPackageFiles(packedFiles)
 
   const [packedManifest, repositoryManifest] = await Promise.all([
     Promise.resolve(parseJson(

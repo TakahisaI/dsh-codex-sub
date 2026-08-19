@@ -4,6 +4,10 @@ import { appendFile, mkdir, readFile, readdir, writeFile } from 'node:fs/promise
 import { basename, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { validatePackageTarball } from './package-tarball.mjs'
+import {
+  assertReleaseChecksum,
+  selectReleaseTarball,
+} from './release-artifact-contract.mjs'
 
 const CHECKSUM_FILENAME = 'SHA256SUMS'
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
@@ -79,20 +83,11 @@ async function createArtifact(directory) {
 
 async function verifyArtifact(directory) {
   const entries = (await readdir(directory)).sort()
-  const tarballs = entries.filter((entry) => entry.endsWith('.tgz'))
-  invariant(
-    entries.length === 2 && tarballs.length === 1 && entries.includes(CHECKSUM_FILENAME),
-    'Release artifact must contain exactly one package tarball and SHA256SUMS.',
-  )
-  const tarballName = tarballs[0]
-  invariant(tarballName !== undefined, 'Release artifact package tarball was missing.')
+  const tarballName = selectReleaseTarball(entries, CHECKSUM_FILENAME)
   const tarballPath = join(directory, tarballName)
   const validated = await validatePackageTarball(tarballPath)
   const checksumText = await readFile(join(directory, CHECKSUM_FILENAME), 'utf8')
-  invariant(
-    checksumText === `${validated.sha256}  ${tarballName}\n`,
-    'Release artifact SHA-256 did not match the package tarball.',
-  )
+  assertReleaseChecksum(checksumText, validated.sha256, tarballName)
   return validated
 }
 

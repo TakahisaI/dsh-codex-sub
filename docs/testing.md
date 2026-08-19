@@ -247,6 +247,16 @@ Blocking CI:
 - the supported DSH release;
 - the exact supported pi-ai release.
 
+Blocking CI builds one candidate on Ubuntu/Node 24 and uploads its tarball plus `SHA256SUMS` once.
+All six packed-install cells download, checksum, validate, and install those same bytes without a
+package build or repack. The release-state check derives the exact six-cell matrix from
+`compatibility.json` and rejects drift in either active CI or the disabled release workflow.
+
+Unit tests reject relative or symbolic-link tarballs, oversized files, allowlist drift, duplicate
+archive paths, extra artifact entries, checksum or filename mismatch, capture overflow, missing
+matrix cells, and rebuilds inside artifact-consumer jobs. The active CI handoff remains the
+cross-platform integration proof for the operating-system archive and artifact clients.
+
 Windows is not a first-alpha target because the current vault cannot verify owner-only ACLs there.
 
 Non-blocking scheduled canaries:

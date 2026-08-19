@@ -57,6 +57,11 @@ publication.
 
 ## Release workflow
 
+Blocking CI mirrors the release artifact topology: one Ubuntu/Node 24 job builds and uploads the
+candidate, then all six Linux/macOS and Node cells verify and install that artifact without
+repacking. This keeps the cross-platform artifact handoff executable while the release workflow is
+disabled. The release-state check rejects a missing matrix cell or a consumer that builds or packs.
+
 The repository contains `.github/workflows/release.yml.disabled`. GitHub does not load it as a
 workflow, and it contains no registry authentication or publish command. If enabled later, its
 current scope is limited to source checks, one clean tarball construction, a SHA-256 file, and

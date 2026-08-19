@@ -28,16 +28,18 @@ entry, package name mismatch, version mismatch, or deviation from the package al
 separate Host probe may still be packed locally because it is test instrumentation and not the
 release candidate.
 
-The release workflow constructs the package once in a clean Ubuntu/Node 24 job, computes its
-SHA-256, and uploads the tarball plus `SHA256SUMS` as one workflow artifact. Every Linux and macOS
-packed-install job downloads that artifact, verifies both the checksum and archive contract, and
-passes its absolute path to the non-repacking packed-install mode. The final candidate-ready job
-also verifies the same artifact and contains no publication command. A later approval or publish
-job must depend on those jobs and consume that workflow artifact without running a build or pack
-command.
+Blocking CI and the release workflow each construct the package once in a clean Ubuntu/Node 24 job,
+compute its SHA-256, and upload the tarball plus `SHA256SUMS` as one workflow artifact. Every Linux
+and macOS packed-install job downloads that artifact, verifies both the checksum and archive
+contract, and passes its absolute path to the non-repacking packed-install mode. This makes the
+cross-platform artifact handoff executable before the disabled release workflow is enabled. The
+release workflow's final candidate-ready job also verifies the same artifact and contains no
+publication command. A later approval or publish job must depend on those jobs and consume that
+workflow artifact without running a build or pack command.
 
 Run the packed-install gate on Ubuntu and macOS for Node 22.19, 24, and 26. A supported Node or OS
-combination without a blocking matrix entry is a release-state defect.
+combination without a blocking matrix entry is a release-state defect. Derive the expected matrix
+from `compatibility.json` and check both workflow files mechanically.
 
 Treat stdout or stderr capture overflow as a failed packed-install gate. Retaining only a prefix is
 permitted for safe error reporting, but an incomplete capture can never satisfy the sentinel scan.
@@ -58,3 +60,5 @@ unaccepted and the package does not exist in the registry.
 - Archive validation uses the platform `tar` program already present on supported Linux and macOS
   runners; Windows remains outside the first-Alpha support boundary.
 - The blocking packed-install matrix grows from four to six jobs.
+- Unit tests cover bounded path, archive-list, checksum, capture-overflow, and workflow-topology
+  rejection paths without generating credentials or making network requests.
