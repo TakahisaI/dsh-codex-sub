@@ -1,7 +1,8 @@
-# This workflow intentionally contains no npm authentication, OIDC permission, or publish command
-# until the first package exists. A future trusted-publishing job must install the pinned npm CLI
-# and consume this workflow artifact; it must not rebuild or repack the candidate.
-name: Release gates (never publishes)
+# The trusted publisher for this exact workflow may stage a verified candidate, but cannot publish
+# it directly. A maintainer must inspect and approve the staged package with two-factor
+# authentication. The staging job consumes the original workflow artifact without rebuilding or
+# repacking it.
+name: Verify and stage release candidate
 
 on:
   workflow_dispatch:
@@ -108,7 +109,7 @@ jobs:
           --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
 
   candidate-ready:
-    name: Candidate ready for manual approval (never publishes)
+    name: Candidate ready for staging
     needs: candidate-install
     runs-on: ubuntu-latest
     steps:
@@ -123,3 +124,37 @@ jobs:
       - run: >-
           node scripts/release-artifact.mjs verify
           --directory "$RUNNER_TEMP/release-artifact"
+
+  stage-publish:
+    name: Stage exact candidate for maintainer approval
+    needs: candidate-ready
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - name: Install the reviewed npm CLI
+        run: >-
+          npm install --global "npm@$TRUSTED_PUBLISHING_NPM_VERSION"
+          --registry=https://registry.npmjs.org
+      - name: Verify the npm CLI version
+        run: test "$(npm --version)" = "$TRUSTED_PUBLISHING_NPM_VERSION"
+      - name: Stage the exact candidate
+        run: >-
+          npm stage publish "${{ steps.release-artifact.outputs.package-tarball }}"
+          --tag alpha
+          --access public
+          --registry=https://registry.npmjs.org

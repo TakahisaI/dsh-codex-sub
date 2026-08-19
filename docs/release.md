@@ -2,7 +2,7 @@
 
 ## Distribution
 
-Planned supported distribution forms after the publication prerequisites are resolved:
+Supported distribution forms:
 
 1. npm prerelease with built artifacts;
 2. locally generated `pnpm pack` tarball.
@@ -18,13 +18,13 @@ Direct GitHub dependency installation is not supported initially. It requires an
 - Every release notes the exact verified DSH/pi-ai combination.
 - A DSH or pi-ai compatibility update normally increments the plugin patch prerelease.
 
-The first candidate is therefore `0.1.0-alpha.0`. Release-candidate notes and package metadata may
-exist before publication, but a tag or registry artifact is created only after every publication
-prerequisite is complete.
+The first published version is `0.1.0-alpha.0`. Release-candidate notes and package metadata may
+exist before a later publication, but a tag or staged registry artifact is created only after every
+publication prerequisite is complete.
 
-## Publication prerequisites
+## Initial publication record
 
-Before the first public package:
+The first public package completed these prerequisites:
 
 - keep the selected MIT license and copyright notice in the candidate;
 - confirm that the intended npm package name remains available immediately before publishing;
@@ -34,25 +34,20 @@ Before the first public package:
 - verify third-party licenses and notices;
 - pass packed-install and manual smoke gates.
 
-Current automated evidence includes the Milestone 7 release gates, the project license is MIT, and
-the initial npm publishing decision is accepted in ADR 0011. Registry lookup currently finds no
-public package named `dsh-codex-sub`, but absence does not establish ownership or reserve the name.
-npm creates a new unscoped package through its first real publish; there is no separate
-package-registration step to perform now.
-
-npm trusted publishing cannot be configured until the package exists. ADR 0011 records the
-accepted bootstrap: publish the complete first Alpha interactively with two-factor authentication,
-then immediately configure OIDC-backed trusted publishing for every later version. Acceptance does
-not authorize publication before exact-artifact verification, manual smoke, and final approval.
+The complete `0.1.0-alpha.0` artifact was published on 2026-08-19 after the release workflow and
+manual real-account smoke passed. ADR 0011 records the accepted bootstrap and its one-version
+provenance exception. The registry artifact matched the workflow candidate SHA-256 and passed a
+fresh packed install. npm ownership, the matching GitHub prerelease, the trusted publisher, and
+token restrictions are now established.
 
 Trusted-publisher administration and publishing require npm CLI `11.15.0` or a separately reviewed
-later version and Node 22.14 or newer. The release workflow pins `11.15.0` for the future publishing
-job. A maintainer workstation with an older npm CLI is preparation-incomplete even when its Node
-version is supported; do not authenticate or publish until the CLI requirement is met.
+later version and Node 22.14 or newer. The release workflow pins and verifies `11.15.0` in its
+staging job. A maintainer workstation with an older npm CLI cannot administer trust or approve a
+staged release even when its Node version is supported.
 
-Use the [real-account smoke record](alpha-smoke-record.md) for the maintainer-controlled gate and
-the [Alpha release-candidate notes](releases/0.1.0-alpha.0.md) for release metadata. Neither
-document authorizes publication.
+Use the [real-account smoke record](alpha-smoke-record.md) for maintainer-controlled gates and the
+[Alpha release record](releases/0.1.0-alpha.0.md) for the first publication evidence. A future
+release still requires explicit staged-package approval; documentation alone never authorizes it.
 
 ## Release workflow
 
@@ -62,13 +57,19 @@ repacking. This keeps the cross-platform artifact handoff executable before and 
 workflow activation. The release-state check rejects a missing matrix cell or a consumer that
 builds or packs.
 
-The repository contains the manually dispatched `.github/workflows/release.yml`. It contains no
-registry authentication, OIDC permission, or publish command. Its scope is limited to source
-checks, one clean tarball construction, a SHA-256 file, and Linux/macOS verification of that exact
-unpublished workflow artifact. The workflow builds the
-candidate once; every packed-install job downloads, validates, and installs the same bytes without
-repacking. Its final candidate-ready job is the boundary before manual approval and still never
-publishes. See ADR 0013.
+The repository contains the manually dispatched `.github/workflows/release.yml`. Its source checks,
+one clean tarball construction, SHA-256 generation, and Linux/macOS verification all run before
+registry access. The workflow builds the candidate once; every packed-install job downloads,
+validates, and installs the same bytes without repacking. The candidate-ready job verifies that
+artifact again before the only OIDC-capable job may stage those exact bytes. See ADR 0013.
+
+The workflow-level permission remains `contents: read`. Only `stage-publish` receives
+`id-token: write`. npm trusts this repository and the exact `release.yml` filename, and grants that
+relationship only `createStagedPackage`. The job installs and verifies npm `11.15.0`, downloads and
+verifies the existing artifact, and runs `npm stage publish` with the explicit public registry,
+public access, and `alpha` tag. It cannot run `npm publish`, approve or reject a staged package, use
+a repository token, rebuild, or repack. A maintainer inspects and approves the staged package with
+2FA outside GitHub Actions.
 
 The verification workflow accepts manual dispatch only from `refs/heads/main`. A dedicated
 `release-ref` job always runs and fails explicitly for any other branch or tag; candidate
@@ -81,37 +82,32 @@ through bounded extraction. A normal entry is limited to 2 MiB, each README to 5
 to files included in the package; links to repository-only documentation use canonical HTTPS
 GitHub URLs so the npm-rendered and extracted READMEs do not lead to missing files.
 
-Keep the enabled workflow limited to verification and artifact construction: do not add npm
-authentication, `id-token: write`, or a publish command until the first package exists and its
-trusted publisher can be configured.
-
-The intended release sequence is:
+The release sequence for every later Alpha is:
 
 1. create a release metadata branch and open a PR to protected `main`;
-2. confirm the committed MIT license and accepted ADR 0011;
-3. enable the reviewed `.github/workflows/release.yml` gate without adding a publish command;
-4. update version, `private`, changelog, and limitations while preserving verified compatibility
+2. confirm the committed MIT license and accepted release decisions;
+3. update version, changelog, and limitations while preserving verified compatibility
    metadata;
-5. confirm that `publishConfig` forces the public npm registry, public access, and the `alpha`
+4. confirm that `publishConfig` forces the public npm registry, public access, and the `alpha`
    dist-tag;
-6. run `pnpm install --frozen-lockfile` and the complete check matrix, then merge the reviewed
+5. run `pnpm install --frozen-lockfile` and the complete check matrix, then merge the reviewed
    metadata commit into protected `main`;
-7. dispatch the release gate from that exact `main` commit so it builds one tarball, records its
+6. dispatch the release workflow from that exact `main` commit so it builds one tarball, records its
    SHA-256, and verifies those same bytes
    on Linux and macOS across every supported Node line;
-8. download that workflow artifact and install the exact tarball into a clean DSH profile;
-9. complete required manual smoke against that tarball and record its SHA-256;
-10. tag the exact commit;
-11. for the first package only, install npm CLI `11.15.0`, verify the candidate checksum again, and
-    publish that exact tarball interactively with two-factor authentication;
-12. install the exact published artifact into a clean profile and record the bootstrap provenance
-    exception;
-13. configure trusted publishing for the exact release workflow immediately after the package
-    exists;
-14. add reviewed OIDC publishing for every later version and verify its provenance.
+7. let the final job stage that exact artifact through OIDC after every matrix cell passes;
+8. inspect the staged package, checksum, tag, version, and provenance candidate;
+9. tag the exact commit after inspection and before public approval;
+10. approve the staged package interactively with two-factor authentication;
+11. create a matching GitHub prerelease;
+12. fetch the registry artifact into a clean profile, compare its checksum, and repeat the
+    signed-out packed-install checks;
+13. record the final provenance and release evidence.
 
-A publish or approval job added later must depend on the candidate-install jobs and download their
-workflow artifact. Rebuilding or repacking after verification invalidates the release evidence.
+The staging job must depend on the candidate-install boundary and download its workflow artifact.
+Rebuilding or repacking after verification invalidates the release evidence. Approval remains
+outside the workflow so a compromised repository writer cannot make a staged package public
+without maintainer proof-of-presence.
 
 No workflow may publish from an unreviewed dependency-update branch.
 

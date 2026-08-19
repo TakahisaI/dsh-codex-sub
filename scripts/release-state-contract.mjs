@@ -12,7 +12,24 @@ function invariant(condition, message) {
   }
 }
 
+function isFinalReleaseRecord(text) {
+  return !/\bpending\b/iu.test(text)
+    && !text.includes('Draft only.')
+    && !text.includes('has not been published')
+    && /- Git commit: `[0-9a-f]{40}`/u.test(text)
+    && /- Tarball SHA-256: `[0-9a-f]{64}`/u.test(text)
+    && /- Manual smoke: PASS/u.test(text)
+    && /- Publication date: `\d{4}-\d{2}-\d{2}`/u.test(text)
+}
+
+function isReleaseCandidate(text) {
+  return text.includes('> Release candidate.')
+    && text.includes('has not been published')
+    && !text.includes('Draft only.')
+}
+
 export function validateReleaseState({
+  bootstrapReleaseRecord,
   ciWorkflow,
   compatibility,
   disabledWorkflowExists,
@@ -52,10 +69,14 @@ export function validateReleaseState({
       'A public package requires the reviewed release workflow to be enabled once.',
     )
     invariant(
+      typeof bootstrapReleaseRecord === 'string' && isFinalReleaseRecord(bootstrapReleaseRecord),
+      'The first Alpha release record must retain its final exact-artifact evidence.',
+    )
+    invariant(
       releaseNotes.exists
         && typeof releaseNotes.text === 'string'
-        && !releaseNotes.text.includes('Draft only.'),
-      `Final release notes are missing for ${String(packageJson.version)}.`,
+        && (isFinalReleaseRecord(releaseNotes.text) || isReleaseCandidate(releaseNotes.text)),
+      `Reviewed release notes are missing for ${String(packageJson.version)}.`,
     )
   }
 
@@ -76,5 +97,10 @@ export function validateReleaseState({
     'The private vulnerability reporting URL drifted from support documentation.',
   )
 
-  validateWorkflowContracts({ ciWorkflow, compatibility, releaseWorkflow })
+  validateWorkflowContracts({
+    ciWorkflow,
+    compatibility,
+    releaseMode: packageJson.private === true ? 'verification-only' : 'staged',
+    releaseWorkflow,
+  })
 }

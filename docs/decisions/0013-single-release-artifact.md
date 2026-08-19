@@ -39,10 +39,10 @@ Blocking CI and the release workflow each construct the package once in a clean 
 compute its SHA-256, and upload the tarball plus `SHA256SUMS` as one workflow artifact. Every Linux
 and macOS packed-install job downloads that artifact, verifies both the checksum and archive
 contract, and passes its absolute path to the non-repacking packed-install mode. This makes the
-cross-platform artifact handoff executable before the disabled release workflow is enabled. The
-release workflow's final candidate-ready job also verifies the same artifact and contains no
-publication command. A later approval or publish job must depend on those jobs and consume that
-workflow artifact without running a build or pack command.
+cross-platform artifact handoff executable before and after release workflow activation. The
+release workflow's candidate-ready job also verifies the same artifact. Its later staging job
+depends on that boundary, downloads and verifies the same workflow artifact again, and passes its
+resolved tarball path to `npm stage publish` without running a build or pack command.
 
 The release workflow may construct that artifact only when manually dispatched from protected
 `main`. An executing `release-ref` job fails for every other ref, and the candidate job depends on
@@ -57,10 +57,10 @@ Treat stdout or stderr capture overflow as a failed packed-install gate. Retaini
 permitted for safe error reporting, but an incomplete capture can never satisfy the sentinel scan.
 
 The first trusted-publishing workflow must use npm CLI `11.15.0` or a separately reviewed later
-version and Node 22.14 or newer. The release workflow pins `11.15.0` for that future job but
-does not install npm, authenticate, request an OIDC token, or publish while the package does not
-exist in the registry. ADR 0011 accepts a separately approved interactive bootstrap for only the
-first complete Alpha.
+version and Node 22.14 or newer. The release workflow pins and verifies `11.15.0` in the staging
+job. Only that job receives `id-token: write`; the workflow default and every earlier job remain
+read-only. It may stage the exact candidate but cannot approve or publish it. ADR 0011 records the
+separately approved interactive bootstrap used only for the first complete Alpha.
 
 ## Consequences
 
@@ -78,8 +78,8 @@ first complete Alpha.
   Archive tests include highly compressed per-entry and aggregate size violations plus README
   links to omitted package files.
   The topology contract includes block- and flow-style matrix entries, rebuild/repack rejection in
-  every non-producer job, the exact verification-only job set, the enabled/disabled workflow rename,
-  and the pre-publication prohibition on publication, npm registry credentials at any workflow scope,
-  or any permission beyond a required workflow-level canonical `contents: read` block.
+  every non-producer job, the exact workflow job set, the enabled/disabled workflow transition,
+  and rejection of direct publication, automated staged-package approval, npm registry credentials
+  at any workflow scope, or OIDC permission outside the staging job.
 - Pure fixtures preserve coverage of the legacy private-development and current public-Alpha
   release-state branches, and the package metadata fixes publication to the public npm registry.

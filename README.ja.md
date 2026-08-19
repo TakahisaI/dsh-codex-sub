@@ -3,9 +3,9 @@
 `dsh-codex-sub` は、pi-ai の `openai-codex` プロバイダーを DeepSeek Harness（DSH）の通常のモデル経路として登録するプラグインです。
 認証には OpenAI Platform API キーではなく、ChatGPT 契約の OAuth を使います。
 
-> 現在は Milestone 0 から 6 まで実装済みで、Milestone 7のAlpha公開準備を進めています。
+> Milestone 0から7まで完了しています。
 > リポジトリ基盤、core契約、資格情報文書、package-owned file vault、pi-ai OAuth連携、DSHのLLM provider route、CLI、offline diagnostics、packed-install release gateが含まれます。
-> packageはまだ公開しておらず、公開には同一artifactの検証と実account smokeが残っています。
+> `0.1.0-alpha.0` はnpmの `alpha` dist-tagで公開済みで、対応するGitHub prereleaseもあります。
 
 ## プラグインが担う範囲
 
@@ -33,16 +33,12 @@ Codex へ最初に渡す指示は [`CODEX_BOOTSTRAP_PROMPT.md`](https://github.c
 
 最初のAlphaにおけるaccount、storage、platform、productの境界は、[既知の制約](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/known-limitations.ja.md)にまとめています。
 
-## ローカル tarball の導入
+## Alphaの導入
 
-Alpha metadataは準備済みですが、packageはまだ公開していません。
-ローカルで生成したcandidateを試す場合は、次の手順でbuild、pack、DSH Web profileへの追加を行います。
+npmで公開している現在のAlphaをDSH Web profileへ追加します。
 
 ```sh
-pnpm install --frozen-lockfile
-pnpm run build
-pnpm pack
-dsh plugin --profile web add ./dsh-codex-sub-0.1.0-alpha.0.tgz \
+dsh plugin --profile web add dsh-codex-sub@alpha \
   --save-exact \
   --allow-build=@google/genai \
   --allow-build=protobufjs
@@ -108,12 +104,12 @@ credential、authorization URLまたはcode、account identifier、完全なenvi
 
 脆弱性の疑いは、[`SECURITY.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/SECURITY.md) に記載した非公開窓口から報告してください。
 
-## 公開前に残る判断
+## releaseの安全性
 
-このprojectは [MIT License](https://github.com/TakahisaI/dsh-codex-sub/blob/main/LICENSE) で公開します。
-npm初回公開のbootstrap方針はADR 0011として承認済みですが、このmetadata変更だけでは公開しません。
-npm package nameには独立した予約手続きがなく、最初の実releaseのpublishによって所有権が成立します。
-packageが存在するまでOIDC trusted publishingを設定できないため、ADR 0011に初回だけの例外を記録しています。
-有効化したrelease workflowはcandidateの構築と検証だけを行い、npm credential、OIDC permission、publish stepを含みません。
-Alphaのrelease-candidate notesは [`docs/releases/`](https://github.com/TakahisaI/dsh-codex-sub/tree/main/docs/releases) にあります。
+このprojectは [MIT License](https://github.com/TakahisaI/dsh-codex-sub/blob/main/LICENSE) で公開しています。
+最初のnpm公開だけはADR 0011に記録した対話bootstrapを使いました。
+以後のreleaseでは、このrepositoryの `release.yml` だけに限定したstage-onlyのnpm Trusted Publisherを使います。
+GitHub ActionsはLinux/macOSの全matrixを通過した一つのartifactをstageできますが、直接publishはできません。
+従来型のpublishing tokenは禁止済みで、maintainerが内容を確認して2FAで承認するまで公開されません。
+Alphaのrelease recordは [`docs/releases/`](https://github.com/TakahisaI/dsh-codex-sub/tree/main/docs/releases) にあります。
 実account試験では、[`docs/alpha-smoke-record.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/alpha-smoke-record.md) を使って秘密を含まないpass/failだけを記録します。

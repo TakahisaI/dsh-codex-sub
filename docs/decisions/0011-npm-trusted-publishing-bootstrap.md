@@ -55,12 +55,32 @@ manual real-account smoke, and the maintainer must explicitly approve the final 
 
 ## Consequences
 
-- npm registration occurs only through the first real Alpha publish; the account-hardening gate is
+- npm registration occurred through the first real Alpha publish; the account-hardening gate is
   complete.
 - `0.1.0-alpha.0` must be a complete release rather than a name-reservation artifact.
 - The first Alpha's release record must state that trusted-publisher provenance is unavailable and
   link to this accepted decision.
-- The release workflow is enabled before the first public metadata commit, but remains a
-  non-publishing verification workflow until after the first package exists.
+- The release workflow was enabled before the first public metadata commit as a non-publishing
+  verification workflow. After the package existed, a reviewed follow-up added OIDC staging.
 - A repository token is not introduced as an undocumented bootstrap shortcut.
 - Release documentation must not claim that an unused registry name is owned or reserved.
+
+## Outcome
+
+On 2026-08-19 the maintainer published the exact verified `0.1.0-alpha.0` tarball interactively
+with two-factor authentication. Commit
+`d9179684fbc82ed62eaab40b6b05f34e5d64321e` and tarball SHA-256
+`009618b9205d675d9e19ca5e20584d0df46da0f70c3ec9398a1c212acb29adfe` identify the release. The
+artifact fetched back from npm matched those bytes and passed packed installation again. The
+matching GitHub release is a prerelease.
+
+npm initialized both `alpha` and its required `latest` metadata tag to the sole published version.
+An authenticated attempt to remove `latest` was rejected by the registry. No version was deleted,
+overwritten, or republished. This is a first-package bootstrap consequence, not a declaration that
+the Alpha is stable.
+
+Immediately afterward, npm Trusted Publishing was restricted to GitHub repository
+`TakahisaI/dsh-codex-sub` and workflow filename `release.yml`. The relationship permits only
+`createStagedPackage`, not direct publication. Package publishing access now requires two-factor
+authentication and disallows conventional tokens. Future workflow releases therefore stage the
+exact verified artifact through OIDC and require a maintainer to approve it separately with 2FA.
