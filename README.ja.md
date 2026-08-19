@@ -18,8 +18,8 @@
 このプロジェクトは Codex をサブエージェントとして呼び出す bridge ではありません。
 DSH へ LLM provider route を一つ追加します。
 
-実装上の拘束条件は [`AGENTS.md`](AGENTS.md) にあります。
-Codex へ最初に渡す指示は [`CODEX_BOOTSTRAP_PROMPT.md`](CODEX_BOOTSTRAP_PROMPT.md) にあります。
+実装上の拘束条件は [`AGENTS.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/AGENTS.md) にあります。
+Codex へ最初に渡す指示は [`CODEX_BOOTSTRAP_PROMPT.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/CODEX_BOOTSTRAP_PROMPT.md) にあります。
 
 ## 検証済みの組み合わせ
 
@@ -31,7 +31,7 @@ Codex へ最初に渡す指示は [`CODEX_BOOTSTRAP_PROMPT.md`](CODEX_BOOTSTRAP_
 | Node.js | `^22.19.0 || ^24.0.0 || ^26.0.0` |
 | OS | LinuxとmacOS |
 
-最初のAlphaにおけるaccount、storage、platform、productの境界は、[既知の制約](docs/known-limitations.ja.md)にまとめています。
+最初のAlphaにおけるaccount、storage、platform、productの境界は、[既知の制約](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/known-limitations.ja.md)にまとめています。
 
 ## ローカル tarball の導入
 
@@ -106,7 +106,7 @@ installまたは動作の問題は、repositoryのIssue formから報告して�
 添付する情報は、正確なversionとsanitize済みの `doctor --json` だけです。
 credential、authorization URLまたはcode、account identifier、完全なenvironment dump、local path、model conversationは投稿しないでください。
 
-脆弱性の疑いは、[`SECURITY.md`](SECURITY.md) に記載した非公開窓口から報告してください。
+脆弱性の疑いは、[`SECURITY.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/SECURITY.md) に記載した非公開窓口から報告してください。
 
 ## 公開前に残る判断
 
@@ -116,5 +116,5 @@ npm package nameには独立した予約手続きがなく、最初の実release
 packageが存在するまでOIDC trusted publishingを設定できないため、ADR 0011に初回だけの例外案を記録しています。
 この判断と残りのrelease gateが完了するまでは `private: true` を維持します。
 release workflow は無効な file として置かれており、publish step を含みません。
-Alphaのdraft release notesは [`docs/releases/`](docs/releases/) にあります。
-実account試験では、[`docs/alpha-smoke-record.md`](docs/alpha-smoke-record.md) を使って秘密を含まないpass/failだけを記録します。
+Alphaのdraft release notesは [`docs/releases/`](https://github.com/TakahisaI/dsh-codex-sub/tree/main/docs/releases) にあります。
+実account試験では、[`docs/alpha-smoke-record.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/alpha-smoke-record.md) を使って秘密を含まないpass/failだけを記録します。

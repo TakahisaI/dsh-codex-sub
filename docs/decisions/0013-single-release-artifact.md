@@ -28,6 +28,13 @@ entry, package name mismatch, version mismatch, or deviation from the package al
 separate Host probe may still be packed locally because it is test instrumentation and not the
 release candidate.
 
+Bound extraction as well as compressed input. No package entry may exceed 2 MiB, each README is
+limited to 512 KiB, `package.json` is limited to 64 KiB, and all file contents together are limited
+to 8 MiB. Read every allowlisted entry through a bounded archive extraction before use so a highly
+compressible file cannot bypass the 16 MiB compressed-input limit. Validate the README contents
+from the archive: relative links may target only files shipped in the package, while repository
+documentation omitted from the tarball must use canonical HTTPS URLs.
+
 Blocking CI and the release workflow each construct the package once in a clean Ubuntu/Node 24 job,
 compute its SHA-256, and upload the tarball plus `SHA256SUMS` as one workflow artifact. Every Linux
 and macOS packed-install job downloads that artifact, verifies both the checksum and archive
@@ -67,6 +74,8 @@ unaccepted and the package does not exist in the registry.
 - The blocking packed-install matrix grows from four to six jobs.
 - Unit tests cover bounded path, archive-list, checksum, stdout/stderr capture-overflow, and
   workflow-topology rejection paths without generating credentials or making network requests.
+  Archive tests include highly compressed per-entry and aggregate size violations plus README
+  links to omitted package files.
   The topology contract includes block- and flow-style matrix entries, rebuild/repack rejection in
   every non-producer job, the exact verification-only job set, the enabled/disabled workflow rename,
   and the pre-bootstrap prohibition on publication, npm registry credentials at any workflow scope,

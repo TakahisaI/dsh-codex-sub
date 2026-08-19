@@ -10,18 +10,25 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
 
 import {
   appendCapture,
   assertCaptureComplete,
 } from '../scripts/capture-output.mjs'
 import {
+  assertPackageEntrySize,
   assertPackageFiles,
+  assertPackageUnpackedSize,
+  PACKAGE_ENTRY_LIMIT_BYTES,
+  PACKAGE_JSON_LIMIT_BYTES,
+  PACKAGE_README_LIMIT_BYTES,
   PACKAGE_TARBALL_LIMIT_BYTES,
+  PACKAGE_UNPACKED_LIMIT_BYTES,
   validatePackageTarball,
 } from '../scripts/package-tarball.mjs'
 import { PACKAGE_FILE_ALLOWLIST } from '../scripts/package-files.mjs'
+import { assertPackageReadmeLinks } from '../scripts/package-readme-contract.mjs'
 import {
   assertReleaseChecksum,
   selectReleaseTarball,
@@ -45,6 +52,29 @@ afterEach(async () => {
     rm(directory, { force: true, recursive: true })
   )))
 })
+
+async function packageTarball(overrides = new Map()) {
+  const directory = await temporaryDirectory()
+  const packageDirectory = join(directory, 'package')
+  const manifestText = await readFile(new URL('../package.json', import.meta.url), 'utf8')
+  const manifest = JSON.parse(manifestText)
+  for (const path of PACKAGE_FILE_ALLOWLIST) {
+    const destination = join(packageDirectory, path)
+    await mkdir(dirname(destination), { recursive: true })
+    const fallback = path === 'package.json' ? manifestText : ''
+    await writeFile(destination, overrides.get(path) ?? fallback)
+  }
+  const tarball = join(directory, `${String(manifest.name)}-${String(manifest.version)}.tgz`)
+  const report = spawnSync('tar', [
+    '-czf',
+    tarball,
+    '-C',
+    directory,
+    ...PACKAGE_FILE_ALLOWLIST.map((path) => `package/${path}`),
+  ], { encoding: 'utf8', shell: false })
+  expect(report.status).toBe(0)
+  return tarball
+}
 
 describe('package tarball fail-closed validation', () => {
   it('rejects relative paths before reading the filesystem', async () => {
@@ -97,6 +127,76 @@ describe('package tarball fail-closed validation', () => {
     expect(() => assertPackageFiles(['unexpected.txt'])).toThrow('Unexpected: unexpected.txt.')
     expect(() => assertPackageFiles([...PACKAGE_FILE_ALLOWLIST, 'package.json'])).toThrow(
       'Package tarball contents did not match the allowlist.',
+    )
+  })
+
+  it('enforces entry-specific and total unpacked byte budgets', () => {
+    expect(() => assertPackageEntrySize('lib/runtime.mjs', PACKAGE_ENTRY_LIMIT_BYTES)).not.toThrow()
+    expect(() => assertPackageEntrySize('lib/runtime.mjs', PACKAGE_ENTRY_LIMIT_BYTES + 1)).toThrow(
+      `Package tarball entry lib/runtime.mjs must be at most ${String(PACKAGE_ENTRY_LIMIT_BYTES)} bytes.`,
+    )
+    expect(() => assertPackageEntrySize('package.json', PACKAGE_JSON_LIMIT_BYTES + 1)).toThrow(
+      `Package tarball entry package.json must be at most ${String(PACKAGE_JSON_LIMIT_BYTES)} bytes.`,
+    )
+    expect(() => assertPackageEntrySize('README.md', PACKAGE_README_LIMIT_BYTES + 1)).toThrow(
+      `Package tarball entry README.md must be at most ${String(PACKAGE_README_LIMIT_BYTES)} bytes.`,
+    )
+    expect(() => assertPackageUnpackedSize(PACKAGE_UNPACKED_LIMIT_BYTES)).not.toThrow()
+    expect(() => assertPackageUnpackedSize(PACKAGE_UNPACKED_LIMIT_BYTES + 1)).toThrow(
+      `Package tarball unpacked content must be at most ${String(PACKAGE_UNPACKED_LIMIT_BYTES)} bytes.`,
+    )
+  })
+
+  it('rejects a highly compressed oversized README from the actual archive', async () => {
+    const tarball = await packageTarball(new Map([
+      ['README.md', Buffer.alloc(PACKAGE_README_LIMIT_BYTES + 1, 0x61)],
+    ]))
+    await expect(validatePackageTarball(tarball)).rejects.toThrow(
+      `Package tarball entry README.md must be at most ${String(PACKAGE_README_LIMIT_BYTES)} bytes.`,
+    )
+  })
+
+  it('rejects highly compressed entries whose combined size exceeds the total budget', async () => {
+    const largeEntry = Buffer.alloc(PACKAGE_ENTRY_LIMIT_BYTES, 0x61)
+    const tarball = await packageTarball(new Map([
+      ['lib/bin.d.mts', largeEntry],
+      ['lib/bin.mjs', largeEntry],
+      ['lib/index.d.mts', largeEntry],
+      ['lib/index.mjs', largeEntry],
+    ]))
+    await expect(validatePackageTarball(tarball)).rejects.toThrow(
+      `Package tarball unpacked content must be at most ${String(PACKAGE_UNPACKED_LIMIT_BYTES)} bytes.`,
+    )
+  })
+})
+
+describe('packaged README link validation', () => {
+  it('accepts HTTPS, anchors, and links to files shipped in the package', () => {
+    expect(() => assertPackageReadmeLinks(
+      '[repository](https://github.com/TakahisaI/dsh-codex-sub) '
+        + '[section](#install) [license](LICENSE)',
+      'README.md',
+    )).not.toThrow()
+  })
+
+  it('rejects inline and reference links to files omitted from the package', () => {
+    const cases = [
+      '[security](docs/security.md)',
+      '[security][policy]\n\n[policy]: docs/security.md',
+    ]
+    for (const markdown of cases) {
+      expect(() => assertPackageReadmeLinks(markdown, 'README.md')).toThrow(
+        'README.md link target is not available from the package: docs/security.md',
+      )
+    }
+  })
+
+  it('validates README links from the actual package archive', async () => {
+    const tarball = await packageTarball(new Map([
+      ['README.md', '[security](docs/security.md)'],
+    ]))
+    await expect(validatePackageTarball(tarball)).rejects.toThrow(
+      'Packed README.md link target is not available from the package: docs/security.md',
     )
   })
 })

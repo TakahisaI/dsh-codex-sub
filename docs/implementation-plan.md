@@ -172,6 +172,8 @@ Implementation evidence:
   platform job without repacking;
 - the release gate rejects every ref except protected `main`, and all third-party Actions use
   reviewed full commit SHAs;
+- candidate validation bounds each extracted file and aggregate unpacked bytes, and packaged
+  README links cannot target files omitted from the tarball;
 - the ordinary model selector was manually confirmed against that packed profile;
 - the release workflow is stored with a disabled extension and contains no publication step.
 

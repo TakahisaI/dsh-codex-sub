@@ -15,5 +15,6 @@
   premature publication permissions.
 - Protected-main release-ref verification, full-SHA GitHub Actions pins, public-registry metadata,
   and fixture-tested private/public release-state transitions.
+- Bounded archive extraction and package-aware README link validation for the npm tarball.
 
 The first public version has not been tagged or published.

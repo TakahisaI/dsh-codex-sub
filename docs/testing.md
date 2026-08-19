@@ -253,18 +253,21 @@ All six packed-install cells download, checksum, validate, and install those sam
 package build or repack. The release-state check derives the exact six-cell matrix from
 `compatibility.json` and rejects drift in either active CI or the disabled release workflow.
 
-Unit tests reject relative or symbolic-link tarballs, oversized files, allowlist drift, duplicate
-archive paths, extra artifact entries, checksum or filename mismatch, stdout or stderr capture
-overflow, missing or extra matrix cells in block or flow style, and rebuilds or direct repacks in
-artifact-consumer, candidate-ready, and any later jobs. The CI and release contracts allow only the
-exact expected job set and require exactly one workflow-level, canonical block-form `contents: read`
-permission. Every permission block rejects `id-token`, `write-all`, quoted, flow, and inline-comment
-variants. The verification-only release workflow also rejects publication and npm registry
-credential plumbing anywhere in the file, including workflow-level environment variables, relative
-or absolute `.npmrc` references, and npm/pnpm login commands. Tests locate either the disabled or
-enabled release-workflow filename so the activation rename cannot bypass or break this gate. The
-active CI handoff remains the cross-platform integration proof for the operating-system archive and
-artifact clients.
+Unit tests reject relative or symbolic-link tarballs, oversized compressed files, allowlist drift,
+duplicate archive paths, extra artifact entries, checksum or filename mismatch, stdout or stderr
+capture overflow, missing or extra matrix cells in block or flow style, and rebuilds or direct
+repacks in artifact-consumer, candidate-ready, and any later jobs. Archive tests also use highly
+compressible fixtures to exceed the 2 MiB per-entry, 512 KiB README, 64 KiB manifest, and 8 MiB
+aggregate extracted-content budgets. Packaged README tests reject inline or reference-style
+relative links whose targets are omitted from the tarball. The CI and release contracts allow only
+the exact expected job set and require exactly one workflow-level, canonical block-form
+`contents: read` permission. Every permission block rejects `id-token`, `write-all`, quoted, flow,
+and inline-comment variants. The verification-only release workflow also rejects publication and
+npm registry credential plumbing anywhere in the file, including workflow-level environment
+variables, relative or absolute `.npmrc` references, and npm/pnpm login commands. Tests locate
+either the disabled or enabled release-workflow filename so the activation rename cannot bypass or
+break this gate. The active CI handoff remains the cross-platform integration proof for the
+operating-system archive and artifact clients.
 
 The workflow contract also requires every third-party Action, including a named step whose
 `uses:` key is on the following line, to match a reviewed full commit SHA. It rejects conditional
