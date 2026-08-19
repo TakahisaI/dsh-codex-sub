@@ -6,7 +6,8 @@ provider as a normal DSH model route using ChatGPT subscription authentication.
 > Status: Milestones 0 through 6 are implemented: repository tooling, pure core contracts, the
 > credential document codec, the secure package-owned file vault, pi-ai OAuth integration, and the
 > native DSH LLM provider route, plus the package CLI, offline diagnostics, and packed-install
-> release gates. Publication remains blocked on the maintainer decisions listed below.
+> release gates. Milestone 7 Alpha preparation is in progress. No package version has been
+> published, and publication remains blocked on the maintainer decisions listed below.
 
 ## Product contract
 
@@ -46,6 +47,19 @@ Human readers should continue with:
 - [`docs/implementation-plan.md`](docs/implementation-plan.md)
 - [`docs/testing.md`](docs/testing.md)
 - [`docs/compatibility.md`](docs/compatibility.md)
+
+## Verified compatibility
+
+| Component | Verified value |
+| --- | --- |
+| DeepSeek Harness | `0.1.0-rc.7` |
+| `@deepseek-ai/cordis` | `4.0.1` |
+| `@earendil-works/pi-ai` | `0.82.1` |
+| Node.js | `^22.19.0 || ^24.0.0 || ^26.0.0` |
+| Operating systems | Linux and macOS |
+
+See [known limitations](docs/known-limitations.md) for the account, storage, platform, and product
+boundaries of the first Alpha.
 
 ## Install a packed build
 
@@ -119,9 +133,20 @@ key.
 The project is not affiliated with or endorsed by OpenAI, ChatGPT, Codex, DeepSeek, DeepSeek
 Harness, or earendil-works.
 
+## Support and security
+
+For installation or behavior problems, use the repository issue forms and include only exact
+versions plus sanitized `doctor --json` output. Never post credentials, authorization URLs or
+codes, account identifiers, full environment dumps, local paths, or model conversations.
+
+Report suspected vulnerabilities privately through [`SECURITY.md`](SECURITY.md).
+
 ## Publication blocker
 
-A project license, npm package-name ownership, and the trusted-publishing mechanism must be selected
-before the package is made non-private or published. The repository intentionally uses
-`UNLICENSED` and `private: true`; its release workflow remains stored as a disabled file and has no
-publish step.
+A project license and the initial npm publishing bootstrap must be selected before the package is
+made non-private or published. npm has no separate package-name reservation step; the first real
+publish establishes ownership. ADR 0011 records the proposed one-release bootstrap before OIDC
+trusted publishing can be configured. The repository intentionally uses `UNLICENSED` and
+`private: true`; its release workflow remains stored as a disabled file and has no publish step.
+Draft Alpha notes and the secret-free manual-smoke record are available under
+[`docs/releases/`](docs/releases/) and [`docs/alpha-smoke-record.md`](docs/alpha-smoke-record.md).

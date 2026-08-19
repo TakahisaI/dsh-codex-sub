@@ -1,5 +1,6 @@
-# This workflow is intentionally disabled until the maintainer selects a license,
-# confirms npm package ownership, and chooses the trusted-publishing setup.
+# This workflow is intentionally disabled until the maintainer selects a license and accepts the
+# initial npm bootstrap decision. Enable it before the public metadata commit, but keep it free of
+# npm authentication, OIDC permission, and publish commands until the first package exists.
 name: Release gates (disabled, never publishes)
 
 on:

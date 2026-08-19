@@ -18,17 +18,37 @@ Direct GitHub dependency installation is not supported initially. It requires an
 - Every release notes the exact verified DSH/pi-ai combination.
 - A DSH or pi-ai compatibility update normally increments the plugin patch prerelease.
 
+The first candidate is therefore `0.1.0-alpha.0`. Draft notes may exist before the package metadata
+is changed, but a version, tag, or registry artifact is created only after every publication
+prerequisite is complete.
+
 ## Publication prerequisites
 
 Before the first public package:
 
 - choose and commit a license;
-- confirm npm package-name ownership;
-- configure npm trusted publishing/OIDC;
+- confirm that the intended npm package name remains available immediately before publishing;
+- prepare a maintainer npm account with two-factor authentication and recovery access;
 - enable GitHub branch protection;
 - configure security reporting;
 - verify third-party licenses and notices;
 - pass packed-install and manual smoke gates.
+
+Current automated evidence is complete through Milestone 6. The project license and initial npm
+publishing decision remain maintainer gates. Registry lookup currently finds no public package
+named `dsh-codex-sub`, but absence does not establish ownership or reserve the name. npm creates a
+new unscoped package through its first real publish; there is no separate package-registration step
+to perform now.
+
+npm trusted publishing cannot be configured until the package exists. ADR 0011 records the
+proposed bootstrap: publish the complete first Alpha interactively with two-factor authentication,
+then immediately configure OIDC-backed trusted publishing for every later version. The maintainer
+must accept that first-version provenance exception, or choose to defer publication, before the
+non-publishing release workflow is enabled.
+
+Use the [real-account smoke record](alpha-smoke-record.md) for the maintainer-controlled gate and
+the [draft Alpha notes](releases/0.1.0-alpha.0.md) for release metadata. Neither document authorizes
+publication.
 
 ## Release workflow
 
@@ -37,23 +57,38 @@ workflow, and it contains no registry authentication or publish command. If enab
 current scope is limited to the full checks, packed installs, tarball construction, a SHA-256 file,
 and an unpublished workflow artifact.
 
-Do not rename or extend that file until the maintainer has selected the license, confirmed npm
-package-name ownership, and chosen the trusted-publishing mechanism.
+Do not rename that file until the maintainer has selected the license and accepted or replaced ADR
+0011's bootstrap decision. Rename it to `.github/workflows/release.yml` before the first public
+metadata commit so that commit can pass the release-state gate. Keep the enabled workflow limited
+to verification and artifact construction: do not add npm authentication, `id-token: write`, or a
+publish command until the first package exists and its trusted publisher can be configured.
 
 After those decisions, the intended release sequence is:
 
 1. create a release branch;
-2. update version, compatibility data, changelog, and limitations;
-3. run `pnpm install --frozen-lockfile`;
-4. run the complete check matrix;
-5. build and inspect the tarball;
-6. install the exact tarball into a clean DSH profile;
-7. complete required manual smoke;
-8. tag the exact commit;
-9. publish through trusted publishing;
-10. verify npm provenance and install the published artifact into a clean profile.
+2. select the license and accept or replace ADR 0011;
+3. rename the reviewed release gate to `.github/workflows/release.yml` without adding a publish
+   command;
+4. update version, `private`, compatibility data, changelog, and limitations;
+5. confirm that `publishConfig` forces public access and the `alpha` dist-tag;
+6. run `pnpm install --frozen-lockfile` and the complete check matrix;
+7. build and inspect the tarball;
+8. install the exact tarball into a clean DSH profile;
+9. complete required manual smoke;
+10. tag the exact commit;
+11. for the first package only, publish interactively with two-factor authentication;
+12. install the exact published artifact into a clean profile and record the bootstrap provenance
+    exception;
+13. configure trusted publishing for the exact release workflow immediately after the package
+    exists;
+14. add reviewed OIDC publishing for every later version and verify its provenance.
 
 No workflow may publish from an unreviewed dependency-update branch.
+
+The release commit must also pass the repository's protected `main` checks, and suspected security
+defects must use the private process in `SECURITY.md`. Support and security reports never require a
+credential, authorization URL or code, account identifier, local path, environment dump, or model
+conversation.
 
 The first alpha supports Linux and macOS on the Node lines recorded in `compatibility.json`.
 Windows publication is blocked until owner-only credential ACL verification and a blocking packed
