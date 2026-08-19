@@ -75,6 +75,12 @@ The verification workflow accepts manual dispatch only from `refs/heads/main`. A
 construction depends on that job rather than using a skippable job condition. Every third-party
 GitHub Action is pinned to a reviewed full commit SHA.
 
+Candidate validation limits the compressed tarball to 16 MiB and also reads every allowlisted file
+through bounded extraction. A normal entry is limited to 2 MiB, each README to 512 KiB,
+`package.json` to 64 KiB, and aggregate file contents to 8 MiB. Relative README links may point only
+to files included in the package; links to repository-only documentation use canonical HTTPS
+GitHub URLs so the npm-rendered and extracted READMEs do not lead to missing files.
+
 Do not rename that file until the maintainer has accepted or replaced ADR 0011's bootstrap
 decision. Rename it to `.github/workflows/release.yml` before the first public
 metadata commit so that commit can pass the release-state gate. Keep the enabled workflow limited

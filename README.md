@@ -37,16 +37,18 @@ configuration of default models, App Server, MCP, and migration from other plugi
 
 ## Start here
 
-Coding agents must read [`AGENTS.md`](AGENTS.md). The exact first prompt is provided in
-[`CODEX_BOOTSTRAP_PROMPT.md`](CODEX_BOOTSTRAP_PROMPT.md).
+Coding agents must read
+[`AGENTS.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/AGENTS.md). The exact first
+prompt is provided in
+[`CODEX_BOOTSTRAP_PROMPT.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/CODEX_BOOTSTRAP_PROMPT.md).
 
 Human readers should continue with:
 
-- [`docs/architecture.md`](docs/architecture.md)
-- [`docs/security.md`](docs/security.md)
-- [`docs/implementation-plan.md`](docs/implementation-plan.md)
-- [`docs/testing.md`](docs/testing.md)
-- [`docs/compatibility.md`](docs/compatibility.md)
+- [`docs/architecture.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/architecture.md)
+- [`docs/security.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/security.md)
+- [`docs/implementation-plan.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/implementation-plan.md)
+- [`docs/testing.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/testing.md)
+- [`docs/compatibility.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/compatibility.md)
 
 ## Verified compatibility
 
@@ -58,8 +60,9 @@ Human readers should continue with:
 | Node.js | `^22.19.0 || ^24.0.0 || ^26.0.0` |
 | Operating systems | Linux and macOS |
 
-See [known limitations](docs/known-limitations.md) for the account, storage, platform, and product
-boundaries of the first Alpha.
+See
+[known limitations](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/known-limitations.md)
+for the account, storage, platform, and product boundaries of the first Alpha.
 
 ## Install a packed build
 
@@ -139,14 +142,18 @@ For installation or behavior problems, use the repository issue forms and includ
 versions plus sanitized `doctor --json` output. Never post credentials, authorization URLs or
 codes, account identifiers, full environment dumps, local paths, or model conversations.
 
-Report suspected vulnerabilities privately through [`SECURITY.md`](SECURITY.md).
+Report suspected vulnerabilities privately through
+[`SECURITY.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/SECURITY.md).
 
 ## Publication blocker
 
-The project is licensed under the [MIT License](LICENSE). It remains `private: true` until the
+The project is licensed under the
+[MIT License](https://github.com/TakahisaI/dsh-codex-sub/blob/main/LICENSE). It remains
+`private: true` until the
 initial npm publishing bootstrap is accepted and the remaining release gates pass. npm has no
 separate package-name reservation step; the first real publish establishes ownership. ADR 0011
 records the proposed one-release bootstrap before OIDC trusted publishing can be configured. The
 release workflow remains stored as a disabled file and has no publish step. Draft Alpha notes and
-the secret-free manual-smoke record are available under [`docs/releases/`](docs/releases/) and
-[`docs/alpha-smoke-record.md`](docs/alpha-smoke-record.md).
+the secret-free manual-smoke record are available under
+[`docs/releases/`](https://github.com/TakahisaI/dsh-codex-sub/tree/main/docs/releases) and
+[`docs/alpha-smoke-record.md`](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/alpha-smoke-record.md).

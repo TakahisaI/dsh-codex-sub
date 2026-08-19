@@ -4,9 +4,14 @@ import { createReadStream } from 'node:fs'
 import { lstat, readFile, realpath } from 'node:fs/promises'
 import { basename, isAbsolute } from 'node:path'
 import { PACKAGE_FILE_ALLOWLIST } from './package-files.mjs'
+import { assertPackageReadmeLinks } from './package-readme-contract.mjs'
 
 const MAX_TARBALL_BYTES = 16 * 1024 * 1024
 const MAX_TAR_OUTPUT_BYTES = 1024 * 1024
+const MAX_PACKAGE_ENTRY_BYTES = 2 * 1024 * 1024
+const MAX_PACKAGE_JSON_BYTES = 64 * 1024
+const MAX_PACKAGE_README_BYTES = 512 * 1024
+const MAX_PACKAGE_UNPACKED_BYTES = 8 * 1024 * 1024
 const PACKAGE_PREFIX = 'package/'
 
 function invariant(condition, message) {
@@ -26,6 +31,57 @@ function runTar(arguments_, label) {
     throw new Error(`${label} failed.`)
   }
   return result.stdout ?? ''
+}
+
+function packageEntryLimit(path) {
+  if (path === 'package.json') {
+    return MAX_PACKAGE_JSON_BYTES
+  }
+  if (path === 'README.md' || path === 'README.ja.md') {
+    return MAX_PACKAGE_README_BYTES
+  }
+  return MAX_PACKAGE_ENTRY_BYTES
+}
+
+export function assertPackageEntrySize(path, bytes) {
+  const limit = packageEntryLimit(path)
+  invariant(
+    Number.isSafeInteger(bytes) && bytes >= 0 && bytes <= limit,
+    `Package tarball entry ${path} must be at most ${String(limit)} bytes.`,
+  )
+}
+
+export function assertPackageUnpackedSize(bytes) {
+  invariant(
+    Number.isSafeInteger(bytes) && bytes >= 0 && bytes <= MAX_PACKAGE_UNPACKED_BYTES,
+    `Package tarball unpacked content must be at most ${String(MAX_PACKAGE_UNPACKED_BYTES)} bytes.`,
+  )
+}
+
+function readPackageEntry(packageTarball, path) {
+  const limit = packageEntryLimit(path)
+  const result = spawnSync('tar', ['-xOzf', packageTarball, `${PACKAGE_PREFIX}${path}`], {
+    encoding: null,
+    env: { ...process.env, LANG: 'C', LC_ALL: 'C' },
+    maxBuffer: limit + 1,
+    shell: false,
+  })
+  if (result.error?.code === 'ENOBUFS') {
+    assertPackageEntrySize(path, limit + 1)
+  }
+  if (result.error !== undefined || result.status !== 0 || !Buffer.isBuffer(result.stdout)) {
+    throw new Error(`Package tarball entry ${path} could not be read.`)
+  }
+  assertPackageEntrySize(path, result.stdout.length)
+  return result.stdout
+}
+
+function decodeUtf8(value, label) {
+  try {
+    return new TextDecoder('utf-8', { fatal: true }).decode(value)
+  } catch {
+    throw new Error(`${label} was not valid UTF-8.`)
+  }
 }
 
 function parseJson(text, label) {
@@ -86,11 +142,28 @@ export async function validatePackageTarball(packageTarball) {
   const packedFiles = entries.map((entry) => entry.slice(PACKAGE_PREFIX.length)).sort()
   assertPackageFiles(packedFiles)
 
+  let unpackedBytes = 0
+  const packedText = new Map()
+  for (const path of packedFiles) {
+    const contents = readPackageEntry(canonicalPath, path)
+    unpackedBytes += contents.length
+    assertPackageUnpackedSize(unpackedBytes)
+    if (path === 'package.json' || path === 'README.md' || path === 'README.ja.md') {
+      packedText.set(path, decodeUtf8(contents, `Packed ${path}`))
+    }
+  }
+
+  const englishReadme = packedText.get('README.md')
+  const japaneseReadme = packedText.get('README.ja.md')
+  invariant(englishReadme !== undefined, 'Packed README.md was missing.')
+  invariant(japaneseReadme !== undefined, 'Packed README.ja.md was missing.')
+  assertPackageReadmeLinks(englishReadme, 'Packed README.md')
+  assertPackageReadmeLinks(japaneseReadme, 'Packed README.ja.md')
+
+  const packedManifestText = packedText.get('package.json')
+  invariant(packedManifestText !== undefined, 'Packed package.json was missing.')
   const [packedManifest, repositoryManifest] = await Promise.all([
-    Promise.resolve(parseJson(
-      runTar(['-xOzf', canonicalPath, `${PACKAGE_PREFIX}package.json`], 'Package manifest read'),
-      'Packed package.json',
-    )),
+    Promise.resolve(parseJson(packedManifestText, 'Packed package.json')),
     readFile(new URL('../package.json', import.meta.url), 'utf8')
       .then((text) => parseJson(text, 'Repository package.json')),
   ])
@@ -108,7 +181,12 @@ export async function validatePackageTarball(packageTarball) {
     canonicalPath,
     packedFiles,
     sha256: await calculateSha256(canonicalPath),
+    unpackedBytes,
   }
 }
 
+export const PACKAGE_ENTRY_LIMIT_BYTES = MAX_PACKAGE_ENTRY_BYTES
+export const PACKAGE_JSON_LIMIT_BYTES = MAX_PACKAGE_JSON_BYTES
+export const PACKAGE_README_LIMIT_BYTES = MAX_PACKAGE_README_BYTES
 export const PACKAGE_TARBALL_LIMIT_BYTES = MAX_TARBALL_BYTES
+export const PACKAGE_UNPACKED_LIMIT_BYTES = MAX_PACKAGE_UNPACKED_BYTES

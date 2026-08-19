@@ -1,5 +1,7 @@
 import { spawnSync } from 'node:child_process'
+import { readFile } from 'node:fs/promises'
 import { PACKAGE_FILE_ALLOWLIST } from './package-files.mjs'
+import { assertPackageReadmeLinks } from './package-readme-contract.mjs'
 
 const requiredFiles = new Set(PACKAGE_FILE_ALLOWLIST)
 
@@ -24,4 +26,11 @@ if (missing.length > 0 || unexpected.length > 0) {
   )
 }
 
-process.stdout.write('Package contents match the allowlist.\n')
+const [englishReadme, japaneseReadme] = await Promise.all([
+  readFile(new URL('../README.md', import.meta.url), 'utf8'),
+  readFile(new URL('../README.ja.md', import.meta.url), 'utf8'),
+])
+assertPackageReadmeLinks(englishReadme, 'README.md')
+assertPackageReadmeLinks(japaneseReadme, 'README.ja.md')
+
+process.stdout.write('Package contents and README links match the distribution contract.\n')
