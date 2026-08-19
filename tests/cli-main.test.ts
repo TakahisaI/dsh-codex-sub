@@ -196,6 +196,58 @@ describe('CLI command orchestration', () => {
   })
 
   it.each([
+    [[], 'Usage: dsh-codex-sub <command> [options]\n'],
+    [['version'], `${PACKAGE_VERSION}\n`],
+  ] as const)('does not construct command dependencies for %#', async (arguments_, output) => {
+    const capture = captureIo()
+    let dependencyReads = 0
+    const unavailable = (): never => {
+      dependencyReads += 1
+      throw new Error('Production command dependencies must remain lazy.')
+    }
+    const environment: CliEnvironment = {
+      packageVersion: PACKAGE_VERSION,
+      get authService() {
+        return unavailable()
+      },
+      get credentialVault() {
+        return unavailable()
+      },
+      inspectRuntime: unavailable,
+      catalogModelCount: unavailable,
+      get promptReader() {
+        return unavailable()
+      },
+    }
+
+    await expect(runCli(arguments_, environment, capture.io)).resolves.toBe(CLI_EXIT_SUCCESS)
+    expect(capture.stdout()).toContain(output)
+    expect(capture.stderr()).toBe('')
+    expect(dependencyReads).toBe(0)
+  })
+
+  it('prints a safe failure when lazy command construction fails', async () => {
+    const sentinel = `PATH_SENTINEL_${randomUUID()}`
+    const capture = captureIo()
+    const testFixture = fixture()
+    const environment: CliEnvironment = {
+      ...testFixture.environment,
+      get authService(): CodexAuthService {
+        throw new CodexError('Credential storage could not be read.', 'CODEX_AUTH_STORAGE_INVALID', {
+          cause: new Error(sentinel),
+        })
+      },
+    }
+
+    await expect(runCli(['status'], environment, capture.io)).resolves.toBe(CLI_EXIT_FAILURE)
+    expect(capture.stdout()).toBe('')
+    expect(capture.stderr()).toBe(
+      'CODEX_AUTH_STORAGE_INVALID: Credential storage could not be read.\n',
+    )
+    expect(capture.stderr()).not.toContain(sentinel)
+  })
+
+  it.each([
     [{ state: 'signed-out' }, CLI_EXIT_EXPECTED_NEGATIVE, 'Signed out.\n'],
     [
       { state: 'signed-in', refreshExpected: false },

@@ -110,15 +110,16 @@ export async function runCli(
         io.stdout(`${environment.packageVersion}\n`)
         return CLI_EXIT_SUCCESS
       case 'login': {
+        const promptReader = environment.promptReader
         const interaction = createTerminalLoginInteraction({
           io,
-          reader: environment.promptReader,
+          reader: promptReader,
           ...(signal === undefined ? {} : { signal }),
         })
         try {
           await environment.authService.login(interaction, signal)
         } finally {
-          environment.promptReader.close()
+          promptReader.close()
         }
         io.stdout('Signed in.\n')
         return CLI_EXIT_SUCCESS
@@ -182,14 +183,30 @@ export function createProductionCliEnvironment(
   },
   output: Writable,
 ): CliEnvironment {
-  const vault = new FileCredentialVault()
+  let vault: FileCredentialVault | undefined
+  let authService: PiAiCodexAuthService | undefined
+  let promptReader: NodePromptReader | undefined
+
+  const resolveVault = (): FileCredentialVault => {
+    vault ??= new FileCredentialVault()
+    return vault
+  }
+
   return Object.freeze({
     packageVersion: packageDocument.version,
-    authService: new PiAiCodexAuthService({ vault }),
-    credentialVault: vault,
+    get authService(): PiAiCodexAuthService {
+      authService ??= new PiAiCodexAuthService({ vault: resolveVault() })
+      return authService
+    },
+    get credentialVault(): FileCredentialVault {
+      return resolveVault()
+    },
     inspectRuntime: () => evaluateRuntimeCompatibility(inspectInstalledRuntime()),
     catalogModelCount: codexCatalogModelCount,
-    promptReader: new NodePromptReader(input, output),
+    get promptReader(): NodePromptReader {
+      promptReader ??= new NodePromptReader(input, output)
+      return promptReader
+    },
   })
 }
 

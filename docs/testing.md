@@ -139,7 +139,10 @@ Capture stdout and stderr separately.
   before output;
 - secret and manual-code input is returned to the auth flow without terminal echo;
 - status and doctor do not call request-auth resolution, login, refresh, or model I/O;
-- the emitted executable prints the package version successfully after build.
+- help and version do not construct production auth, vault, or prompt dependencies;
+- lazy production dependency failures use the fixed safe printer;
+- the emitted executable prints the package version and exits even when another active handle
+  remains after the command settles.
 
 ### 1.7 Package tests
 

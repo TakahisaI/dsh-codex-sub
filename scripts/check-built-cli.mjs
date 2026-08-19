@@ -15,4 +15,25 @@ if (
   throw new Error('Built CLI did not expose the package version contract.')
 }
 
-process.stdout.write('Built CLI exposes the package version contract.\n')
+const lingeringHandle = spawnSync(process.execPath, [
+  '--import',
+  'data:text/javascript,setInterval(() => {}, 1000)',
+  'lib/bin.mjs',
+  'version',
+], {
+  encoding: 'utf8',
+  shell: false,
+  timeout: 2_000,
+})
+
+if (
+  lingeringHandle.status !== 0
+  || lingeringHandle.signal !== null
+  || lingeringHandle.error !== undefined
+  || lingeringHandle.stdout !== `${packageDocument.version}\n`
+  || lingeringHandle.stderr !== ''
+) {
+  throw new Error('Built CLI did not terminate after the command settled.')
+}
+
+process.stdout.write('Built CLI exposes the version contract and terminates deterministically.\n')

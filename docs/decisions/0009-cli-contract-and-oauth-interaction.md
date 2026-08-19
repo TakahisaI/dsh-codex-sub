@@ -50,6 +50,13 @@ Never print caught objects, stacks, causes, or arbitrary provider data. Expected
 print only their stable code and safe fixed message; unexpected failures use one fixed message.
 When pi-ai wraps a project credential-conversion failure during login, retain the safe
 `CODEX_UPSTREAM_PROTOCOL` classification rather than reducing it to a generic login failure.
+Construct production vault, auth-service, and prompt dependencies lazily inside the command's
+protected execution path. Help and version output must not depend on auth construction, and a
+constructor failure follows the same fixed safe printer as an operation failure.
+
+After the command settles and the SIGINT listener is removed, terminate the executable with the
+selected exit code. This closes any handle an upstream OAuth failure left behind instead of letting
+an already-completed CLI command hang indefinitely.
 
 ## Consequences
 
@@ -59,5 +66,7 @@ When pi-ai wraps a project credential-conversion failure during login, retain th
 - Authorization destinations remain visible long enough for the user to complete OAuth but are not
   durable diagnostic data.
 - Hidden prompt handling and SIGINT cleanup require dedicated stream and cancellation tests.
+- Forced process termination trades general-purpose embedding of the executable module for a
+  deterministic command lifecycle; the library entry remains unaffected.
 - Packed DSH profile invocation remains a Milestone 6 installation test; Milestone 5 verifies the
   emitted executable directly.

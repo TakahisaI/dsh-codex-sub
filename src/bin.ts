@@ -8,8 +8,9 @@ const cancel = (): void => {
 }
 
 process.once('SIGINT', cancel)
+let exitCode: number
 try {
-  process.exitCode = await runProductionCli(
+  exitCode = await runProductionCli(
     process.argv.slice(2),
     process.stdin,
     process.stdout,
@@ -19,3 +20,5 @@ try {
 } finally {
   process.removeListener('SIGINT', cancel)
 }
+
+process.exit(exitCode)
