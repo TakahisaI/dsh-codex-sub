@@ -3,10 +3,9 @@
 `dsh-codex-sub` は、pi-ai の `openai-codex` プロバイダーを DeepSeek Harness（DSH）の通常のモデル経路として登録するプラグインです。
 認証には OpenAI Platform API キーではなく、ChatGPT 契約の OAuth を使います。
 
-> Milestone 0から7まで完了しています。
+> Milestone 0から8まで完了しています。
 > リポジトリ基盤、core契約、資格情報文書、package-owned file vault、pi-ai OAuth連携、DSHのLLM provider route、CLI、offline diagnostics、packed-install release gateが含まれます。
-> `0.1.0-alpha.0` はnpmの `alpha` dist-tagで公開済みで、対応するGitHub prereleaseもあります。
-> `0.1.0-alpha.1` は次のレビュー対象release candidateで、まだ公開されていません。
+> `0.1.0-alpha.1` はnpmの `alpha` dist-tagでprovenance付きで公開済みで、対応するGitHub prereleaseもあります。
 
 ## プラグインが担う範囲
 

@@ -50,8 +50,14 @@ staging job. A maintainer workstation with an older npm CLI cannot administer tr
 staged release even when its Node version is supported.
 
 Use the [real-account smoke record](alpha-smoke-record.md) for maintainer-controlled gates and the
-[Alpha release record](releases/0.1.0-alpha.0.md) for the first publication evidence. A future
+[Alpha release record](releases/0.1.0-alpha.0.md) for the first publication evidence. Every later
 release still requires explicit staged-package approval; documentation alone never authorizes it.
+
+The second Alpha, `0.1.0-alpha.1`, completed the first post-bootstrap stage-only OIDC release on
+2026-08-19. Its workflow artifact, staged download, and registry tarball were byte-identical; the
+registry tarball passed packed installation again and carries npm provenance. The `alpha` tag moved
+to `0.1.0-alpha.1`, while `latest` remained on `0.1.0-alpha.0` as required by ADR 0014. See the
+[`0.1.0-alpha.1` release record](releases/0.1.0-alpha.1.md).
 
 ## Release workflow
 

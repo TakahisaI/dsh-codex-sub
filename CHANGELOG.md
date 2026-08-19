@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-## 0.1.0-alpha.1 (release candidate)
+## 0.1.0-alpha.1
 
 ### Changed
 
@@ -12,7 +12,9 @@
 - Serialized release workflow runs without cancelling an in-progress candidate.
 - Documented the post-bootstrap npm dist-tag policy for prereleases and the first stable release.
 
-This candidate has not been staged or published.
+Published through stage-only npm Trusted Publishing under the `alpha` dist-tag on 2026-08-19.
+The matching GitHub release is marked as a prerelease, and the registry artifact includes npm
+provenance.
 
 ## 0.1.0-alpha.0
 

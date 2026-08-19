@@ -203,8 +203,11 @@ Acceptance:
 
 ## Milestone 8 — Stage-only release proof
 
-Status: in progress for `0.1.0-alpha.1`. This milestone changes release metadata and safeguards,
-not provider, OAuth, credential-storage, model-visible, or compatibility behavior.
+Status: complete. `0.1.0-alpha.1` was staged from the exact six-cell-verified workflow artifact,
+approved separately with two-factor authentication, published with npm provenance, downloaded
+back byte-for-byte, installed again, and paired with a matching GitHub prerelease. This milestone
+changed release metadata and safeguards, not provider, OAuth, credential-storage, model-visible,
+or compatibility behavior.
 
 Deliverables:
 
