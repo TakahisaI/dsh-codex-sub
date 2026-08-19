@@ -3,6 +3,8 @@ import { spawnSync } from 'node:child_process'
 const requiredFiles = new Set([
   'compatibility.json',
   'cordis.patch.yml',
+  'lib/bin.d.mts',
+  'lib/bin.mjs',
   'lib/index.d.mts',
   'lib/index.mjs',
   'package.json',

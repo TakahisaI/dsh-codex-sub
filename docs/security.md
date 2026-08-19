@@ -120,6 +120,9 @@ Mitigation during CLI login:
   the authorization destination;
 - do not persist or include the URL in diagnostics;
 - cancel the login on invalid events.
+- do not open a browser automatically in the first release;
+- read secret and manual-code prompts through a non-echoing terminal path;
+- propagate cancellation to pending prompts and remove their listeners.
 
 ### 3.9 Supply-chain or incompatible upstream change
 

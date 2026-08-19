@@ -134,6 +134,12 @@ Capture stdout and stderr separately.
 - cancelled login exits 4;
 - human-readable commands contain no raw JSON secrets;
 - every secret sentinel is absent from stdout and stderr.
+- every published pi-ai notification and prompt form is handled;
+- authorization destinations reject non-HTTPS, userinfo, malformed, and control-character input
+  before output;
+- secret and manual-code input is returned to the auth flow without terminal echo;
+- status and doctor do not call request-auth resolution, login, refresh, or model I/O;
+- the emitted executable prints the package version successfully after build.
 
 ### 1.7 Package tests
 
