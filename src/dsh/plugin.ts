@@ -1,6 +1,5 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
-import { LlmError } from '@deepseek-ai/dsh-llm'
 
 import {
   PLUGIN_NAME,
@@ -22,6 +21,16 @@ function providerConflict(cause: unknown): CodexError {
   })
 }
 
+function isDuplicateAdapterFailure(error: unknown): boolean {
+  if (error === null || (typeof error !== 'object' && typeof error !== 'function')) {
+    return false
+  }
+  const code = Object.getOwnPropertyDescriptor(error, 'code')
+  return code?.enumerable === true
+    && 'value' in code
+    && code.value === 'DUPLICATE_ADAPTER'
+}
+
 export function apply(ctx: Context): void {
   assertRuntimeCompatible()
 
@@ -35,7 +44,9 @@ export function apply(ctx: Context): void {
   try {
     ctx.llm.registerAdapter([PROVIDER_ID], adapter)
   } catch (error) {
-    if (error instanceof LlmError && error.code === 'DUPLICATE_ADAPTER') {
+    // Host and plugin can load distinct copies of dsh-llm, so class identity is
+    // not a stable package boundary. Trust only the public own data property.
+    if (isDuplicateAdapterFailure(error)) {
       throw providerConflict(error)
     }
     throw error

@@ -109,8 +109,11 @@ Verify:
 - image input uses DSH attachments only when the model advertises image support.
 - the request signal reaches attachment reads even though the pinned adapter omits it;
 - auth-required and reauth-required codes survive the public DSH stream boundary;
+- a project error raised after auth and the explicit-token marker both retain their `CODEX_` code
+  through the public DSH stream boundary;
 - the OAuth-only provider wrapper cannot send its internal configured marker and never reads an
   ambient credential;
+- duplicate-route translation works with a data-shaped error from a distinct host package copy;
 - exact runtime mismatches fail before registration without exposing resolved package paths.
 
 Do not re-test every internal behavior of DSH `PiAiAdapter`; pin only the behaviors on which this

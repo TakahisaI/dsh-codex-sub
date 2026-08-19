@@ -131,7 +131,9 @@ The DSH layer creates one immutable `PiAiAdapter` profile for `openai-codex`. Ca
 one shared metadata delegate. A model request first resolves OAuth exactly once with the DSH request
 signal, then creates a request-local delegate whose `resolveApiKey` hook returns only that frozen
 token. This preserves cancellation during auth even though the pinned public hook does not receive
-an `AbortSignal` itself.
+an `AbortSignal` itself. The request-local provider wrapper also records a project `CodexError`
+before pi-ai can normalize it into a generic in-band failure, allowing the DSH boundary to retain
+the stable `CODEX_` code without parsing error text.
 
 Responsibilities:
 
@@ -174,7 +176,9 @@ The plugin entry is intentionally small:
 The runtime guard reads the verified versions from `compatibility.json`, resolves installed package
 metadata without exposing its paths, and fails closed before registration on a missing, unknown, or
 mismatched Node/DSH/pi-ai combination. A duplicate DSH route is translated from the public
-`DUPLICATE_ADAPTER` failure to `CODEX_PROVIDER_CONFLICT` without changing the existing owner.
+`DUPLICATE_ADAPTER` failure to `CODEX_PROVIDER_CONFLICT` without changing the existing owner. The
+translation uses the public own `code` data property rather than error-class identity so it also
+works when the host and bundled plugin resolve separate package copies.
 
 The pinned DSH runtime exposes live provider metadata and the adapter-owned catalog through
 `listProviders()` and `listModels()` after `registerAdapter()`. The first release provisionally

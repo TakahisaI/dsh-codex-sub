@@ -149,4 +149,31 @@ describe('explicit request-token provider', () => {
     })
     expect(fixture.streamCalls()).toBe(0)
   })
+
+  it('rejects its configured marker before provider streaming', async () => {
+    const fixture = oauthOnlyFauxProvider()
+    const wrapped = withExplicitRequestToken(fixture.provider)
+    const model = wrapped.getModels()[0]
+    expect(model).toBeDefined()
+    const resolved = await wrapped.auth.apiKey?.resolve({
+      ctx: {
+        async env() {
+          return undefined
+        },
+        async fileExists() {
+          return false
+        },
+      },
+    })
+    const marker = resolved?.auth.apiKey
+    expect(marker).toBeDefined()
+    if (marker === undefined) {
+      throw new Error('request-token marker was not resolved')
+    }
+
+    expect(() => wrapped.streamSimple(model!, { messages: [] }, {
+      apiKey: marker,
+    })).toThrowError(expect.objectContaining({ code: 'CODEX_AUTH_REQUIRED' }))
+    expect(fixture.streamCalls()).toBe(0)
+  })
 })

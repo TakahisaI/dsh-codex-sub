@@ -36,11 +36,13 @@ import {
 } from '../src/core/constants.js'
 import { CodexError } from '../src/core/errors.js'
 import { CodexDshAdapter } from '../src/dsh/adapter.js'
+import { createOpenAiCodexRequestProvider } from '../src/piai/request-auth-provider.js'
 
 const MODEL_ID = 'dsh-adapter-fixture-model'
 const ACCESS_SENTINEL = 'ACCESS_SENTINEL_dsh_adapter'
 
 class AuthServiceProbe implements CodexAuthService {
+  bearerToken = ACCESS_SENTINEL
   calls = 0
   error: unknown
   signal: AbortSignal | undefined
@@ -57,7 +59,7 @@ class AuthServiceProbe implements CodexAuthService {
     if (this.error !== undefined) {
       throw this.error
     }
-    return Object.freeze({ bearerToken: ACCESS_SENTINEL })
+    return Object.freeze({ bearerToken: this.bearerToken })
   }
 
   async logout(): Promise<void> {}
@@ -226,6 +228,119 @@ describe('Codex DSH adapter', () => {
         },
       ])
       expect(faux.state.callCount).toBe(0)
+    } finally {
+      await adapterFiber.dispose()
+      await runtimeFiber.dispose()
+    }
+  })
+
+  it('preserves delegated Codex error codes through the public DSH stream boundary', async () => {
+    const faux = fauxProvider({ provider: PROVIDER_ID, models: [{ id: MODEL_ID }] })
+    const source = faux.provider
+    let streamCalls = 0
+    const fail = (): never => {
+      streamCalls += 1
+      throw new CodexError('The Codex provider contract failed.', 'CODEX_UPSTREAM_PROTOCOL')
+    }
+    const failingProvider: Provider = {
+      id: source.id,
+      name: source.name,
+      ...(source.baseUrl === undefined ? {} : { baseUrl: source.baseUrl }),
+      ...(source.headers === undefined ? {} : { headers: source.headers }),
+      auth: source.auth,
+      getModels: source.getModels.bind(source),
+      stream: fail,
+      streamSimple: fail,
+    }
+    const auth = new AuthServiceProbe()
+    const adapter = new CodexDshAdapter({
+      authService: auth,
+      profile: profile(failingProvider),
+    })
+    const ctx = new Context()
+    const runtimeFiber = ctx.plugin(LlmRuntime)
+    await runtimeFiber
+    const adapterFiber = ctx.plugin({
+      name: 'codex-adapter-delegated-error-contract',
+      inject: ['llm'],
+      apply(pluginContext: Context) {
+        pluginContext.llm.registerAdapter([PROVIDER_ID], adapter)
+      },
+    })
+    await adapterFiber
+
+    try {
+      const chunks = await collect(ctx.llm.stream(request()))
+      expect(chunks).toEqual([
+        {
+          type: 'finish',
+          reason: {
+            kind: 'error',
+            failure: {
+              message: 'The Codex provider contract failed.',
+              code: 'CODEX_UPSTREAM_PROTOCOL',
+            },
+          },
+        },
+      ])
+      expect(auth.calls).toBe(1)
+      expect(streamCalls).toBe(1)
+    } finally {
+      await adapterFiber.dispose()
+      await runtimeFiber.dispose()
+    }
+  })
+
+  it('preserves marker rejection through the public DSH stream boundary', async () => {
+    const provider = createOpenAiCodexRequestProvider()
+    const marker = await provider.auth.apiKey?.resolve({
+      ctx: {
+        async env() {
+          return undefined
+        },
+        async fileExists() {
+          return false
+        },
+      },
+    })
+    const model = provider.getModels()[0]
+    expect(model).toBeDefined()
+    const markerValue = marker?.auth.apiKey
+    expect(markerValue).toBeDefined()
+    if (markerValue === undefined) {
+      throw new Error('request-token marker was not resolved')
+    }
+    const auth = new AuthServiceProbe()
+    auth.bearerToken = markerValue
+    const adapter = new CodexDshAdapter({
+      authService: auth,
+      profile: profile(provider),
+    })
+    const ctx = new Context()
+    const runtimeFiber = ctx.plugin(LlmRuntime)
+    await runtimeFiber
+    const adapterFiber = ctx.plugin({
+      name: 'codex-adapter-marker-error-contract',
+      inject: ['llm'],
+      apply(pluginContext: Context) {
+        pluginContext.llm.registerAdapter([PROVIDER_ID], adapter)
+      },
+    })
+    await adapterFiber
+
+    try {
+      const chunks = await collect(ctx.llm.stream({
+        ...request(),
+        model: model!.id,
+      }))
+      expect(chunks.at(-1)).toMatchObject({
+        type: 'finish',
+        reason: {
+          kind: 'error',
+          failure: { code: 'CODEX_AUTH_REQUIRED' },
+        },
+      })
+      expect(auth.calls).toBe(1)
     } finally {
       await adapterFiber.dispose()
       await runtimeFiber.dispose()

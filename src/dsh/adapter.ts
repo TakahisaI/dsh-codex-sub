@@ -21,8 +21,14 @@ import {
   PROVIDER_DISPLAY_NAME,
   PROVIDER_ID,
 } from '../core/constants.js'
-import { isCodexError } from '../core/errors.js'
-import { createOpenAiCodexRequestProvider } from '../piai/request-auth-provider.js'
+import {
+  isCodexError,
+  type CodexError,
+} from '../core/errors.js'
+import {
+  createOpenAiCodexRequestProvider,
+  withCodexErrorCapture,
+} from '../piai/request-auth-provider.js'
 
 export const CODEX_STREAM_IDLE_TIMEOUT_MS = 300_000
 
@@ -88,6 +94,7 @@ export class CodexDshAdapter extends LlmAdapter {
   readonly #authService: CodexAuthService
   readonly #catalogAdapter: PiAiAdapter
   readonly #onReplayDegrade: CodexDshAdapterOptions['onReplayDegrade']
+  readonly #profile: ResolvedPiAiProviderProfile
   readonly #profiles: ReadonlyMap<string, ResolvedPiAiProviderProfile>
   readonly #resolveAttachments: CodexDshAdapterOptions['resolveAttachments']
 
@@ -97,6 +104,7 @@ export class CodexDshAdapter extends LlmAdapter {
     this.#resolveAttachments = options.resolveAttachments
     this.#onReplayDegrade = options.onReplayDegrade
     const profile = requireCodexProfile(options.profile ?? createProductionProfile())
+    this.#profile = profile
     this.#profiles = new Map([[PROVIDER_ID, profile]])
     this.#catalogAdapter = this.#createDelegate(async () => undefined, undefined)
   }
@@ -104,9 +112,16 @@ export class CodexDshAdapter extends LlmAdapter {
   #createDelegate(
     resolveApiKey: () => Promise<string | undefined>,
     requestSignal: AbortSignal | undefined,
+    captureCodexError?: (error: CodexError) => void,
   ): PiAiAdapter {
+    const profiles = captureCodexError === undefined
+      ? this.#profiles
+      : new Map([[PROVIDER_ID, Object.freeze({
+          ...this.#profile,
+          piProvider: withCodexErrorCapture(this.#profile.piProvider, captureCodexError),
+        })]])
     return new PiAiAdapter({
-      profiles: () => this.#profiles,
+      profiles: () => profiles,
       resolveApiKey,
       ...(this.#resolveAttachments === undefined
         ? {}
@@ -150,7 +165,26 @@ export class CodexDshAdapter extends LlmAdapter {
       toDshError(error)
     }
 
-    const requestAdapter = this.#createDelegate(async () => bearerToken, options.signal)
-    yield* requestAdapter.stream(options)
+    let delegatedCodexError: CodexError | undefined
+    const requestAdapter = this.#createDelegate(
+      async () => bearerToken,
+      options.signal,
+      (error) => {
+        delegatedCodexError ??= error
+      },
+    )
+    try {
+      for await (const chunk of requestAdapter.stream(options)) {
+        if (delegatedCodexError !== undefined) {
+          toDshError(delegatedCodexError)
+        }
+        yield chunk
+      }
+      if (delegatedCodexError !== undefined) {
+        toDshError(delegatedCodexError)
+      }
+    } catch (error) {
+      toDshError(error)
+    }
   }
 }

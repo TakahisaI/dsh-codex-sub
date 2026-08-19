@@ -7,7 +7,10 @@ import type {
 import { openaiCodexProvider } from '@earendil-works/pi-ai/providers/openai-codex'
 
 import { PROVIDER_ID } from '../core/constants.js'
-import { CodexError } from '../core/errors.js'
+import {
+  CodexError,
+  isCodexError,
+} from '../core/errors.js'
 
 const REQUEST_TOKEN_REQUIRED_MARKER = 'dsh-codex-sub-request-token-required'
 
@@ -72,6 +75,45 @@ export function withExplicitRequestToken<TApi extends Api>(provider: Provider<TA
     streamSimple(model, context, options) {
       assertExplicitRequestToken(options)
       return provider.streamSimple(model, context, options)
+    },
+  }
+
+  return Object.freeze(wrapped)
+}
+
+export function withCodexErrorCapture<TApi extends Api>(
+  provider: Provider<TApi>,
+  capture: (error: CodexError) => void,
+): Provider<TApi> {
+  function invoke<TResult>(operation: () => TResult): TResult {
+    try {
+      return operation()
+    } catch (error) {
+      if (isCodexError(error)) {
+        capture(error)
+      }
+      throw error
+    }
+  }
+
+  const wrapped: Provider<TApi> = {
+    id: provider.id,
+    name: provider.name,
+    ...(provider.baseUrl === undefined ? {} : { baseUrl: provider.baseUrl }),
+    ...(provider.headers === undefined ? {} : { headers: provider.headers }),
+    auth: provider.auth,
+    getModels: provider.getModels.bind(provider),
+    ...(provider.refreshModels === undefined
+      ? {}
+      : { refreshModels: provider.refreshModels.bind(provider) }),
+    ...(provider.filterModels === undefined
+      ? {}
+      : { filterModels: provider.filterModels.bind(provider) }),
+    stream(model, context, options) {
+      return invoke(() => provider.stream(model, context, options))
+    },
+    streamSimple(model, context, options) {
+      return invoke(() => provider.streamSimple(model, context, options))
     },
   }
 

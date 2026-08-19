@@ -47,21 +47,28 @@ to one metadata-only `PiAiAdapter`. For each stream it:
 1. calls `CodexAuthService.resolveRequestAuth(options.signal)` exactly once;
 2. converts project `CodexError` values to DSH `LlmError` values with the same stable code and no
    serialized cause;
-3. creates a request-local `PiAiAdapter` whose credential callback returns that frozen token;
-4. supplies a request-local `AttachmentStore` proxy that forwards the DSH signal when the pinned
+3. creates a request-local `PiAiAdapter` whose credential callback returns that frozen token and
+   whose provider wrapper captures a project `CodexError` before pi-ai can reduce it to a generic
+   in-band error event;
+4. converts that captured failure before yielding any DSH chunk, without parsing an error message;
+5. supplies a request-local `AttachmentStore` proxy that forwards the DSH signal when the pinned
    adapter omits it;
-5. delegates message conversion, reasoning, tools, replay, usage, timeout, and provider streaming
+6. delegates message conversion, reasoning, tools, replay, usage, timeout, and provider streaming
    to DSH's adapter.
 
 The Cordis entry evaluates exact runtime compatibility before construction or registration, then
 registers only `openai-codex`. It translates only DSH's public `DUPLICATE_ADAPTER` error to
-`CODEX_PROVIDER_CONFLICT`; every other registration failure is preserved. Cordis owns disposal.
+`CODEX_PROVIDER_CONFLICT`; the check reads the public own enumerable `code` data property because a
+host and bundled plugin can load distinct copies of the DSH error class. Every other registration
+failure is preserved. Cordis owns disposal.
 
 ## Consequences
 
 - Authentication refresh remains cancellable even though `PiAiAdapter.resolveApiKey` has no signal.
 - A request holds one access token only in a short-lived closure and never mutates a shared provider.
 - The fixed marker satisfies pi-ai's configured-auth gate but is rejected before provider I/O.
+- Project-owned stream failures keep their stable code even when pi-ai would otherwise turn a
+  thrown provider failure into a generic error event.
 - DSH continues to own all model-visible conversion, retry, replay, attachment, timeout, and stream
   behavior.
 - Request-local `PiAiAdapter` allocation is accepted as the smallest public-API-only composition;
