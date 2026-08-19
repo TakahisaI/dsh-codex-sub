@@ -43,8 +43,120 @@ function jobBody(workflow, jobName) {
 }
 
 function matrixCells(job) {
-  return [...job.matchAll(/^\s+- os:\s*(\S+)\s*\r?\n\s+node:\s*(\S+)\s*$/gmu)]
-    .map((match) => `${match[1]}|${match[2]}`)
+  const lines = job.split(/\r?\n/u)
+  const matrixIndex = lines.findIndex((line) => /^\s+matrix:\s*$/u.test(line))
+  invariant(matrixIndex >= 0, 'Packed-install job matrix was missing.')
+  const matrixIndent = indentation(lines[matrixIndex])
+  const matrixEnd = blockEnd(lines, matrixIndex + 1, matrixIndent)
+  const matrixLines = lines.slice(matrixIndex + 1, matrixEnd)
+  const directChildren = matrixLines
+    .map((line, index) => ({ index, line }))
+    .filter(({ line }) => isContent(line) && indentation(line) === matrixIndent + 2)
+  invariant(
+    directChildren.length === 1 && directChildren[0]?.line.trim() === 'include:',
+    'Packed-install matrix must contain only one block-style include list.',
+  )
+
+  const include = directChildren[0]
+  invariant(include !== undefined, 'Packed-install matrix include list was missing.')
+  const includeIndex = matrixIndex + 1 + include.index
+  const includeIndent = indentation(lines[includeIndex])
+  const includeEnd = blockEnd(lines, includeIndex + 1, includeIndent)
+  const entryLines = lines.slice(includeIndex + 1, includeEnd)
+  const entryIndent = includeIndent + 2
+  const cells = []
+
+  for (let index = 0; index < entryLines.length;) {
+    const line = entryLines[index]
+    invariant(line !== undefined, 'Packed-install matrix entry was missing.')
+    if (!isContent(line)) {
+      index += 1
+      continue
+    }
+    invariant(
+      indentation(line) === entryIndent && line.trimStart().startsWith('- '),
+      'Packed-install matrix contained unsupported entry syntax.',
+    )
+
+    const properties = new Map()
+    const firstProperty = line.trimStart().slice(2).trim()
+    if (firstProperty.startsWith('{')) {
+      parseFlowProperties(firstProperty, properties)
+      index += 1
+    } else {
+      parseBlockProperty(firstProperty, properties)
+      index += 1
+      while (index < entryLines.length) {
+        const propertyLine = entryLines[index]
+        invariant(propertyLine !== undefined, 'Packed-install matrix property was missing.')
+        if (!isContent(propertyLine)) {
+          index += 1
+          continue
+        }
+        if (indentation(propertyLine) === entryIndent) {
+          break
+        }
+        invariant(
+          indentation(propertyLine) === entryIndent + 2,
+          'Packed-install matrix contained unsupported property indentation.',
+        )
+        parseBlockProperty(propertyLine.trim(), properties)
+        index += 1
+      }
+    }
+    invariant(
+      properties.size === 2 && properties.has('os') && properties.has('node'),
+      'Packed-install matrix entries must contain exactly os and node.',
+    )
+    cells.push(`${properties.get('os')}|${properties.get('node')}`)
+  }
+
+  return cells
+}
+
+function indentation(line) {
+  const prefix = /^[ \t]*/u.exec(line)?.[0] ?? ''
+  invariant(!prefix.includes('\t'), 'Workflow indentation must use spaces.')
+  return prefix.length
+}
+
+function isContent(line) {
+  const trimmed = line.trim()
+  return trimmed.length > 0 && !trimmed.startsWith('#')
+}
+
+function blockEnd(lines, start, parentIndent) {
+  for (let index = start; index < lines.length; index += 1) {
+    const line = lines[index]
+    if (line !== undefined && isContent(line) && indentation(line) <= parentIndent) {
+      return index
+    }
+  }
+  return lines.length
+}
+
+function addMatrixProperty(properties, key, value) {
+  invariant(key === 'os' || key === 'node', 'Packed-install matrix contained an unsupported property.')
+  invariant(!properties.has(key), `Packed-install matrix repeated ${key}.`)
+  invariant(/^[A-Za-z0-9._-]+$/u.test(value), `Packed-install matrix ${key} was not a plain scalar.`)
+  properties.set(key, value)
+}
+
+function parseBlockProperty(property, properties) {
+  const match = /^(os|node):\s*([^\s]+)\s*$/u.exec(property)
+  invariant(match !== null, 'Packed-install matrix contained unsupported property syntax.')
+  const [, key, value] = match
+  invariant(key !== undefined && value !== undefined, 'Packed-install matrix property was incomplete.')
+  addMatrixProperty(properties, key, value)
+}
+
+function parseFlowProperties(entry, properties) {
+  invariant(entry.endsWith('}'), 'Packed-install matrix flow entry was incomplete.')
+  const body = entry.slice(1, -1).trim()
+  invariant(body.length > 0, 'Packed-install matrix flow entry was empty.')
+  for (const property of body.split(',')) {
+    parseBlockProperty(property.trim(), properties)
+  }
 }
 
 function count(text, pattern) {
@@ -76,6 +188,21 @@ function assertArtifactProducer(job, label) {
   )
 }
 
+function assertNoArtifactMutation(job, label) {
+  invariant(
+    !/\bbuild\b/u.test(job),
+    `${label} must not rebuild the package.`,
+  )
+  invariant(
+    !/\bpack\b/u.test(job),
+    `${label} must not pack the package.`,
+  )
+  invariant(
+    !job.includes('node scripts/release-artifact.mjs create'),
+    `${label} must not recreate the candidate.`,
+  )
+}
+
 function assertArtifactConsumer(job, expected, label) {
   assertMatrix(job, expected, label)
   invariant(/^    needs: candidate$/mu.test(job), `${label} must depend on the candidate job.`)
@@ -92,10 +219,35 @@ function assertArtifactConsumer(job, expected, label) {
     `${label} must verify the downloaded candidate exactly once per cell.`,
   )
   invariant(count(job, '--package-tarball') === 1, `${label} must install the verified tarball.`)
-  invariant(!job.includes('pnpm run build'), `${label} must not rebuild the package.`)
+  assertNoArtifactMutation(job, label)
+}
+
+function assertArtifactFinalizer(job, label) {
+  invariant(/^    needs: candidate-install$/mu.test(job), `${label} must depend on candidate-install.`)
   invariant(
-    !job.includes('node scripts/release-artifact.mjs create'),
-    `${label} must not repack the candidate.`,
+    count(job, 'actions/download-artifact@v7') === 1,
+    `${label} must download the candidate artifact exactly once.`,
+  )
+  invariant(
+    count(job, `name: ${RELEASE_ARTIFACT_NAME}`) === 1,
+    `${label} must download the canonical workflow artifact.`,
+  )
+  invariant(
+    count(job, 'node scripts/release-artifact.mjs verify') === 1,
+    `${label} must verify the downloaded candidate exactly once.`,
+  )
+  assertNoArtifactMutation(job, label)
+}
+
+function assertNonPublishingWorkflow(workflow) {
+  const jobsMarker = '\njobs:\n'
+  const jobsStart = workflow.indexOf(jobsMarker)
+  invariant(jobsStart >= 0, 'Release workflow jobs were missing.')
+  const jobs = workflow.slice(jobsStart + jobsMarker.length)
+  invariant(!/\bpublish\b/u.test(jobs), 'Release workflow must not contain a publish operation.')
+  invariant(
+    !/^\s*id-token:\s*write\s*$/mu.test(workflow),
+    'Release workflow must not request OIDC write permission before trusted publishing is enabled.',
   )
 }
 
@@ -109,4 +261,9 @@ export function validateWorkflowContracts({ ciWorkflow, compatibility, releaseWo
     expected,
     'Release workflow',
   )
+  assertArtifactFinalizer(
+    jobBody(releaseWorkflow, 'candidate-ready'),
+    'Release candidate-ready job',
+  )
+  assertNonPublishingWorkflow(releaseWorkflow)
 }

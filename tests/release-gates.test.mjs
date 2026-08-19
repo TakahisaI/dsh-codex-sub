@@ -117,7 +117,7 @@ describe('release artifact fail-closed validation', () => {
       .not.toThrow()
   })
 
-  it('fails when stdout or stderr capture reaches its byte limit', () => {
+  it('fails when stdout capture exceeds its byte limit', () => {
     const stdout = { bytes: 0, truncated: false, value: '' }
     const stderr = { bytes: 0, truncated: false, value: '' }
     appendCapture(stdout, 'abcdef', 4)
@@ -126,13 +126,39 @@ describe('release artifact fail-closed validation', () => {
       'DSH output exceeded the packed-install capture limit.',
     )
   })
+
+  it('accepts a complete capture exactly at the limit and rejects later stdout or stderr', () => {
+    const stdout = { bytes: 0, truncated: false, value: '' }
+    const stderr = { bytes: 0, truncated: false, value: '' }
+    appendCapture(stdout, 'abcd', 4)
+    expect(() => assertCaptureComplete(stdout, stderr)).not.toThrow()
+
+    appendCapture(stderr, 'abcde', 4)
+    expect(stderr).toEqual({ bytes: 4, truncated: true, value: 'abcd' })
+    expect(() => assertCaptureComplete(stdout, stderr)).toThrow(
+      'DSH output exceeded the packed-install capture limit.',
+    )
+  })
 })
 
 describe('workflow release evidence', () => {
+  async function readReleaseWorkflow() {
+    for (const path of ['../.github/workflows/release.yml', '../.github/workflows/release.yml.disabled']) {
+      try {
+        return await readFile(new URL(path, import.meta.url), 'utf8')
+      } catch (error) {
+        if (error?.code !== 'ENOENT') {
+          throw error
+        }
+      }
+    }
+    throw new Error('Release workflow was missing.')
+  }
+
   async function repositoryInputs() {
     const [ciWorkflow, releaseWorkflow, compatibilityText] = await Promise.all([
       readFile(new URL('../.github/workflows/ci.yml', import.meta.url), 'utf8'),
-      readFile(new URL('../.github/workflows/release.yml.disabled', import.meta.url), 'utf8'),
+      readReleaseWorkflow(),
       readFile(new URL('../compatibility.json', import.meta.url), 'utf8'),
     ])
     return { ciWorkflow, compatibility: JSON.parse(compatibilityText), releaseWorkflow }
@@ -162,6 +188,57 @@ describe('workflow release evidence', () => {
     )
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
       'CI must not rebuild the package.',
+    )
+  })
+
+  it('rejects a direct package repack inside a candidate consumer', async () => {
+    const inputs = await repositoryInputs()
+    const ciWorkflow = inputs.ciWorkflow.replace(
+      '      - uses: actions/download-artifact@v7',
+      '      - run: pnpm pack\n      - uses: actions/download-artifact@v7',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
+      'CI must not pack the package.',
+    )
+  })
+
+  it('does not ignore a flow-style matrix cell', async () => {
+    const inputs = await repositoryInputs()
+    const releaseWorkflow = inputs.releaseWorkflow.replace(
+      '          - os: macos-latest\n            node: 26\n',
+      '          - os: macos-latest\n            node: 26\n'
+        + '          - { os: windows-latest, node: 24 }\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(
+      'Release workflow packed-install matrix did not match compatibility.json.',
+    )
+  })
+
+  it('rejects rebuilding, repacking, or publishing after candidate verification', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      ['pnpm run build', 'Release candidate-ready job must not rebuild the package.'],
+      ['pnpm --silent pack', 'Release candidate-ready job must not pack the package.'],
+      ['npm publish', 'Release workflow must not contain a publish operation.'],
+    ]
+    for (const [command, expectedMessage] of cases) {
+      const releaseWorkflow = inputs.releaseWorkflow.replace(
+        '          node-version: 24\n      - uses: actions/download-artifact@v7',
+        `          node-version: 24\n      - run: ${command}\n`
+          + '      - uses: actions/download-artifact@v7',
+      )
+      expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(expectedMessage)
+    }
+  })
+
+  it('rejects OIDC write permission before trusted publishing is enabled', async () => {
+    const inputs = await repositoryInputs()
+    const releaseWorkflow = inputs.releaseWorkflow.replace(
+      'permissions:\n  contents: read',
+      'permissions:\n  contents: read\n  id-token: write',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, releaseWorkflow })).toThrow(
+      'Release workflow must not request OIDC write permission before trusted publishing is enabled.',
     )
   })
 })
