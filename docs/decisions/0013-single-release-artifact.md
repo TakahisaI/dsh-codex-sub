@@ -81,5 +81,5 @@ first complete Alpha.
   every non-producer job, the exact verification-only job set, the enabled/disabled workflow rename,
   and the pre-publication prohibition on publication, npm registry credentials at any workflow scope,
   or any permission beyond a required workflow-level canonical `contents: read` block.
-- Pure fixtures exercise the private-development and public-Alpha release-state branches before the
-  first metadata transition, and the package metadata fixes publication to the public npm registry.
+- Pure fixtures preserve coverage of the legacy private-development and current public-Alpha
+  release-state branches, and the package metadata fixes publication to the public npm registry.
