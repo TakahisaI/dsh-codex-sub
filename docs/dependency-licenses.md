@@ -26,9 +26,9 @@ metadata. The project contains no code copied from a third-party DSH-Codex integ
 ## Release procedure
 
 Rerun the production license report after any lockfile or dependency change. Review new license
-expressions, bundled assets, and upstream notice files before publication. This audit does not
-select the project's own license; `UNLICENSED` and `private: true` remain until the maintainer makes
-that decision and commits the matching license text.
+expressions, bundled assets, and upstream notice files before publication. The project itself is
+licensed under MIT. It remains `private: true` until the separate publication and npm bootstrap
+gates are complete.
 
 `pnpm run check:licenses` enforces the reviewed SPDX-expression set. A new expression fails CI and
 requires a fresh license and notice review rather than being accepted automatically.

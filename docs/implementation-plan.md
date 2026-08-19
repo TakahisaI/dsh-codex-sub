@@ -7,7 +7,7 @@ and DSH integration in the same first implementation change.
 
 Deliverables:
 
-- select a project license or keep the package private and unlicensed;
+- select a project license or keep the package private and unlicensed (MIT selected);
 - TypeScript ESM package setup;
 - strict compiler configuration;
 - build, typecheck, lint, test, and pack scripts;
@@ -174,8 +174,8 @@ Implementation evidence:
 ## Milestone 7 — Alpha validation
 
 Status: in progress. Documentation, support, and secret-safe recording can be prepared before the
-release, but real-account OAuth, license selection, acceptance or replacement of ADR 0011's npm
-bootstrap proposal, and publication remain manual gates.
+release, but real-account OAuth, acceptance or replacement of ADR 0011's npm bootstrap proposal,
+and publication remain manual gates. The MIT project license has been selected and committed.
 
 Deliverables:
 
