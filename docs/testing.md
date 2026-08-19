@@ -67,7 +67,25 @@ Add one focused contract test using the real `openaiCodexProvider()` object with
 If the real provider cannot be tested without network I/O, isolate the untestable line and document
 it as a manual compatibility check rather than mocking undocumented internals.
 
-### 1.4 DSH adapter contract tests
+### 1.4 DSH registration-path spike
+
+Mount a minimal Cordis context with the pinned public DSH LLM runtime and a fake `LlmAdapter`.
+
+Verify:
+
+- `registerAdapter()` exposes provider and fake model metadata through the public LLM registry;
+- the configurable-provider directory remains empty;
+- the package-name namespace has no model-discovery registration;
+- duplicate registration and disposal preserve the serving route atomically;
+- effect disposal removes the serving route and emits the expected topology update;
+- the bundle manifest contains exactly one canonical insert row addressed to the built package root.
+
+The test does not claim global discovery absence while DSH publishes no discovery-namespace list.
+The absence of settings, Web, search, tool, session, and agent-loop registration is a structural
+plugin-boundary review because those services are not mounted by the fixture. End-to-end selector
+visibility remains a Milestone 6 packed-install test.
+
+### 1.5 DSH adapter contract tests
 
 Mount a minimal Cordis context with DSH's LLM runtime and a fake pi-ai provider factory.
 
@@ -90,7 +108,7 @@ Verify:
 Do not re-test every internal behavior of DSH `PiAiAdapter`; pin only the behaviors on which this
 plugin relies.
 
-### 1.5 CLI tests
+### 1.6 CLI tests
 
 Capture stdout and stderr separately.
 
@@ -102,7 +120,7 @@ Capture stdout and stderr separately.
 - human-readable commands contain no raw JSON secrets;
 - every secret sentinel is absent from stdout and stderr.
 
-### 1.6 Package tests
+### 1.7 Package tests
 
 Build and pack the package, then inspect the tarball.
 
