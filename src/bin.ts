@@ -1,14 +1,19 @@
 #!/usr/bin/env node
 
-import { runProductionCli } from './cli/main.js'
+import {
+  CLI_EXIT_FAILURE,
+  runProductionCli,
+} from './cli/main.js'
+import { createCliStdioFlushBoundary } from './cli/stdio-flush.js'
 
 const controller = new AbortController()
+const stdio = createCliStdioFlushBoundary(process.stdout, process.stderr)
 const cancel = (): void => {
   controller.abort()
 }
 
 process.once('SIGINT', cancel)
-let exitCode: number
+let exitCode = CLI_EXIT_FAILURE
 try {
   exitCode = await runProductionCli(
     process.argv.slice(2),
@@ -17,8 +22,12 @@ try {
     process.stderr,
     controller.signal,
   )
+} catch {
+  exitCode = CLI_EXIT_FAILURE
 } finally {
   process.removeListener('SIGINT', cancel)
 }
 
-process.exit(exitCode)
+const flushed = await stdio.flush()
+stdio.dispose()
+process.exit(flushed ? exitCode : CLI_EXIT_FAILURE)
