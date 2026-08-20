@@ -181,6 +181,17 @@ Capture stdout and stderr separately.
 - lazy production dependency failures use the fixed safe printer;
 - the emitted executable prints the package version and exits even when another active handle
   remains after the command settles.
+- a slow, backpressured stdout receives one complete `doctor --json` document before termination;
+- a slow stderr receives its complete fixed failure message without incidental stdout;
+- stdout and stderr share one finite flush deadline, and both must complete;
+- a stalled stream returns bounded failure, while a native stream error exposes no error text,
+  stack, path, secret sentinel, or buffered diagnostic;
+- success, stream failure, and deadline paths remove temporary stdio listeners without closing the
+  streams;
+- the emitted executable produces one parseable newline-terminated `doctor --json` document through
+  a real child-process pipe and retains forced exit with an unrelated lingering handle.
+- a real child-process consumer that destroys its read side immediately after one complete JSON
+  line still receives valid output and observes exit code 0; the flush phase issues no extra write.
 
 ### 1.7 Package tests
 

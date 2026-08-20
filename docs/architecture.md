@@ -235,8 +235,14 @@ It parses with Node's built-in `parseArgs` and composes the auth service, vault 
 compatibility evaluator, and the pinned provider's in-memory catalog. It never constructs a DSH
 agent. Production auth, vault, and prompt dependencies are lazy: help and version do not construct
 them, while construction failures for operational commands stay inside the CLI's safe error
-boundary. Once a command settles, the executable removes its SIGINT listener and exits with the
-selected code so a leaked upstream OAuth handle cannot keep it alive.
+boundary. Once a command settles, the executable removes its SIGINT listener and waits until Node
+reports no accepted bytes queued for stdout or stderr. `drain` and event-loop checks cover both
+backpressured and below-threshold asynchronous writes under one shared one-second deadline. The
+flush phase performs no write and does not close process-owned stdio, so a one-document consumer
+may close after the newline without causing a new `EPIPE`. Successful flushing preserves the
+selected command code; a stream failure or deadline emits no additional diagnostic and exits 3.
+The executable then forces termination so a leaked upstream OAuth handle cannot keep it alive. See
+ADR 0016.
 
 `login` adapts pi-ai's published interaction events. It validates destinations as HTTPS URLs with
 no user information, prints them without opening a browser, and uses non-echoing reads for secret

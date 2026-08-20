@@ -254,6 +254,33 @@ Acceptance:
 - no generated secret sentinel reaches durable or model-visible output;
 - no product runtime dependency or retry implementation is added.
 
+## Post-Alpha reliability gate — bounded CLI stdio flush
+
+Status: complete in the stdio-flush implementation branch. This gate changes only the private
+executable lifecycle; command text, JSON schemas, authentication, and library behavior are
+unchanged.
+
+Deliverables:
+
+- observe process stdout and stderr failures before a production command writes;
+- observe Node's pending writable length without issuing a post-output write or ending
+  process-owned streams;
+- wait for callbacks and reported backpressure under one shared one-second deadline;
+- preserve the command exit code on success and use silent exit code 3 when flushing cannot be
+  proven complete;
+- retain forced termination for unrelated lingering handles;
+- exercise the emitted executable through a real JSON child-process pipe.
+
+Acceptance:
+
+- slow stdout and stderr retain their complete byte-for-byte command output;
+- both streams must settle before exit, while a permanently stalled stream remains bounded;
+- stream errors expose no native object, message, stack, path, buffered content, or secret sentinel;
+- all temporary stream and SIGINT listeners are removed before final exit;
+- `status --json` and `doctor --json` remain one newline-terminated document;
+- a consumer that reads one complete JSON line and closes its pipe retains exit code 0;
+- no runtime dependency or public library export is added.
+
 ## Deferred milestones
 
 The following require separate proposals and are not implied by the core roadmap:

@@ -173,7 +173,9 @@ rejection.
 ## 9. CLI JSON
 
 All JSON commands emit exactly one JSON document to stdout and diagnostics to stderr only when the
-command itself cannot produce its schema.
+command itself cannot produce its schema. The executable waits up to one shared second for accepted
+stdout and stderr writes before forced termination. Flush failure produces no new diagnostic and
+uses exit code 3; the reusable library entry does not flush or terminate process-owned streams.
 
 ### `status --json`
 
