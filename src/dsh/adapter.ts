@@ -71,6 +71,15 @@ function toDshError(error: unknown): never {
   throw error
 }
 
+/**
+ * DSH 0.1.1-rc.1 makes this field required while the supported rc.7 declaration
+ * omits it. Candidate-only construction is therefore applied through a
+ * version-tolerant object extension and verified by the isolated candidate lane.
+ */
+function createCandidateAdapterOptions(): Record<string, unknown> {
+  return { auth: createFailClosedPiAiAuthInjection() }
+}
+
 export function withRequestSignal(
   store: AttachmentStore,
   requestSignal: AbortSignal | undefined,
@@ -128,7 +137,7 @@ export class CodexDshAdapter extends LlmAdapter {
     return new PiAiAdapter({
       profiles: () => profiles,
       resolveApiKey,
-      auth: createFailClosedPiAiAuthInjection(),
+      ...(createCandidateAdapterOptions()),
       ...(this.#resolveAttachments === undefined
         ? {}
         : {
