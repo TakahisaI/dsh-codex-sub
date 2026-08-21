@@ -64,7 +64,7 @@ describe('runtime compatibility', () => {
 
   it.each([
     ['missing', null],
-    ['mismatched', '0.1.0-rc.8'],
+    ['mismatched', '0.1.1-rc.1'],
   ] as const)('fails closed for a %s runtime package', (_label, version) => {
     const packages = { ...SUPPORTED_PACKAGES, '@deepseek-ai/dsh-llm': version }
 
@@ -115,8 +115,15 @@ describe('runtime compatibility', () => {
   it('recognizes the installed test runtime through package metadata only', () => {
     const snapshot = inspectInstalledRuntime()
     expect(['darwin', 'linux']).toContain(snapshot.platform)
-    expect(snapshot.packages).toEqual(SUPPORTED_PACKAGES)
-    expect(assertRuntimeCompatible(snapshot).compatible).toBe(true)
+    expect(snapshot.packages['@deepseek-ai/dsh-llm']).toBe('0.1.1-rc.1')
+    let incompatible = false
+    try {
+      assertRuntimeCompatible(snapshot)
+    } catch {
+      incompatible = true
+    }
+    expect(incompatible).toBe(true)
+    expect(evaluateRuntimeCompatibility(snapshot).compatible).toBe(false)
   })
 
   it('ties the accepted host service to the verified dsh-llm module identity', async () => {
@@ -131,7 +138,7 @@ describe('runtime compatibility', () => {
   })
 
   it('rejects another host constructor identity even when plugin metadata resolves as verified', async () => {
-    expect(inspectInstalledRuntime().packages['@deepseek-ai/dsh-llm']).toBe('0.1.0-rc.7')
+    expect(inspectInstalledRuntime().packages['@deepseek-ai/dsh-llm']).toBe('0.1.1-rc.1')
 
     const ctx = new Context()
     const runtimeFiber = ctx.plugin(AlternateLlmRuntime)

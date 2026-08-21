@@ -74,6 +74,7 @@ function profile(
     provider: PROVIDER_ID,
     displayName: PROVIDER_DISPLAY_NAME,
     streamIdleTimeoutMs: options.streamIdleTimeoutMs ?? 50,
+    maxRequestImageBytes: 20 * 1024 * 1024,
     retryPolicy: resolveRetryPolicy({
       mode: 'normal',
       maxRetries: 2,

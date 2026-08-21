@@ -29,8 +29,10 @@ import {
   createOpenAiCodexRequestProvider,
   withCodexErrorCapture,
 } from '../piai/request-auth-provider.js'
+import { createFailClosedPiAiAuthInjection } from '../piai/auth-injection.js'
 
 export const CODEX_STREAM_IDLE_TIMEOUT_MS = 300_000
+export const CODEX_MAX_REQUEST_IMAGE_BYTES = 20 * 1024 * 1024
 
 export interface CodexDshAdapterOptions {
   readonly authService: CodexAuthService
@@ -48,6 +50,7 @@ function createProductionProfile(): ResolvedPiAiProviderProfile {
     provider: PROVIDER_ID,
     displayName: PROVIDER_DISPLAY_NAME,
     streamIdleTimeoutMs: CODEX_STREAM_IDLE_TIMEOUT_MS,
+    maxRequestImageBytes: CODEX_MAX_REQUEST_IMAGE_BYTES,
     retryPolicy: resolveRetryPolicy(undefined, `${PACKAGE_NAME}.${PROVIDER_ID}.retryPolicy`),
     piProvider: createOpenAiCodexRequestProvider(),
     configuredMaxTokens: new Map<string, number>(),
@@ -125,6 +128,7 @@ export class CodexDshAdapter extends LlmAdapter {
     return new PiAiAdapter({
       profiles: () => profiles,
       resolveApiKey,
+      auth: createFailClosedPiAiAuthInjection(),
       ...(this.#resolveAttachments === undefined
         ? {}
         : {
