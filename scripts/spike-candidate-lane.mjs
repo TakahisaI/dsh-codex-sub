@@ -10,7 +10,7 @@ const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const candidateVersion = '0.1.1-rc.1'
 const upstreamCommit = '528c682e061696f5a160f363f236ecbf53cbd006'
 
-function redact(value, secrets) {
+function redact(value, secrets = []) {
   let rendered = value ?? ''
   for (const secret of secrets) {
     rendered = rendered.replaceAll(secret, '[REDACTED]')

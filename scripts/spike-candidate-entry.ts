@@ -5,16 +5,19 @@ import { createUserMessage } from '@deepseek-ai/dsh-llm'
 import LlmRuntime from '@deepseek-ai/dsh-llm'
 import type {
   GenerateOptions,
+  ResolvedRetryPolicy,
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import { fauxAssistantMessage, fauxProvider } from '@earendil-works/pi-ai/providers/faux'
 import type {
   Context as PiContext,
+  OAuthCredential,
   OAuthAuth,
   Provider,
 } from '@earendil-works/pi-ai'
 
 import type {
+  CredentialVaultInspection,
   CodexAuthService,
   CodexCredentialVault,
 } from '../src/core/contracts.js'
@@ -39,6 +42,14 @@ export interface CandidateProbeResult {
   readonly nativeReads: number
   readonly nativeWrites: number
   readonly providerCalls: number
+}
+
+export interface CandidatePluginProbe {
+  readonly adapter: () => CodexDshAdapter
+  readonly authService: CountingAuthService
+  readonly imageRequest: () => GenerateOptions
+  readonly observeDuplicateAdapter: (code: string | undefined) => void
+  readonly result: () => CandidateProbeResult
 }
 
 class MemoryCredentialVault implements CodexCredentialVault {
@@ -70,11 +81,14 @@ class MemoryCredentialVault implements CodexCredentialVault {
     this.#document = undefined
   }
 
-  async inspect() {
-    return Object.freeze({
-      state: this.#document === undefined ? 'absent' : 'present',
-      permissions: 'owner-only',
-    }) as const
+  async inspect(): Promise<CredentialVaultInspection> {
+    return this.#document === undefined
+      ? Object.freeze({ state: 'absent', permissions: 'owner-only' })
+      : Object.freeze({ state: 'present', formatVersion: 1, permissions: 'owner-only' })
+  }
+
+  peek(): CodexCredentialDocument | undefined {
+    return this.#document === undefined ? undefined : structuredClone(this.#document)
   }
 }
 
@@ -134,12 +148,7 @@ function oauthOnlyFauxProvider(): Provider {
   }
 }
 
-export function createCandidatePluginProbe(): {
-  adapter: () => CodexDshAdapter
-  authService: CountingAuthService
-  imageRequest: () => GenerateOptions
-  result: () => CandidateProbeResult
-} {
+export function createCandidatePluginProbe(): CandidatePluginProbe {
   let attachmentReads = 0
   let capturedApiKey: string | undefined
   let duplicateAdapterCode: string | undefined
@@ -257,19 +266,19 @@ export function createCandidatePluginProbe(): {
       oauth: {
         name: 'Candidate fixture OAuth',
         login: async () => ({
-          type: 'oauth',
+          type: 'oauth' as const,
           access: `ACCESS_SENTINEL_${randomUUID()}`,
           refresh: `REFRESH_SENTINEL_${randomUUID()}`,
           expires: Date.now() + 3_600_000,
         }),
-        refresh: async credential => credential,
-        toAuth: async credential => ({ apiKey: credential.access }),
+        refresh: async (credential: OAuthCredential) => credential,
+        toAuth: async (credential: OAuthCredential) => ({ apiKey: credential.access }),
       },
     }),
     getModels: sourceFaux.provider.getModels.bind(sourceFaux.provider),
     stream: sourceFaux.provider.stream.bind(sourceFaux.provider),
     streamSimple: captureStreamSimple,
-  } as Provider)
+  } satisfies Provider)
 
   const adapter = new CodexDshAdapter({
     authService,
@@ -284,9 +293,12 @@ export function createCandidatePluginProbe(): {
       retryPolicy: {
         mode: 'normal',
         maxRetries: 0,
-        backoff: { initialDelayMs: 1, maxDelayMs: 1, jitterRatio: 0 },
-      },
-      piProvider: streamingProvider as Provider,
+        retryableCodes: [],
+        initialDelayMs: 1,
+        maxDelayMs: 1,
+        jitterRatio: 0,
+      } satisfies ResolvedRetryPolicy,
+      piProvider: streamingProvider,
       configuredMaxTokens: new Map(),
     }),
     resolveAttachments: () => attachmentStore as never,

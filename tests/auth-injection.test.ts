@@ -46,14 +46,21 @@ describe('fail-closed DSH pi-ai auth injection', () => {
     const previousValue = process.env['OPENAI_API_KEY']
     process.env['OPENAI_API_KEY'] = accessSentinel
     try {
-      const { authContext } = createFailClosedPiAiAuthInjection()
+      const { authContext, credentials } = createFailClosedPiAiAuthInjection()
 
-      await expect(authContext.env('OPENAI_API_KEY')).resolves.toBeUndefined()
-      await expect(authContext.fileExists(pathSentinel)).resolves.toBe(false)
+      expect(await authContext.env('OPENAI_API_KEY')).toBeUndefined()
+      expect(await authContext.fileExists(pathSentinel)).toBe(false)
 
-      const printable = JSON.stringify({ authContext })
-      expect(printable).not.toContain(accessSentinel)
-      expect(printable).not.toContain(pathSentinel)
+      const unauthorizedProvider = `PROVIDER_SENTINEL_${randomUUID()}`
+      const failure = await credentials.read(unauthorizedProvider).catch((caught: unknown) => caught)
+      expect(isCodexError(failure)).toBe(true)
+      const rendered = [
+        failure instanceof Error ? failure.message : String(failure),
+        isCodexError(failure) ? JSON.stringify(failure.safeDetails ?? {}) : '',
+      ].join(' ')
+      expect(rendered).not.toContain(accessSentinel)
+      expect(rendered).not.toContain(pathSentinel)
+      expect(rendered).not.toContain(unauthorizedProvider)
     } finally {
       if (previousValue === undefined) {
         delete process.env['OPENAI_API_KEY']
