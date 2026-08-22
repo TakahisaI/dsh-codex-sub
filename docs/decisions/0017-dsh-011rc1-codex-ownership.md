@@ -1,6 +1,6 @@
 # ADR 0017: Retain package-owned Codex auth for DSH 0.1.1-rc.1
 
-- Status: accepted
+- Status: proposed
 - Date: 2026-08-21
 
 ## Context
@@ -16,6 +16,9 @@ starts the Codex login from the Models page or carries its notices/prompts over 
 published plugin, in contrast, already provides a working CLI login surface, package-owned
 owner-only storage, request-time refresh, offline diagnostics, exact rc.7 compatibility, and an
 ordinary DSH model route.
+
+Upstream inspected release: `dsh-v0.1.1-rc.1`, commit
+`528c682e061696f5a160f363f236ecbf53cbd006`.
 
 ## Decision
 
@@ -45,14 +48,34 @@ runtime checks, built-entry smoke, packed installation, and release claims stay 
 combination.
 
 The candidate lane is isolated in a temporary install root with exact DSH/Cordis packages at
-`0.1.1-rc.1` and pi-ai at `0.82.1`. Its black-box probes verify:
+`0.1.1-rc.1` and pi-ai at `0.82.1`. Its black-box probes bundle the production entry and verify:
 
 - the required image budget;
 - the required auth-injection shape;
-- live provider registration and catalog resolution through the candidate adapter;
-- duplicate directory rejection (`DUPLICATE_DIRECTORY`);
+- one production `CodexDshAdapter` route on candidate `LlmRuntime`, with duplicate registration
+  rejected (`DUPLICATE_ADAPTER`);
+- one package-owned auth resolution and delivery of its bearer token to the explicit-token
+  provider boundary;
+- zero reads or writes through the fail-closed native store during streaming;
+- request-image offload when the profile budget is deliberately set to one byte;
 - explicit-token streaming without any read or write through the fail-closed native store;
 - offline fake authorization save/read/delete on the native record seam.
+
+The probe uses generated offline access/refresh/account sentinels, checks that command output does
+not expose them, disposes authorization and credential fibers, and removes its credential root.
+CI runs this lane once on Node 24; broader runtime expansion remains an exit criterion below.
+
+### Packed-topology status
+
+| Lane | Result | Scope |
+| --- | --- | --- |
+| Supported rc.7 full check | PASS locally | lint, types, declarations, tests, boundaries, build, smoke, compatibility, licenses, release state, pack contract |
+| Supported rc.7 packed install | PASS locally | signed-out auth failure before I/O and zero provider network attempts |
+| Candidate rc.1 isolated lane | PASS locally | production adapter stream, fail-closed injection, duplicate route, native record seam |
+| Fresh packed rc.1 installation | Not yet run | required before promotion; not inferred from source probes |
+
+The supported matrix is enforced by CI. The isolated candidate lane currently runs as a dedicated
+Node 24 CI job; fresh packed rc.1 behavior remains explicitly outstanding.
 
 The production runtime guard intentionally rejects candidate DSH before registration. A future
 alpha may update peers only after this decision and the complete exact-artifact matrix pass.
@@ -62,7 +85,7 @@ alpha may update peers only after this decision and the complete exact-artifact 
 Promotion to a reviewed alpha requires all of the following:
 
 1. supported rc.7 full checks and six-cell packed-install matrix remain green;
-2. isolated rc.1 probes pass on the same Node matrix where practical;
+2. isolated rc.1 probes pass on the same Node matrix where practical (the current gate is Node 24);
 3. peer dependencies and machine-readable compatibility move together only after review;
 4. fresh packed rc.1 installation proves one route, duplicate-route safety, signed-out
    `CODEX_AUTH_REQUIRED`, zero provider network attempts, CLI diagnostics, and credential
@@ -77,3 +100,10 @@ Native option A remains blocked until browser login, durable/restart behavior, l
 route coexistence, and migration are proven. Option C would leave the working rc.7 line frozen but
 would not validate the already-published rc.1 contract; B preserves evidence for both boundaries
 without publishing an unverified combination.
+
+## Follow-ups
+
+- Run fresh packed-install validation against DSH `0.1.1-rc.1` without peer overrides.
+- Decide whether to broaden the candidate lane beyond Node 24 after upstream compatibility stabilizes.
+- Track natural OAuth refresh through normal use until a maintainer-controlled real-account smoke runs.
+- Revisit ownership when DSH ships the Web/browser login-start surface.

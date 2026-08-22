@@ -603,7 +603,7 @@ export function validateWorkflowContracts({
   assertSerializedReleaseWorkflow(releaseWorkflow)
   assertExactJobSet(
     ciWorkflow,
-    ['candidate', 'check', 'dependency-review', 'packed-install'],
+    ['candidate', 'candidate-lane', 'check', 'dependency-review', 'packed-install'],
     'CI workflow',
   )
   const releaseJobs = ['candidate', 'candidate-install', 'candidate-ready', 'release-ref', 'source-checks']

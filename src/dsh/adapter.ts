@@ -13,7 +13,9 @@ import type {
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
-import type { ResolvedPiAiProviderProfile } from '@deepseek-ai/dsh-llm-pi-ai'
+import type {
+  ResolvedPiAiProviderProfile,
+} from '@deepseek-ai/dsh-llm-pi-ai'
 
 import type { CodexAuthService } from '../core/contracts.js'
 import {
@@ -34,8 +36,15 @@ import { createFailClosedPiAiAuthInjection } from '../piai/auth-injection.js'
 export const CODEX_STREAM_IDLE_TIMEOUT_MS = 300_000
 export const CODEX_MAX_REQUEST_IMAGE_BYTES = 20 * 1024 * 1024
 
+interface CandidatePiAiAuthInjection {
+  readonly credentials: unknown
+  readonly authContext: unknown
+}
+
 export interface CodexDshAdapterOptions {
   readonly authService: CodexAuthService
+  /** Candidate-lane seam for observing the production fail-closed injection. */
+  readonly authInjection?: CandidatePiAiAuthInjection
   readonly profile?: ResolvedPiAiProviderProfile
   readonly resolveAttachments?: () => AttachmentStore | undefined
   readonly onReplayDegrade?: (detail: {
@@ -106,6 +115,7 @@ export function withRequestSignal(
 
 export class CodexDshAdapter extends LlmAdapter {
   readonly #authService: CodexAuthService
+  readonly #authInjection: CandidatePiAiAuthInjection | undefined
   readonly #catalogAdapter: PiAiAdapter
   readonly #onReplayDegrade: CodexDshAdapterOptions['onReplayDegrade']
   readonly #profile: ResolvedPiAiProviderProfile
@@ -115,6 +125,7 @@ export class CodexDshAdapter extends LlmAdapter {
   constructor(options: CodexDshAdapterOptions) {
     super()
     this.#authService = options.authService
+    this.#authInjection = options.authInjection
     this.#resolveAttachments = options.resolveAttachments
     this.#onReplayDegrade = options.onReplayDegrade
     const profile = requireCodexProfile(options.profile ?? createProductionProfile())
@@ -137,7 +148,9 @@ export class CodexDshAdapter extends LlmAdapter {
     return new PiAiAdapter({
       profiles: () => profiles,
       resolveApiKey,
-      ...(createCandidateAdapterOptions()),
+      ...(this.#authInjection === undefined
+        ? createCandidateAdapterOptions()
+        : { auth: this.#authInjection }),
       ...(this.#resolveAttachments === undefined
         ? {}
         : {
