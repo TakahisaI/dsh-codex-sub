@@ -4,7 +4,7 @@ import type {
   GenerateOptions,
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
-import { describe, expect, it, onTestFinished } from 'vitest'
+import { beforeEach, describe, expect, it, onTestFinished, vi } from 'vitest'
 
 import * as packageRoot from '../src/index.js'
 import {
@@ -12,6 +12,25 @@ import {
   PROVIDER_DISPLAY_NAME,
   PROVIDER_ID,
 } from '../src/core/constants.js'
+const candidateRuntime = vi.hoisted(() => ({ allowed: false }))
+
+vi.mock('../src/dsh/compatibility.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../src/dsh/compatibility.js')>()
+  return {
+    ...actual,
+    assertRuntimeCompatible: (installed?: Parameters<typeof actual.assertRuntimeCompatible>[0]) => (
+      candidateRuntime.allowed
+        ? {
+            compatible: true,
+            platform: { supported: ['darwin', 'linux'], installed: 'darwin', status: 'compatible' },
+            node: { supported: '^22.19.0 || ^24.0.0 || ^26.0.0', installed: process.versions.node, status: 'compatible' },
+            packages: {},
+          }
+        : actual.assertRuntimeCompatible(installed)
+    ),
+  }
+})
+
 import * as plugin from '../src/dsh/plugin.js'
 
 class ExistingAdapter extends LlmAdapter {
@@ -29,6 +48,10 @@ function cleanup(...disposers: Array<() => void | Promise<void>>): void {
 }
 
 describe('production Cordis plugin', () => {
+  beforeEach(() => {
+    candidateRuntime.allowed = false
+  })
+
   it('exports only the plugin contract and stable constants from the package root', () => {
     expect(Object.keys(packageRoot).sort()).toEqual([
       'AUTH_DIRECTORY_NAME',
@@ -47,6 +70,7 @@ describe('production Cordis plugin', () => {
   })
 
   it('registers one real catalog route and disposes it with the plugin fiber', async () => {
+    candidateRuntime.allowed = true
     const ctx = new Context()
     const runtimeFiber = ctx.plugin(LlmRuntime)
     await runtimeFiber
@@ -100,6 +124,7 @@ describe('production Cordis plugin', () => {
   })
 
   it('maps duplicate ownership without disturbing the serving adapter', async () => {
+    candidateRuntime.allowed = true
     const ctx = new Context()
     const runtimeFiber = ctx.plugin(LlmRuntime)
     await runtimeFiber
@@ -128,6 +153,7 @@ describe('production Cordis plugin', () => {
   })
 
   it('maps duplicate ownership reported by a structurally compatible host error', () => {
+    candidateRuntime.allowed = true
     const hostFailure = Object.defineProperty(new Error('duplicate route'), 'code', {
       configurable: true,
       enumerable: true,

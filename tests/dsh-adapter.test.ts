@@ -73,6 +73,7 @@ function profile(provider: Provider, streamIdleTimeoutMs = 1_000): ResolvedPiAiP
     provider: PROVIDER_ID,
     displayName: PROVIDER_DISPLAY_NAME,
     streamIdleTimeoutMs,
+    maxRequestImageBytes: 20 * 1024 * 1024,
     retryPolicy: resolveRetryPolicy(undefined, 'test.openai-codex.retryPolicy'),
     piProvider: provider,
     configuredMaxTokens: new Map<string, number>(),

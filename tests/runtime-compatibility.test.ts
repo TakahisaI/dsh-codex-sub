@@ -64,7 +64,7 @@ describe('runtime compatibility', () => {
 
   it.each([
     ['missing', null],
-    ['mismatched', '0.1.0-rc.8'],
+    ['mismatched', '0.1.1-rc.1'],
   ] as const)('fails closed for a %s runtime package', (_label, version) => {
     const packages = { ...SUPPORTED_PACKAGES, '@deepseek-ai/dsh-llm': version }
 
