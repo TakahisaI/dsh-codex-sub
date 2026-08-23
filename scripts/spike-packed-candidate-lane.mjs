@@ -9,10 +9,12 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { parseArgs } from 'node:util'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
+import { appendCapture, assertCaptureComplete } from './capture-output.mjs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { validatePackageTarball } from './package-tarball.mjs'
 
@@ -29,6 +31,20 @@ const shutdownTimeoutMs = 5_000
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message)
+}
+
+function packageTarballFromArguments() {
+  const { values } = parseArgs({
+    allowPositionals: false,
+    options: {
+      'package-tarball': { type: 'string' },
+    },
+  })
+  const packageTarball = values['package-tarball']
+  if (packageTarball === undefined) return undefined
+  invariant(isAbsolute(packageTarball), '--package-tarball must be an absolute path.')
+  invariant(packageTarball.endsWith('.tgz'), '--package-tarball must name a .tgz file.')
+  return resolve(packageTarball)
 }
 
 function parseJson(text, label) {
@@ -149,11 +165,19 @@ async function inspectTopology(compatibility) {
   invariant(hostPiAi.directory !== pluginPiAi.directory, 'Expected the normal two pi-ai copies.')
 
   const adapter = await readPackageRoot('@deepseek-ai/dsh-llm-pi-ai', hostParent)
+  const adapterPackageParent = join(adapter.directory, 'package.json')
   for (const [name, range] of Object.entries(adapter.manifest.peerDependencies)) {
     if (!name.startsWith('@deepseek-ai/')) continue
-    const peer = await readPackageRoot(name, hostParent)
+    const [hostPeer, adapterPeer] = await Promise.all([
+      readPackageRoot(name, hostParent),
+      readPackageRoot(name, adapterPackageParent),
+    ])
     const minimum = range.startsWith('^') ? range.slice(1) : range
-    invariant(peer.manifest.version === minimum, `${name} Host peer was unresolved.`)
+    invariant(hostPeer.manifest.version === minimum, `${name} Host peer was unresolved.`)
+    invariant(
+      adapterPeer.directory === hostPeer.directory,
+      `${name} transitive peer resolution diverged between Host and adapter.`,
+    )
   }
 
   return {
@@ -169,6 +193,10 @@ function countExactLine(text, line) {
   return text.split(/\r?\n/u).filter(candidate => candidate.trim() === line).length
 }
 
+function hasExited(child) {
+  return child.exitCode !== null || child.signalCode !== null
+}
+
 async function waitForProbe(child, resultPath) {
   const deadline = Date.now() + bootTimeoutMs
   while (Date.now() < deadline) {
@@ -177,19 +205,26 @@ async function waitForProbe(child, resultPath) {
     } catch (error) {
       if (error?.code !== 'ENOENT') throw error
     }
-    if (child.exitCode !== null) throw new Error('Candidate DSH exited before the probe completed.')
+    if (hasExited(child)) throw new Error('Candidate DSH exited before the probe completed.')
     await delay(100)
   }
   throw new Error('Timed out waiting for the candidate packed probe.')
 }
 
-async function stopChild(child) {
-  if (child.exitCode !== null) return
+async function stopChild(child, exited) {
+  if (hasExited(child)) return
   child.kill('SIGTERM')
-  await Promise.race([once(child, 'exit'), delay(shutdownTimeoutMs)])
-  if (child.exitCode === null) {
+  await Promise.race([exited, delay(shutdownTimeoutMs)])
+  if (!hasExited(child)) {
     child.kill('SIGKILL')
-    await once(child, 'exit')
+    await Promise.race([exited, delay(shutdownTimeoutMs)])
+    invariant(hasExited(child), 'Candidate DSH ignored SIGKILL.')
+  }
+}
+
+function assertNoSentinel(value, label) {
+  for (const secret of Object.values(sentinels)) {
+    invariant(!value.includes(secret), `${label} exposed a generated sentinel.`)
   }
 }
 
@@ -206,15 +241,12 @@ async function bootProbe(environment, resultPath, patchPath) {
     shell: false,
     stdio: ['ignore', 'pipe', 'pipe'],
   })
+  const exited = once(child, 'exit')
   child.stdout.on('data', chunk => {
-    bootOutput.stdout.value += chunk
-    bootOutput.stdout.bytes += chunk.byteLength
-    bootOutput.stdout.truncated ||= bootOutput.stdout.bytes > maxCaptureBytes
+    appendCapture(bootOutput.stdout, chunk, maxCaptureBytes)
   })
   child.stderr.on('data', chunk => {
-    bootOutput.stderr.value += chunk
-    bootOutput.stderr.bytes += chunk.byteLength
-    bootOutput.stderr.truncated ||= bootOutput.stderr.bytes > maxCaptureBytes
+    appendCapture(bootOutput.stderr, chunk, maxCaptureBytes)
   })
   let probeText
   let failure
@@ -223,9 +255,9 @@ async function bootProbe(environment, resultPath, patchPath) {
   } catch (caught) {
     failure = caught
   } finally {
-    await stopChild(child)
+    await stopChild(child, exited)
   }
-  invariant(!bootOutput.stdout.truncated && !bootOutput.stderr.truncated, 'Candidate boot capture overflowed.')
+  assertCaptureComplete(bootOutput.stdout, bootOutput.stderr)
   if (failure !== undefined) {
     throw new Error(
       `${String(failure)}\n${redact(
@@ -234,7 +266,9 @@ async function bootProbe(environment, resultPath, patchPath) {
       )}`,
     )
   }
-  return parseJson(probeText, 'candidate packed probe')
+  const probe = parseJson(probeText, 'candidate packed probe')
+  assertNoSentinel(`${bootOutput.stdout.value}\n${bootOutput.stderr.value}`, 'Candidate boot capture')
+  return probe
 }
 
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'dsh-codex-sub-packed-candidate-'))
@@ -251,15 +285,20 @@ const sentinels = {
 
 try {
   await mkdir(artifactDirectory, { recursive: true })
-  run('pnpm', ['run', 'build'], { label: 'build supported source' })
-  const exactPack = parseJson(run('pnpm', [
-    'pack', '--pack-destination', artifactDirectory, '--json',
-  ], { label: 'pack exact supported artifact' }).stdout, 'exact pack')
-  const exactTarballPath = exactPack.filename
-  const exact = await validatePackageTarball(exactTarballPath)
+  const requestedTarball = packageTarballFromArguments()
+  let sourceArtifact
+  if (requestedTarball === undefined) {
+    run('pnpm', ['run', 'build'], { label: 'build supported source' })
+    const sourcePack = parseJson(run('pnpm', [
+      'pack', '--pack-destination', artifactDirectory, '--json',
+    ], { label: 'pack source artifact' }).stdout, 'source pack')
+    sourceArtifact = await validatePackageTarball(sourcePack.filename)
+  } else {
+    sourceArtifact = await validatePackageTarball(requestedTarball)
+  }
 
   await mkdir(stagingDirectory, { recursive: true })
-  run('tar', ['-xzf', exact.canonicalPath, '-C', stagingDirectory], {
+  run('tar', ['-xzf', sourceArtifact.canonicalPath, '-C', stagingDirectory], {
     label: 'extract candidate staging',
   })
   const packageRoot = join(stagingDirectory, 'package')
@@ -446,6 +485,9 @@ try {
   invariant(probe.directoryConflictCode === 'DUPLICATE_DIRECTORY', 'Candidate directory conflict guard did not fire.')
   invariant(probe.phase === 'save' && probe.nativeCredentialKind === 'grant', 'Native credential save did not produce a grant record.')
   invariant(probe.nativeCredentialType === 'oauth', 'Native credential save did not preserve OAuth type.')
+  invariant(probe.nativeCredentialMatches === true, 'Saved native credential content drifted.')
+  invariant(probe.authFailureCode === 'CODEX_AUTH_REQUIRED', 'Signed-out request did not fail safely.')
+  invariant(probe.networkAttempts === 0, 'Signed-out candidate request reached the network boundary.')
 
   const verifyResultPath = join(temporaryRoot, 'probe-verify-result.json')
   const verifyProbe = await bootProbe({
@@ -456,15 +498,22 @@ try {
   invariant(
     verifyProbe.phase === 'verify'
       && verifyProbe.nativeCredentialKind === 'grant'
-      && verifyProbe.nativeCredentialType === 'oauth',
+      && verifyProbe.nativeCredentialType === 'oauth'
+      && verifyProbe.nativeCredentialMatches === true,
     'Native credential did not survive a Host process restart.',
   )
-  invariant(probe.authFailureCode === 'CODEX_AUTH_REQUIRED', 'Signed-out request did not fail safely.')
-  invariant(probe.networkAttempts === 0, 'Signed-out candidate request reached the network boundary.')
+  invariant(verifyProbe.authFailureCode === 'CODEX_AUTH_REQUIRED', 'Post-restart request did not fail safely.')
+  invariant(verifyProbe.networkAttempts === 0, 'Post-restart candidate request reached the network boundary.')
 
   const signedOut = run(dshExecutable, [
     'plugin', '--profile', 'web', 'exec', packageName, 'status', '--json',
-  ], { cwd: hostRoot, accepted: [1], env: baseEnvironment, label: 'candidate signed-out status' })
+  ], {
+    cwd: hostRoot,
+    accepted: [1],
+    env: baseEnvironment,
+    label: 'candidate signed-out status',
+    secrets: Object.values(sentinels),
+  })
   const signedOutReport = parseJson(signedOut.stdout, 'signed-out status')
   invariant(
     signedOutReport.status?.state === 'signed-out' && signedOutReport.schemaVersion === 1,
@@ -472,7 +521,12 @@ try {
   )
   const doctor = run(dshExecutable, [
     'plugin', '--profile', 'web', 'exec', packageName, 'doctor', '--json',
-  ], { cwd: hostRoot, env: baseEnvironment, label: 'candidate doctor' })
+  ], {
+    cwd: hostRoot,
+    env: baseEnvironment,
+    label: 'candidate doctor',
+    secrets: Object.values(sentinels),
+  })
   const doctorReport = parseJson(doctor.stdout, 'candidate doctor')
   invariant(doctorReport.overall === 'compatible', 'Candidate doctor rejected the isolated rc.1 graph.')
   invariant(doctorReport.catalog?.modelCount === probe.modelCount, 'CLI and Host catalog counts disagreed.')
@@ -491,27 +545,71 @@ try {
     },
   })}\n`
   await writeFile(authFile, credentialBytes, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  const siblingFile = join(authDirectory, 'logout-preservation.marker')
+  const siblingMarker = `SIBLING_MARKER_${randomUUID()}\n`
+  await writeFile(siblingFile, siblingMarker, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  const logoutSecrets = [...Object.values(sentinels), siblingMarker]
   const signedIn = run(dshExecutable, [
     'plugin', '--profile', 'web', 'exec', packageName, 'status', '--json',
-  ], { cwd: hostRoot, env: baseEnvironment, label: 'candidate signed-in status after restart' })
-  invariant(parseJson(signedIn.stdout, 'signed-in status').status?.state === 'signed-in', 'Candidate credential did not survive a process restart.')
+  ], {
+    cwd: hostRoot,
+    env: baseEnvironment,
+    label: 'candidate signed-in status after restart',
+    secrets: logoutSecrets,
+  })
+  const signedInReport = parseJson(signedIn.stdout, 'signed-in status')
+  invariant(signedInReport.status?.state === 'signed-in', 'Candidate credential did not survive a process restart.')
   const logout = run(dshExecutable, [
     'plugin', '--profile', 'web', 'exec', packageName, 'logout',
-  ], { cwd: hostRoot, env: baseEnvironment, label: 'candidate logout' })
+  ], {
+    cwd: hostRoot,
+    env: baseEnvironment,
+    label: 'candidate logout',
+    secrets: logoutSecrets,
+  })
   await assertAbsent(authFile, 'Candidate logout did not remove package-owned auth.json.')
+  invariant(await readFile(siblingFile, 'utf8') === siblingMarker, 'Candidate logout disturbed an adjacent file.')
 
-  const printable = JSON.stringify({ probe, topology, doctorReport, logout })
-  for (const secret of Object.values(sentinels)) {
-    invariant(!printable.includes(secret), 'A generated credential sentinel entered candidate lane output.')
-  }
+  const postLogoutResultPath = join(temporaryRoot, 'probe-post-logout-result.json')
+  const postLogoutProbe = await bootProbe({
+    ...probeEnvironment,
+    DSH_CODEX_SUB_CANDIDATE_PROBE_PHASE: 'post-logout',
+    DSH_CODEX_SUB_PROBE_RESULT: postLogoutResultPath,
+  }, postLogoutResultPath, patchPath)
+  invariant(
+    postLogoutProbe.phase === 'post-logout'
+      && postLogoutProbe.nativeCredentialKind === 'grant'
+      && postLogoutProbe.nativeCredentialType === 'oauth'
+      && postLogoutProbe.nativeCredentialMatches === true,
+    'Package-owned logout changed the independent native credential.',
+  )
+  invariant(postLogoutProbe.authFailureCode === 'CODEX_AUTH_REQUIRED', 'Post-logout request did not fail safely.')
+  invariant(postLogoutProbe.networkAttempts === 0, 'Post-logout candidate request reached the network boundary.')
+
+  assertNoSentinel(JSON.stringify({
+    doctorReport,
+    logout,
+    logoutPreservation: {
+      adjacentMarkerPreserved: true,
+      packageAuthRemoved: true,
+    },
+    postLogoutProbe,
+    probe,
+    signedInReport,
+    signedOutReport,
+    topology,
+  }), 'Candidate lane summary')
 
   process.stdout.write(`${JSON.stringify({
     candidateArtifactSha256: candidate.sha256,
     candidateVersion,
     catalogModelCount: probe.modelCount,
     doctorOverall: doctorReport.overall,
-    exactArtifactSha256: exact.sha256,
+    inputArtifactSha256: sourceArtifact.sha256,
     networkAttempts: probe.networkAttempts,
+    networkAttemptsAfterLogout: postLogoutProbe.networkAttempts,
+    networkAttemptsAfterRestart: verifyProbe.networkAttempts,
+    siblingFilePreserved: true,
     topology,
     upstreamCommit,
   })}\n`)

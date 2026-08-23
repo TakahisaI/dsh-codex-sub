@@ -61,7 +61,8 @@ jobs:
       - run: pnpm run test:candidate-lane
 
   packed-candidate-lane:
-    name: Fresh DSH rc.1 packed candidate
+    name: Ephemeral-overlay DSH rc.1 packed candidate
+    needs: candidate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -70,7 +71,18 @@ jobs:
           node-version: 24
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run test:packed-candidate-lane
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:packed-candidate-lane --
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
 
   packed-install:
     name: Packed install (${{ matrix.os }}, Node ${{ matrix.node }})

@@ -75,6 +75,7 @@ export async function apply(ctx) {
   const phase = process.env[PHASE_VARIABLE]
   let directoryConflictCode
   let nativeCredential
+  let nativeCredentialMatches = false
   if (phase !== undefined) {
     const directoryEntry = {
       provider: PROVIDER_ID,
@@ -101,9 +102,17 @@ export async function apply(ctx) {
         },
       }))
       nativeCredential = await ctx.credentials.readRecord(nativeRecordKey)
+      nativeCredentialMatches = nativeCredential?.payload?.access === process.env.CANDIDATE_ACCESS_SENTINEL
+        && nativeCredential?.payload?.refresh === process.env.CANDIDATE_REFRESH_SENTINEL
+        && nativeCredential?.payload?.accountId === process.env.CANDIDATE_ACCOUNT_SENTINEL
     } else {
       nativeCredential = await ctx.credentials.readRecord(nativeRecordKey)
-      await ctx.credentials.deleteRecord(nativeRecordKey)
+      nativeCredentialMatches = nativeCredential?.payload?.access === process.env.CANDIDATE_ACCESS_SENTINEL
+        && nativeCredential?.payload?.refresh === process.env.CANDIDATE_REFRESH_SENTINEL
+        && nativeCredential?.payload?.accountId === process.env.CANDIDATE_ACCOUNT_SENTINEL
+      if (phase === 'post-logout') {
+        await ctx.credentials.deleteRecord(nativeRecordKey)
+      }
     }
   }
 
@@ -117,6 +126,7 @@ export async function apply(ctx) {
     nativeCredentialKind: nativeCredential?.kind,
     nativeCredentialType: nativeCredential?.payload?.type,
     networkAttempts: globalThis[networkCounter] ?? -1,
+    nativeCredentialMatches,
     ...(phase === undefined ? {} : { phase }),
     providerDisplayMatches: matchingProviders[0]?.name === PROVIDER_DISPLAY_NAME,
     providerOccurrences: matchingProviders.length,

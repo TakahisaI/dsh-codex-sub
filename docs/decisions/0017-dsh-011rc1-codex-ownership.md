@@ -72,19 +72,24 @@ CI runs this lane once on Node 24; broader runtime expansion remains an exit cri
 | Supported rc.7 full check | PASS locally | lint, types, declarations, tests, boundaries, build, smoke, compatibility, licenses, release state, pack contract |
 | Supported rc.7 packed install | PASS locally | signed-out auth failure before I/O and zero provider network attempts |
 | Candidate rc.1 isolated lane | PASS locally | production adapter stream, fail-closed injection, duplicate route, native record seam |
-| Fresh packed rc.1 candidate | PASS locally | isolated fresh Host install; one route, duplicate adapter/directory rejection, signed-out offline failure, CLI diagnostics, package-owned restart/logout, native record restart/delete |
+| Ephemeral-overlay packed rc.1 candidate | PASS locally | isolated fresh Host install of a test-only rc.1 metadata overlay built from one production bundle; route, duplicate adapter/directory rejection, offline failure across three Host boots, CLI diagnostics, package-owned restart/logout with adjacent-file preservation, native record restart/delete |
+| Exact published rc.7 artifact on rc.1 | NOT TESTED | intentionally rejected by the frozen supported-lane guard; requires a future compatibility release and its own matrix |
 
-The fresh packed probe builds the frozen production bundle, then applies an ephemeral test-only
-manifest/compatibility overlay so that identical emitted code can activate on an isolated
-`0.1.1-rc.1` Host. It does not change repository compatibility metadata or publish anything. The
-probe pins the isolated Host's DSH release-line packages to `0.1.1-rc.1`, shares all six direct
-plugin peers with that Host, retains two pi-ai copies, rejects duplicate adapters and directories,
-proves signed-out requests fail before provider I/O, verifies CLI diagnostics, persists the
-package-owned credential across a process restart through logout, and persists/deletes a separate
-native record across two Host processes. Generated sentinels are redacted from failures and checked
-against printable output. Attachment/replay/retry/cancellation remain covered by source-level rc.1
-and rc.7 contract lanes rather than this fresh-install lane; natural refresh remains #33 and a
-real-account smoke remains promotion-gated.
+The ephemeral-overlay packed probe starts from one frozen production bundle, then applies a
+test-only manifest/compatibility overlay so that identical emitted code can activate on an isolated
+`0.1.1-rc.1` Host. In CI it consumes the single verified unpublished artifact produced by the
+candidate job; locally it may build that input first. The overlay does not change repository
+compatibility metadata or publish anything, and it must not be reported as the exact public artifact
+running on DSH rc.1. The probe pins the isolated Host's DSH release-line packages to
+`0.1.1-rc.1`, proves direct and adapter-transitive peers resolve to the same Host copies, retains
+two pi-ai copies, rejects duplicate adapters and directories, proves signed-out requests fail
+before provider I/O on save/restart/post-logout boots, verifies CLI diagnostics, preserves the
+package-owned credential through restart and removes it through logout without disturbing an
+adjacent marker file, and persists/deletes an independent native record across those process
+boundaries. Generated sentinels bound subprocess captures, are redacted from failures, and are
+checked against printable output. Attachment/replay/retry/cancellation remain covered by
+source-level rc.1 and rc.7 contract lanes rather than this fresh-install lane; natural refresh
+remains #33 and a real-account smoke remains promotion-gated.
 
 The supported matrix is enforced by CI. The isolated source and fresh-packed candidate lanes run as
 dedicated Node 24 CI jobs.
@@ -99,9 +104,10 @@ Promotion to a reviewed alpha requires all of the following:
 1. supported rc.7 full checks and six-cell packed-install matrix remain green;
 2. isolated rc.1 probes pass on the same Node matrix where practical (the current gate is Node 24);
 3. peer dependencies and machine-readable compatibility move together only after review;
-4. fresh packed rc.1 installation proves one route, duplicate-route safety, signed-out
-   `CODEX_AUTH_REQUIRED`, zero provider network attempts, CLI diagnostics, and credential
-   preservation/removal behavior;
+4. ephemeral-overlay packed rc.1 installation proves one route, duplicate-route safety,
+   signed-out `CODEX_AUTH_REQUIRED`, zero provider network attempts, CLI diagnostics, and
+   credential preservation/removal behavior; the exact published artifact on rc.1 remains
+   explicitly out of scope for this evidence;
 5. a maintainer-controlled real-account smoke covers login, model request, natural refresh,
    restart, and logout on the exact artifact;
 6. upstream Web login-start remains absent only while this package remains responsible for the
@@ -117,6 +123,8 @@ without publishing an unverified combination.
 
 - Broaden fresh packed rc.1 evidence to attachment, replay, retry, and cancellation after the
   ownership decision is accepted.
+- Prove the exact published artifact on DSH rc.1 only in a future compatibility-release lane;
+  do not use peer overrides or duplicate installs as substitute evidence.
 - Decide whether to broaden the candidate lane beyond Node 24 after upstream compatibility stabilizes.
 - Track natural OAuth refresh through normal use until a maintainer-controlled real-account smoke runs.
 - Revisit ownership when DSH ships the Web/browser login-start surface.

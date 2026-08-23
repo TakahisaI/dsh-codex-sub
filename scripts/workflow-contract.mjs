@@ -316,9 +316,30 @@ function assertPackedCandidateLaneJob(job, label) {
     `${label} packed-candidate-lane job must install the locked graph exactly once.`,
   )
   invariant(
+    /^    needs: candidate$/mu.test(job),
+    `${label} packed-candidate-lane job must consume the candidate job's artifact.`,
+  )
+  invariant(
     count(job, 'pnpm run test:packed-candidate-lane') === 1,
     `${label} packed-candidate-lane job must execute the reviewed fresh-install probe exactly once.`,
   )
+  invariant(
+    count(job, PINNED_ACTIONS.downloadArtifact) === 1,
+    `${label} packed-candidate-lane job must download the candidate artifact exactly once.`,
+  )
+  invariant(
+    count(job, `name: ${RELEASE_ARTIFACT_NAME}`) === 1,
+    `${label} packed-candidate-lane job must download the canonical workflow artifact.`,
+  )
+  invariant(
+    count(job, 'node scripts/release-artifact.mjs verify') === 1,
+    `${label} packed-candidate-lane job must verify the downloaded candidate exactly once.`,
+  )
+  invariant(
+    count(job, '--package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"') === 1,
+    `${label} packed-candidate-lane job must install the verified tarball.`,
+  )
+  assertNoArtifactMutation(job, label)
 }
 
 function assertArtifactConsumer(job, expected, label) {
