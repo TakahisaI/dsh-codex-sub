@@ -9,9 +9,8 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
-import { parseArgs } from 'node:util'
 import { tmpdir } from 'node:os'
-import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 import { appendCapture, assertCaptureComplete } from './capture-output.mjs'
@@ -37,24 +36,6 @@ const shutdownTimeoutMs = 5_000
 
 function invariant(condition, message) {
   if (!condition) throw new Error(message)
-}
-
-function packageTarballFromArguments() {
-  const arguments_ = process.argv[2] === '--' ? process.argv.slice(3) : process.argv.slice(2)
-  const { values } = parseArgs({
-    allowPositionals: false,
-    args: arguments_,
-    options: {
-      // Optional prebuilt supported-line artifact; the lane builds one itself
-      // when omitted so a local run never depends on CI state.
-      'input-tarball': { type: 'string' },
-    },
-  })
-  const inputTarball = values['input-tarball']
-  if (inputTarball === undefined) return undefined
-  invariant(isAbsolute(inputTarball), '--input-tarball must be an absolute path.')
-  invariant(inputTarball.endsWith('.tgz'), '--input-tarball must name a .tgz file.')
-  return resolve(inputTarball)
 }
 
 function parseJson(text, label) {
@@ -202,12 +183,14 @@ function countExactLine(text, line) {
 }
 
 /**
- * Collect every DSH release-line package physically present in the Host
- * graph from pnpm's store directory (`@deepseek-ai+dsh-*@<version>`).
- * Cordis-scoped and schemastery packages are versioned independently and are
- * never pinned to the DSH candidate version.
+ * Enumerate every physical DSH release-line package in the Host graph.
+ *
+ * Scans pnpm's store directory (`@deepseek-ai+dsh-<name>@<version>_…`) and
+ * returns one entry per physical copy with its name, exact version, and
+ * store-relative directory. Cordis-scoped and schemastery packages are
+ * versioned independently and are never pinned to the DSH candidate version.
  */
-async function installedHostDshPackageNames() {
+async function enumerateHostDshPackages() {
   const storeDirectory = join(hostRoot, 'node_modules', '.pnpm')
   let entries
   try {
@@ -216,15 +199,105 @@ async function installedHostDshPackageNames() {
     if (error?.code === 'ENOENT') return []
     throw error
   }
-  const names = new Set()
+  const packages = []
   for (const entry of entries) {
     if (!entry.startsWith('@deepseek-ai+')) continue
     const remainder = entry.slice('@deepseek-ai+'.length)
-    const namePart = remainder.split('@')[0]
+    const atSign = remainder.indexOf('@')
+    if (atSign <= 0) continue
+    const namePart = remainder.slice(0, atSign)
     if (!namePart.startsWith('dsh')) continue
-    names.add(`@deepseek-ai/${namePart}`)
+    packages.push({
+      directory: entry,
+      name: `@deepseek-ai/${namePart}`,
+      version: remainder.slice(atSign + 1).split('_')[0],
+    })
   }
-  return [...names].sort()
+  return packages.sort((first, second) => first.directory.localeCompare(second.directory))
+}
+
+/**
+ * Assert the final Host graph resolves entirely to the candidate version.
+ *
+ * Three independent checks:
+ * 1. The pnpm lockfile — the authoritative resolution — must reference no
+ *    DSH release-line version other than the candidate.
+ * 2. Every lockfile-referenced physical store copy of a DSH package must sit
+ *    at the candidate version, and every seed package must be present.
+ * 3. Every live symlink (Host root, profile shared fallback, profile root)
+ *    must resolve to a candidate-version manifest, so nothing reachable
+ *    points at another release. Unreferenced directories left on disk by an
+ *    earlier install are garbage, not part of the graph.
+ */
+async function assertWholeGraphIsCandidateVersion(seedNames) {
+  // The pnpm lockfile is the authoritative resolution: it must reference the
+  // candidate and no other DSH release-line version.
+  const lockText = await readFile(join(hostRoot, 'pnpm-lock.yaml'), 'utf8')
+  invariant(lockText.includes(`dsh@${candidateVersion}`), 'The Host lockfile lost the candidate pin.')
+  const staleLockReferences = lockText.match(/0\.1\.\d+-rc(?!\.1)\d*/gu) ?? []
+  invariant(
+    staleLockReferences.length === 0,
+    `The Host lockfile still references non-candidate releases (${staleLockReferences.length} matches).`,
+  )
+
+  // Physical store check: every store directory whose name+version pair is
+  // referenced by the resolution must sit at the candidate version. pnpm
+  // keeps unreferenced directories from earlier installs on disk, so entries
+  // absent from the lockfile are garbage, not part of the graph.
+  const referencedPairs = new Set(
+    [...lockText.matchAll(/'(@deepseek-ai\/dsh[^@']*)@(0\.1\.\d+-rc\.\d+)':/gu)]
+      .map(([, name, version]) => `${name}@${version}`),
+  )
+  const physical = await enumerateHostDshPackages()
+  invariant(physical.length > 0, 'The Host graph resolved without any DSH packages.')
+  const byName = new Map()
+  for (const pkg of physical) {
+    if (!referencedPairs.has(`${pkg.name}@${pkg.version}`)) continue
+    const known = byName.get(pkg.name) ?? []
+    known.push(pkg)
+    byName.set(pkg.name, known)
+  }
+  for (const seed of seedNames) {
+    invariant(byName.has(seed), `${seed} was absent from the final Host graph.`)
+  }
+  for (const [name, copies] of byName) {
+    for (const copy of copies) {
+      invariant(
+        copy.version === candidateVersion,
+        `${name} remained at ${copy.version} instead of ${candidateVersion}.`,
+      )
+    }
+  }
+
+  // Live links must resolve into candidate-version copies too.
+  const liveRoots = [
+    join(hostRoot, 'node_modules', '@deepseek-ai'),
+    join(dshHome, 'profiles', 'node_modules', '@deepseek-ai'),
+    join(dshHome, 'profiles', 'web', 'node_modules', '@deepseek-ai'),
+  ]
+  let liveLinksChecked = 0
+  for (const liveRoot of liveRoots) {
+    let names
+    try {
+      names = await readdir(liveRoot)
+    } catch (error) {
+      if (error?.code === 'ENOENT') continue
+      throw error
+    }
+    for (const name of names) {
+      if (!name.startsWith('dsh')) continue
+      const manifest = parseJson(
+        await readFile(join(liveRoot, name, 'package.json'), 'utf8'),
+        `live link @deepseek-ai/${name}`,
+      )
+      invariant(
+        manifest.version === candidateVersion,
+        `The live link @deepseek-ai/${name} resolved to ${manifest.version}.`,
+      )
+      liveLinksChecked += 1
+    }
+  }
+  return { physicalCopies: physical.length, liveLinksChecked }
 }
 
 function hasExited(child) {
@@ -314,27 +387,25 @@ async function bootProbe(environment, resultPath) {
 /**
  * Build the exact rc.1 candidate tarball before any installation happens.
  *
- * One supported-line artifact is built and packed by the reviewed pipeline,
- * extracted once, and transformed by the reviewed derivation: peers and the
- * machine-readable compatibility document move together to the candidate
- * versions, and the bundled compatibility identity inside lib follows them.
- * Nothing is mutated after installation; the Host receives these final bytes
- * through its ordinary `plugin add` path.
+ * The supported-line artifact is always built from the current reviewed
+ * source — no external tarball input exists, so stale code cannot hide under
+ * fresh metadata. It is packed by the reviewed pipeline, extracted once, and
+ * transformed by the reviewed derivation: peers and the machine-readable
+ * compatibility document move together to the candidate versions, and the
+ * bundled compatibility identity inside lib follows them. The derivation
+ * inputs are read from the extracted artifact itself and must match the
+ * repository exactly before any mutation. Nothing is mutated after
+ * installation; the Host receives these final bytes through its ordinary
+ * `plugin add` path.
  */
 async function buildExactCandidateArtifact() {
   const inputDestination = join(temporaryRoot, 'artifact-input')
   await mkdir(inputDestination, { recursive: true })
-  const requestedInput = packageTarballFromArguments()
-  let inputArtifact
-  if (requestedInput === undefined) {
-    run('pnpm', ['run', 'build'], { label: 'build supported source' })
-    const inputPack = parseJson(run('pnpm', [
-      'pack', '--pack-destination', inputDestination, '--json',
-    ], { label: 'pack supported artifact' }).stdout, 'supported pack')
-    inputArtifact = await validatePackageTarball(inputPack.filename)
-  } else {
-    inputArtifact = await validatePackageTarball(requestedInput)
-  }
+  run('pnpm', ['run', 'build'], { label: 'build supported source' })
+  const inputPack = parseJson(run('pnpm', [
+    'pack', '--pack-destination', inputDestination, '--json',
+  ], { label: 'pack supported artifact' }).stdout, 'supported pack')
+  const inputArtifact = await validatePackageTarball(inputPack.filename)
 
   // Extract once, then apply the reviewed derivation before anything is
   // installed so the Host only ever sees final candidate bytes.
@@ -345,8 +416,35 @@ async function buildExactCandidateArtifact() {
     label: 'extract candidate staging',
   })
 
-  const inputs = await readRepositoryCandidateInputs()
-  const candidateSource = deriveRc1CandidateSource(inputs)
+  // Derivation inputs come from the extracted artifact itself and must equal
+  // the reviewed source semantically. pnpm pack normalizes package.json
+  // (dropping `packageManager` and reordering), so compare parsed content
+  // with those normalizations applied to the repository manifest as well.
+  const repositoryInputs = await readRepositoryCandidateInputs()
+  const extractedManifestText = await readFile(join(packageRoot, 'package.json'), 'utf8')
+  const extractedCompatibilityText = await readFile(join(packageRoot, 'compatibility.json'), 'utf8')
+  const extractedManifest = JSON.parse(extractedManifestText)
+  const PACK_NORMALIZED_KEYS = ['packageManager']
+  const expectedManifest = Object.fromEntries(
+    Object.entries(repositoryInputs.manifest).filter(([key]) => !PACK_NORMALIZED_KEYS.includes(key)),
+  )
+  const actualManifest = Object.fromEntries(
+    Object.entries(extractedManifest).filter(([key]) => !PACK_NORMALIZED_KEYS.includes(key)),
+  )
+  invariant(
+    JSON.stringify(actualManifest, Object.keys(actualManifest).sort())
+      === JSON.stringify(expectedManifest, Object.keys(expectedManifest).sort()),
+    'The packed manifest did not match the reviewed source.',
+  )
+  const extractedCompatibility = JSON.parse(extractedCompatibilityText)
+  invariant(
+    JSON.stringify(extractedCompatibility) === JSON.stringify(repositoryInputs.compatibility),
+    'The packed compatibility document did not match the reviewed source.',
+  )
+  const candidateSource = deriveRc1CandidateSource({
+    compatibility: extractedCompatibility,
+    manifest: extractedManifest,
+  })
   const candidateManifestPath = join(packageRoot, 'package.json')
   await writeFile(
     candidateManifestPath,
@@ -454,21 +552,25 @@ try {
   // exists, so transitive peers drift unless each discovered release-line
   // package is pinned explicitly. Reinstall once with the complete override
   // set, then verify the whole graph below.
-  const discovered = await installedHostDshPackageNames()
-  const overrides = Object.fromEntries(discovered.map(name => [name, candidateVersion]))
-  invariant(
-    Object.keys(overrides).length >= seedPackages.length,
-    'The seed rc.1 Host graph resolved without any DSH packages.',
-  )
+  const discovered = await enumerateHostDshPackages()
+  const seedNameSet = new Set(seedPackages)
+  const discoveredNames = new Set(discovered.map(pkg => pkg.name))
+  for (const seed of seedPackages) {
+    invariant(discoveredNames.has(seed), `${seed} was absent from the seed rc.1 Host graph.`)
+  }
   await writeFile(
     workspacePath,
-    `packages:\n  - .\noverrides:\n${discovered.map(name => `  '${name}': ${candidateVersion}`).join('\n')}\n`,
+    `packages:\n  - .\noverrides:\n${[...discoveredNames].map(name => `  '${name}': ${candidateVersion}`).join('\n')}\n`,
   )
   run('pnpm', ['install', '--ignore-scripts', '--no-frozen-lockfile'], {
     cwd: hostRoot,
     label: 'reinstall exact-pinned rc.1 Host graph',
   })
   dshExecutable = join(hostRoot, 'node_modules', '.bin', 'dsh')
+
+  // The whole release-line graph must now sit at the candidate version: every
+  // physical store copy, every live link, and every seed package exactly once.
+  const { physicalCopies } = await assertWholeGraphIsCandidateVersion(seedNameSet)
 
   const baseEnvironment = {
     ...process.env,
@@ -510,6 +612,13 @@ try {
     ...candidateSource.compatibility,
     packageVersion: candidateSource.manifest.version,
   })
+  // Plugin installation must not have reintroduced any non-candidate DSH
+  // package or disturbed the pinned graph.
+  const { physicalCopies: finalPhysicalCopies } = await assertWholeGraphIsCandidateVersion(seedNameSet)
+  invariant(
+    finalPhysicalCopies === physicalCopies,
+    'Plugin installation changed the number of physical DSH packages.',
+  )
 
   const resultPath = join(temporaryRoot, 'probe-result.json')
   const blockerPath = join(probeDirectory, 'block-network.mjs')
@@ -676,6 +785,7 @@ try {
     candidateVersion,
     catalogModelCount: probe.modelCount,
     doctorOverall: doctorReport.overall,
+    hostDshPhysicalCopies: finalPhysicalCopies,
     inputArtifactSha256: inputArtifact.sha256,
     nativeCredentialDeletedAfterRestart: confirmDeletedProbe.nativeCredentialDeleted,
     networkAttempts: probe.networkAttempts,
