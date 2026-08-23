@@ -102,6 +102,13 @@ For each DSH or pi-ai update:
 
 Never merge an automated dependency update solely because compilation passes.
 
+Compatibility evaluations that do not change the supported line are retained as evidence:
+
+- [pi-ai 0.83.0 against DSH 0.1.0-rc.7](compatibility-reports/pi-ai-0.83.0.md): decision B;
+  runtime probes pass, but the two-version public TypeScript boundary requires a DSH release that
+  declares pi-ai 0.83 compatibility. DSH 0.1.0-rc.8 still declares `^0.82.1` and does not change
+  this decision.
+
 ## 6. Upstream volatility boundary
 
 The project intentionally treats these as volatile:
