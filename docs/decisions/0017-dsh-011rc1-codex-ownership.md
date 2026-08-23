@@ -1,6 +1,6 @@
 # ADR 0017: Retain package-owned Codex auth for DSH 0.1.1-rc.1
 
-- Status: proposed
+- Status: accepted
 - Date: 2026-08-21
 
 ## Context
@@ -40,6 +40,29 @@ in-memory default store or discover another credential if the override path chan
 Do not copy or convert OAuth credentials between `$DSH_HOME/dsh-codex-sub/auth.json` and DSH's
 `llm-pi-ai/openai-codex` record. Any later migration must be designed against public contracts and
 defaults to re-login unless a safe conversion is proven without exposing secrets.
+
+## Evidence record
+
+This decision is accepted from two completed, secret-free evidence lanes plus standing lanes:
+
+- The merged source-level candidate spike proved the production entry against exact `0.1.1-rc.1`
+  packages: the required auth-injection shape, one production adapter route with
+  `DUPLICATE_ADAPTER` rejection, package-owned auth resolution delivering its bearer token to the
+  explicit-token provider boundary, zero reads or writes through the fail-closed native store
+  during streaming, request-image offload under a deliberately one-byte profile budget, and
+  offline fake authorization save/read/delete on the native record seam.
+- The merged fresh-packed ephemeral-overlay lane installed one unpublished production bundle,
+  overlaid for rc.1 metadata only, into an isolated fresh Host: a unique provider route with a
+  seven-model catalog, direct and adapter-transitive peers resolving to the same Host copies with
+  two pi-ai copies retained, duplicate-route and configurable-directory rejection, signed-out
+  `CODEX_AUTH_REQUIRED` with zero provider network attempts across save/restart/post-logout/
+  confirm-deleted boots, working packaged CLI status and doctor, the package-owned credential
+  preserved across restart and removed by logout without disturbing an adjacent file, and an
+  independent native credential record deleted across process boundaries.
+- Natural refresh observation on a real account remains a maintainer-controlled follow-up; it is
+  not an ownership prerequisite because refresh contracts are covered offline and the supported
+  release line is unchanged.
+- Scheduled upstream drift detection continues as a non-blocking canary outside blocking CI.
 
 ## Verification lanes
 
@@ -101,6 +124,10 @@ alpha may update peers only after this decision and the complete exact-artifact 
 
 ## Consequences and exit criteria
 
+With this decision accepted, work on an rc.1-compatible candidate may begin, but nothing may be
+published or moved into supported compatibility metadata until every exit criterion below passes,
+including the exact published-artifact matrix on rc.1.
+
 Promotion to a reviewed alpha requires all of the following:
 
 1. supported rc.7 full checks and six-cell packed-install matrix remain green;
@@ -123,10 +150,16 @@ without publishing an unverified combination.
 
 ## Follow-ups
 
-- Broaden fresh packed rc.1 evidence to attachment, replay, retry, and cancellation after the
-  ownership decision is accepted.
-- Prove the exact published artifact on DSH rc.1 only in a future compatibility-release lane;
-  do not use peer overrides or duplicate installs as substitute evidence.
-- Decide whether to broaden the candidate lane beyond Node 24 after upstream compatibility stabilizes.
-- Track natural OAuth refresh through normal use until a maintainer-controlled real-account smoke runs.
-- Revisit ownership when DSH ships the Web/browser login-start surface.
+Every deferred or untested item is classified here; each becomes its own tracked issue before any
+rc.1 candidate work starts:
+
+- DEFERRED — Broaden fresh packed rc.1 evidence to attachment, replay, retry, and cancellation;
+  source-level rc.1 contract lanes already cover these behaviors, and the ownership decision does
+  not depend on repeating them on a fresh install.
+- NOT TESTED — Prove the exact published artifact on DSH rc.1 only in a future compatibility-release
+  lane with its own full matrix; do not use peer overrides or duplicate installs as substitute
+  evidence. This is a promotion gate, not an ownership prerequisite.
+- DEFERRED — Decide whether to broaden the candidate lane beyond Node 24 after upstream
+  compatibility stabilizes.
+- DEFERRED (maintainer-controlled) — Track natural OAuth refresh through normal use until a real-account smoke runs; refresh contracts are covered offline, so this is not an ownership prerequisite.
+- CONDITIONAL — Revisit this ownership decision when DSH ships the Web/browser login-start surface.
