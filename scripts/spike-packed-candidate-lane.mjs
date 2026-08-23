@@ -34,8 +34,10 @@ function invariant(condition, message) {
 }
 
 function packageTarballFromArguments() {
+  const arguments_ = process.argv[2] === '--' ? process.argv.slice(3) : process.argv.slice(2)
   const { values } = parseArgs({
     allowPositionals: false,
+    args: arguments_,
     options: {
       'package-tarball': { type: 'string' },
     },
