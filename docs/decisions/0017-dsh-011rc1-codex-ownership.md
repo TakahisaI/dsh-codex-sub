@@ -45,24 +45,24 @@ defaults to re-login unless a safe conversion is proven without exposing secrets
 
 This decision is accepted from two completed, secret-free evidence lanes plus standing lanes:
 
-- The merged source-level candidate spike proved the production entry against exact `0.1.1-rc.1`
-  packages: the required auth-injection shape, one production adapter route with
+- The merged source-level candidate spike (#46) proved the production entry against exact
+  `0.1.1-rc.1` packages: the required auth-injection shape, one production adapter route with
   `DUPLICATE_ADAPTER` rejection, package-owned auth resolution delivering its bearer token to the
   explicit-token provider boundary, zero reads or writes through the fail-closed native store
   during streaming, request-image offload under a deliberately one-byte profile budget, and
   offline fake authorization save/read/delete on the native record seam.
-- The merged fresh-packed ephemeral-overlay lane installed one unpublished production bundle,
-  overlaid for rc.1 metadata only, into an isolated fresh Host: a unique provider route with a
-  seven-model catalog, direct and adapter-transitive peers resolving to the same Host copies with
-  two pi-ai copies retained, duplicate-route and configurable-directory rejection, signed-out
-  `CODEX_AUTH_REQUIRED` with zero provider network attempts across save/restart/post-logout/
-  confirm-deleted boots, working packaged CLI status and doctor, the package-owned credential
-  preserved across restart and removed by logout without disturbing an adjacent file, and an
-  independent native credential record deleted across process boundaries.
-- Natural refresh observation on a real account remains a maintainer-controlled follow-up; it is
-  not an ownership prerequisite because refresh contracts are covered offline and the supported
-  release line is unchanged.
-- Scheduled upstream drift detection continues as a non-blocking canary outside blocking CI.
+- The merged fresh-packed ephemeral-overlay lane (#49, closing #47) installed one unpublished
+  production bundle, overlaid for rc.1 metadata only, into an isolated fresh Host: a unique
+  provider route with a seven-model catalog, direct and adapter-transitive peers resolving to the
+  same Host copies with two pi-ai copies retained, duplicate-route and configurable-directory
+  rejection, signed-out `CODEX_AUTH_REQUIRED` with zero provider network attempts across
+  save/restart/post-logout/confirm-deleted boots, working packaged CLI status and doctor, the
+  package-owned credential preserved across restart and removed by logout without disturbing an
+  adjacent file, and an independent native credential record deleted across process boundaries.
+- Natural refresh observation on a real account (#33) remains a maintainer-controlled follow-up;
+  it is not an ownership prerequisite because refresh contracts are covered offline and the
+  supported release line is unchanged.
+- Scheduled upstream drift detection (#36) continues as a non-blocking canary outside blocking CI.
 
 ## Verification lanes
 
@@ -112,9 +112,11 @@ disturbing an adjacent marker file, and deletes an independent native record acr
 boundaries. Native and package-owned stores receive distinct generated sentinel triplets, and the
 native record is required to match only its own triplet. Generated sentinels bound subprocess
 captures through stdio close, are redacted from failures, and are checked against printable output.
-Attachment/replay/retry/cancellation remain covered by source-level rc.1 and rc.7 contract lanes
-rather than this fresh-install lane; natural refresh remains #33 and a real-account smoke remains
-promotion-gated.
+Attachment/image-budget behavior is covered by the source-level rc.1 candidate lane. Replay,
+retry, and cancellation remain covered by the supported rc.7 contract suites only and are NOT
+TESTED on rc.1; the candidate-lane probe runs a single stream with retries disabled and exercises
+no replay or cancellation scenario. Fresh-packed rc.1 coverage for all four behaviors is deferred
+to #51. Natural refresh remains #33 and a real-account smoke remains promotion-gated.
 
 The supported matrix is enforced by CI. The isolated source and fresh-packed candidate lanes run as
 dedicated Node 24 CI jobs.
@@ -150,16 +152,19 @@ without publishing an unverified combination.
 
 ## Follow-ups
 
-Every deferred or untested item is classified here; each becomes its own tracked issue before any
-rc.1 candidate work starts:
+Every deferred or untested item is classified and tracked here:
 
-- DEFERRED — Broaden fresh packed rc.1 evidence to attachment, replay, retry, and cancellation;
-  source-level rc.1 contract lanes already cover these behaviors, and the ownership decision does
-  not depend on repeating them on a fresh install.
-- NOT TESTED — Prove the exact published artifact on DSH rc.1 only in a future compatibility-release
-  lane with its own full matrix; do not use peer overrides or duplicate installs as substitute
-  evidence. This is a promotion gate, not an ownership prerequisite.
-- DEFERRED — Decide whether to broaden the candidate lane beyond Node 24 after upstream
+- DEFERRED (#51) — Broaden fresh packed rc.1 evidence to attachment, replay, retry, and
+  cancellation; the source-level rc.1 lane already covers attachment/image-budget behavior, while
+  replay, retry, and cancellation are proven only by the supported rc.7 suites. The ownership
+  decision does not depend on repeating these behaviors on a fresh install.
+- NOT TESTED (#50) — Prove the exact published artifact on DSH rc.1 only in a future
+  compatibility-release lane with its own full matrix; do not use peer overrides or duplicate
+  installs as substitute evidence. This is a promotion gate, not an ownership prerequisite.
+- DEFERRED (#52) — Decide whether to broaden the candidate lane beyond Node 24 after upstream
   compatibility stabilizes.
-- DEFERRED (maintainer-controlled) — Track natural OAuth refresh through normal use until a real-account smoke runs; refresh contracts are covered offline, so this is not an ownership prerequisite.
-- CONDITIONAL — Revisit this ownership decision when DSH ships the Web/browser login-start surface.
+- DEFERRED (maintainer-controlled, #33) — Track natural OAuth refresh through normal use until a
+  real-account smoke runs; refresh contracts are covered offline, so this is not an ownership
+  prerequisite.
+- CONDITIONAL (#53) — Revisit this ownership decision when DSH ships the Web/browser login-start
+  surface.
