@@ -76,6 +76,7 @@ export async function apply(ctx) {
   let directoryConflictCode
   let nativeCredential
   let nativeCredentialMatches = false
+  let nativeCredentialDeleted = false
   if (phase !== undefined) {
     const directoryEntry = {
       provider: PROVIDER_ID,
@@ -112,6 +113,10 @@ export async function apply(ctx) {
         && nativeCredential?.payload?.accountId === process.env.CANDIDATE_ACCOUNT_SENTINEL
       if (phase === 'post-logout') {
         await ctx.credentials.deleteRecord(nativeRecordKey)
+        nativeCredentialDeleted = await ctx.credentials.readRecord(nativeRecordKey) === undefined
+      }
+      if (phase === 'confirm-deleted') {
+        nativeCredentialDeleted = nativeCredential === undefined
       }
     }
   }
@@ -127,6 +132,7 @@ export async function apply(ctx) {
     nativeCredentialType: nativeCredential?.payload?.type,
     networkAttempts: globalThis[networkCounter] ?? -1,
     nativeCredentialMatches,
+    nativeCredentialDeleted,
     ...(phase === undefined ? {} : { phase }),
     providerDisplayMatches: matchingProviders[0]?.name === PROVIDER_DISPLAY_NAME,
     providerOccurrences: matchingProviders.length,

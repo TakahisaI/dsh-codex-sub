@@ -244,6 +244,7 @@ async function bootProbe(environment, resultPath, patchPath) {
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   const exited = once(child, 'exit')
+  const closed = once(child, 'close')
   child.stdout.on('data', chunk => {
     appendCapture(bootOutput.stdout, chunk, maxCaptureBytes)
   })
@@ -258,7 +259,12 @@ async function bootProbe(environment, resultPath, patchPath) {
     failure = caught
   } finally {
     await stopChild(child, exited)
+    await Promise.race([closed, delay(shutdownTimeoutMs)])
   }
+  invariant(
+    child.stdout.readableEnded === true && child.stderr.readableEnded === true,
+    'Candidate DSH stdio did not close.',
+  )
   assertCaptureComplete(bootOutput.stdout, bootOutput.stderr)
   if (failure !== undefined) {
     throw new Error(
@@ -268,8 +274,9 @@ async function bootProbe(environment, resultPath, patchPath) {
       )}`,
     )
   }
-  const probe = parseJson(probeText, 'candidate packed probe')
   assertNoSentinel(`${bootOutput.stdout.value}\n${bootOutput.stderr.value}`, 'Candidate boot capture')
+  assertNoSentinel(probeText, 'Candidate probe result')
+  const probe = parseJson(probeText, 'candidate packed probe')
   return probe
 }
 
@@ -588,6 +595,23 @@ try {
   invariant(postLogoutProbe.authFailureCode === 'CODEX_AUTH_REQUIRED', 'Post-logout request did not fail safely.')
   invariant(postLogoutProbe.networkAttempts === 0, 'Post-logout candidate request reached the network boundary.')
 
+  const confirmDeletedResultPath = join(temporaryRoot, 'probe-confirm-deleted-result.json')
+  const confirmDeletedProbe = await bootProbe({
+    ...probeEnvironment,
+    DSH_CODEX_SUB_CANDIDATE_PROBE_PHASE: 'confirm-deleted',
+    DSH_CODEX_SUB_PROBE_RESULT: confirmDeletedResultPath,
+  }, confirmDeletedResultPath, patchPath)
+  invariant(
+    confirmDeletedProbe.phase === 'confirm-deleted'
+      && confirmDeletedProbe.nativeCredentialKind === undefined
+      && confirmDeletedProbe.nativeCredentialType === undefined
+      && confirmDeletedProbe.nativeCredentialMatches === false
+      && confirmDeletedProbe.nativeCredentialDeleted === true,
+    'Native credential deletion did not persist across a Host restart.',
+  )
+  invariant(confirmDeletedProbe.authFailureCode === 'CODEX_AUTH_REQUIRED', 'Post-delete request did not fail safely.')
+  invariant(confirmDeletedProbe.networkAttempts === 0, 'Post-delete candidate request reached the network boundary.')
+
   assertNoSentinel(JSON.stringify({
     doctorReport,
     logout,
@@ -595,11 +619,13 @@ try {
       adjacentMarkerPreserved: true,
       packageAuthRemoved: true,
     },
+    confirmDeletedProbe,
     postLogoutProbe,
     probe,
     signedInReport,
     signedOutReport,
     topology,
+    verifyProbe,
   }), 'Candidate lane summary')
 
   process.stdout.write(`${JSON.stringify({
@@ -608,7 +634,9 @@ try {
     catalogModelCount: probe.modelCount,
     doctorOverall: doctorReport.overall,
     inputArtifactSha256: sourceArtifact.sha256,
+    nativeCredentialDeletedAfterRestart: confirmDeletedProbe.nativeCredentialDeleted,
     networkAttempts: probe.networkAttempts,
+    networkAttemptsAfterDelete: confirmDeletedProbe.networkAttempts,
     networkAttemptsAfterLogout: postLogoutProbe.networkAttempts,
     networkAttemptsAfterRestart: verifyProbe.networkAttempts,
     siblingFilePreserved: true,

@@ -72,7 +72,7 @@ CI runs this lane once on Node 24; broader runtime expansion remains an exit cri
 | Supported rc.7 full check | PASS locally | lint, types, declarations, tests, boundaries, build, smoke, compatibility, licenses, release state, pack contract |
 | Supported rc.7 packed install | PASS locally | signed-out auth failure before I/O and zero provider network attempts |
 | Candidate rc.1 isolated lane | PASS locally | production adapter stream, fail-closed injection, duplicate route, native record seam |
-| Ephemeral-overlay packed rc.1 candidate | PASS locally | isolated fresh Host install of a test-only rc.1 metadata overlay built from one production bundle; route, duplicate adapter/directory rejection, offline failure across three Host boots, CLI diagnostics, package-owned restart/logout with adjacent-file preservation, native record restart/delete |
+| Ephemeral-overlay packed rc.1 candidate | PASS locally | isolated fresh Host install of a test-only rc.1 metadata overlay built from one production bundle; route, duplicate adapter/directory rejection, offline failure across four Host boots, CLI diagnostics, package-owned restart/logout with adjacent-file preservation, native record restart/delete/delete-persistence |
 | Exact published rc.7 artifact on rc.1 | NOT TESTED | intentionally rejected by the frozen supported-lane guard; requires a future compatibility release and its own matrix |
 
 The ephemeral-overlay packed probe starts from one frozen production bundle, then applies a
@@ -83,13 +83,13 @@ compatibility metadata or publish anything, and it must not be reported as the e
 running on DSH rc.1. The probe pins the isolated Host's DSH release-line packages to
 `0.1.1-rc.1`, proves direct and adapter-transitive peers resolve to the same Host copies, retains
 two pi-ai copies, rejects duplicate adapters and directories, proves signed-out requests fail
-before provider I/O on save/restart/post-logout boots, verifies CLI diagnostics, preserves the
-package-owned credential through restart and removes it through logout without disturbing an
-adjacent marker file, and persists/deletes an independent native record across those process
-boundaries. Generated sentinels bound subprocess captures, are redacted from failures, and are
-checked against printable output. Attachment/replay/retry/cancellation remain covered by
-source-level rc.1 and rc.7 contract lanes rather than this fresh-install lane; natural refresh
-remains #33 and a real-account smoke remains promotion-gated.
+before provider I/O on save/restart/post-logout/confirm-deleted boots, verifies CLI diagnostics,
+preserves the package-owned credential through restart and removes it through logout without
+disturbing an adjacent marker file, and deletes an independent native record across process
+boundaries. Generated sentinels bound subprocess captures through stdio close, are redacted from
+failures, and are checked against printable output. Attachment/replay/retry/cancellation remain
+covered by source-level rc.1 and rc.7 contract lanes rather than this fresh-install lane; natural
+refresh remains #33 and a real-account smoke remains promotion-gated.
 
 The supported matrix is enforced by CI. The isolated source and fresh-packed candidate lanes run as
 dedicated Node 24 CI jobs.
