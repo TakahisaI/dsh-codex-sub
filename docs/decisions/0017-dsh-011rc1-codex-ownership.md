@@ -96,7 +96,8 @@ CI runs this lane once on Node 24; broader runtime expansion remains an exit cri
 | Supported rc.7 packed install | PASS locally | signed-out auth failure before I/O and zero provider network attempts |
 | Candidate rc.1 isolated lane | PASS locally | production adapter stream, fail-closed injection, duplicate route, native record seam |
 | Ephemeral-overlay packed rc.1 candidate | PASS locally | isolated fresh Host install of a test-only rc.1 metadata overlay built from one production bundle; route, duplicate adapter/directory rejection, offline failure across four Host boots, CLI diagnostics, package-owned restart/logout with adjacent-file preservation, native record restart/delete/delete-persistence |
-| Exact published rc.7 artifact on rc.1 | NOT TESTED | intentionally rejected by the frozen supported-lane guard; requires a future compatibility release and its own matrix |
+| Exact derived rc.1 candidate on fresh rc.1 Host | PASS locally | one tarball derived by the reviewed transformation and installed without any post-build mutation into an exact-pinned fresh `0.1.1-rc.1` Host: unique route with seven-model catalog, duplicate adapter/directory rejection, signed-out `CODEX_AUTH_REQUIRED` with zero provider network attempts across save/restart/post-logout/confirm-deleted boots, CLI status/doctor compatible, package-owned credential preserved then removed by logout without disturbing an adjacent file, independent native record deleted across process boundaries |
+| Exact published alpha.1 artifact on rc.1 | NOT TESTED | intentionally rejected by the frozen supported-lane guard; requires the future compatibility release itself and its own matrix (#50 acceptance) |
 
 The ephemeral-overlay packed probe starts from one frozen production bundle, then applies a
 test-only manifest/compatibility overlay so that identical emitted code can activate on an isolated
@@ -119,10 +120,19 @@ no replay or cancellation scenario. Fresh-packed rc.1 coverage for all four beha
 to #51. Natural refresh remains #33 and a real-account smoke remains promotion-gated.
 
 The supported matrix is enforced by CI. The isolated source and fresh-packed candidate lanes run as
-dedicated Node 24 CI jobs.
+dedicated Node 24 CI jobs, alongside the exact-artifact lane that derives one rc.1 candidate from
+reviewed source, builds it before installation, and installs those bytes without post-build
+mutation into a Host whose DSH release-line packages are each pinned to the exact candidate
+version. Because every upstream package declares a caret range and `0.1.1-rc.2` is now public,
+an unpinned install resolves to newer packages; the lane discovers the full release-line package
+set from the seed graph and pins it explicitly through pnpm workspace overrides before verifying
+the topology above. The exact published alpha.1 artifact remains untested on rc.1 until the
+compatibility release exists (#50).
 
 The production runtime guard intentionally rejects candidate DSH before registration. A future
-alpha may update peers only after this decision and the complete exact-artifact matrix pass.
+alpha may update peers only after this decision and the complete exact-artifact matrix pass; the
+exact-artifact lane supplies the installability half of that matrix, and the compatibility-release
+lane (#50) completes it with the published bytes themselves.
 
 ## Consequences and exit criteria
 
