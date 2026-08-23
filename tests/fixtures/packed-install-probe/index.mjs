@@ -4,10 +4,12 @@ import { setTimeout as delay } from 'node:timers/promises'
 const PROVIDER_ID = 'openai-codex'
 const PROVIDER_DISPLAY_NAME = 'OpenAI Codex (ChatGPT)'
 const RESULT_VARIABLE = 'DSH_CODEX_SUB_PROBE_RESULT'
+const PHASE_VARIABLE = 'DSH_CODEX_SUB_CANDIDATE_PROBE_PHASE'
 const networkCounter = '__DSH_CODEX_SUB_NETWORK_ATTEMPTS__'
+const nativeRecordKey = 'llm-pi-ai/openai-codex'
 
 export const name = 'dsh-codex-sub-packed-install-probe'
-export const inject = ['llm']
+export const inject = ['llm', 'credentials']
 
 function ownErrorCode(error) {
   if (error === null || (typeof error !== 'object' && typeof error !== 'function')) {
@@ -70,13 +72,76 @@ export async function apply(ctx) {
     }
   }
 
+  const phase = process.env[PHASE_VARIABLE]
+  let directoryConflictCode
+  let nativeCredential
+  let nativeCredentialMatches = false
+  let nativeCredentialMatchesForeignValues = false
+  let nativeCredentialDeleted = false
+  if (phase !== undefined) {
+    const directoryEntry = {
+      provider: PROVIDER_ID,
+      displayName: PROVIDER_DISPLAY_NAME,
+      settingsNs: 'llm-codex-sub-packed-candidate',
+      settingsPath: [],
+    }
+    try {
+      ctx.llm.registerConfigurableProviders([directoryEntry])
+      ctx.llm.registerConfigurableProviders([directoryEntry])
+    } catch (error) {
+      directoryConflictCode = ownErrorCode(error)
+    }
+
+    if (phase === 'save') {
+      await ctx.credentials.modifyRecord(nativeRecordKey, async () => ({
+        kind: 'grant',
+        payload: {
+          type: 'oauth',
+          access: process.env.CANDIDATE_ACCESS_SENTINEL,
+          refresh: process.env.CANDIDATE_REFRESH_SENTINEL,
+          expires: Date.now() + 3_600_000,
+          accountId: process.env.CANDIDATE_ACCOUNT_SENTINEL,
+        },
+      }))
+      nativeCredential = await ctx.credentials.readRecord(nativeRecordKey)
+      nativeCredentialMatches = nativeCredential?.payload?.access === process.env.CANDIDATE_ACCESS_SENTINEL
+        && nativeCredential?.payload?.refresh === process.env.CANDIDATE_REFRESH_SENTINEL
+        && nativeCredential?.payload?.accountId === process.env.CANDIDATE_ACCOUNT_SENTINEL
+      nativeCredentialMatchesForeignValues = nativeCredential?.payload?.access === process.env.CANDIDATE_PACKAGE_ACCESS_SENTINEL
+        || nativeCredential?.payload?.refresh === process.env.CANDIDATE_PACKAGE_REFRESH_SENTINEL
+        || nativeCredential?.payload?.accountId === process.env.CANDIDATE_PACKAGE_ACCOUNT_SENTINEL
+    } else {
+      nativeCredential = await ctx.credentials.readRecord(nativeRecordKey)
+      nativeCredentialMatches = nativeCredential?.payload?.access === process.env.CANDIDATE_ACCESS_SENTINEL
+        && nativeCredential?.payload?.refresh === process.env.CANDIDATE_REFRESH_SENTINEL
+        && nativeCredential?.payload?.accountId === process.env.CANDIDATE_ACCOUNT_SENTINEL
+      nativeCredentialMatchesForeignValues = nativeCredential?.payload?.access === process.env.CANDIDATE_PACKAGE_ACCESS_SENTINEL
+        || nativeCredential?.payload?.refresh === process.env.CANDIDATE_PACKAGE_REFRESH_SENTINEL
+        || nativeCredential?.payload?.accountId === process.env.CANDIDATE_PACKAGE_ACCOUNT_SENTINEL
+      if (phase === 'post-logout') {
+        await ctx.credentials.deleteRecord(nativeRecordKey)
+        nativeCredentialDeleted = await ctx.credentials.readRecord(nativeRecordKey) === undefined
+      }
+      if (phase === 'confirm-deleted') {
+        nativeCredentialDeleted = nativeCredential === undefined
+      }
+    }
+  }
+
   const routeAfterConflict = ctx.llm.listProviders().filter(({ id }) => id === PROVIDER_ID)
   const encodedResult = `${JSON.stringify({
     authFailureCode,
     catalogIdsAreUnique: new Set(modelIds).size === modelIds.length,
+    directoryConflictCode,
     duplicateCode,
     modelCount: models.length,
+    nativeCredentialKind: nativeCredential?.kind,
+    nativeCredentialType: nativeCredential?.payload?.type,
     networkAttempts: globalThis[networkCounter] ?? -1,
+    nativeCredentialMatches,
+    nativeCredentialMatchesForeignValues,
+    nativeCredentialDeleted,
+    ...(phase === undefined ? {} : { phase }),
     providerDisplayMatches: matchingProviders[0]?.name === PROVIDER_DISPLAY_NAME,
     providerOccurrences: matchingProviders.length,
     resolvedMatches: resolved.provider === PROVIDER_ID && resolved.id === firstModel.id,
