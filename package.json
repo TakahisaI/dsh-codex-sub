@@ -68,6 +68,7 @@
     "test:packed-install": "node scripts/packed-install.mjs",
     "test:candidate-lane": "node scripts/spike-candidate-lane.mjs",
     "test:packed-candidate-lane": "node scripts/spike-packed-candidate-lane.mjs",
+    "test:exact-artifact-lane": "node scripts/spike-exact-artifact-lane.mjs",
     "pack:check": "node scripts/check-pack.mjs",
     "check": "pnpm run lint && pnpm run typecheck && pnpm run check:upstream-declarations && pnpm run test && pnpm run check:boundaries && pnpm run build && pnpm run check:built-entry && pnpm run check:built-cli && pnpm run check:compatibility && pnpm run check:licenses && pnpm run check:release-state && pnpm run pack:check"
   },

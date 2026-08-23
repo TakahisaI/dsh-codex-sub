@@ -342,6 +342,36 @@ function assertPackedCandidateLaneJob(job, label) {
   assertNoArtifactMutation(job, label)
 }
 
+// The exact-artifact lane derives its own rc.1 candidate from reviewed source
+// inside the probe, builds it before installation, and never consumes the
+// shared candidate artifact.
+function assertExactArtifactLaneJob(job, label) {
+  invariant(
+    count(job, 'runs-on: ubuntu-latest') === 1,
+    `${label} exact-artifact-lane job must use the reviewed Linux runner exactly once.`,
+  )
+  invariant(
+    count(job, 'node-version: 24') === 1,
+    `${label} exact-artifact-lane job must pin Node 24 exactly once.`,
+  )
+  invariant(
+    count(job, 'pnpm install --frozen-lockfile') === 1,
+    `${label} exact-artifact-lane job must install the locked graph exactly once.`,
+  )
+  invariant(
+    !/^    needs:/mu.test(job),
+    `${label} exact-artifact-lane job must derive its own candidate instead of consuming an artifact.`,
+  )
+  invariant(
+    count(job, PINNED_ACTIONS.downloadArtifact) === 0,
+    `${label} exact-artifact-lane job must not download the shared artifact.`,
+  )
+  invariant(
+    count(job, 'pnpm run test:exact-artifact-lane') === 1,
+    `${label} exact-artifact-lane job must execute the reviewed probe exactly once.`,
+  )
+}
+
 function assertArtifactConsumer(job, expected, label) {
   assertMatrix(job, expected, label)
   invariant(/^    needs: candidate$/mu.test(job), `${label} must depend on the candidate job.`)
@@ -662,11 +692,20 @@ export function validateWorkflowContracts({
   assertSerializedReleaseWorkflow(releaseWorkflow)
   assertExactJobSet(
     ciWorkflow,
-    ['candidate', 'candidate-lane', 'check', 'dependency-review', 'packed-candidate-lane', 'packed-install'],
+    [
+      'candidate',
+      'candidate-lane',
+      'check',
+      'dependency-review',
+      'exact-artifact-lane',
+      'packed-candidate-lane',
+      'packed-install',
+    ],
     'CI workflow',
   )
   assertCandidateLaneJob(jobBody(ciWorkflow, 'candidate-lane'), 'CI')
   assertPackedCandidateLaneJob(jobBody(ciWorkflow, 'packed-candidate-lane'), 'CI')
+  assertExactArtifactLaneJob(jobBody(ciWorkflow, 'exact-artifact-lane'), 'CI')
   const releaseJobs = ['candidate', 'candidate-install', 'candidate-ready', 'release-ref', 'source-checks']
   if (releaseMode === 'staged') {
     releaseJobs.push('stage-publish')
