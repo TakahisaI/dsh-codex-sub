@@ -72,10 +72,22 @@ CI runs this lane once on Node 24; broader runtime expansion remains an exit cri
 | Supported rc.7 full check | PASS locally | lint, types, declarations, tests, boundaries, build, smoke, compatibility, licenses, release state, pack contract |
 | Supported rc.7 packed install | PASS locally | signed-out auth failure before I/O and zero provider network attempts |
 | Candidate rc.1 isolated lane | PASS locally | production adapter stream, fail-closed injection, duplicate route, native record seam |
-| Fresh packed rc.1 installation | Not yet run | required before promotion; not inferred from source probes |
+| Fresh packed rc.1 candidate | PASS locally | isolated fresh Host install; one route, duplicate adapter/directory rejection, signed-out offline failure, CLI diagnostics, package-owned restart/logout, native record restart/delete |
 
-The supported matrix is enforced by CI. The isolated candidate lane currently runs as a dedicated
-Node 24 CI job; fresh packed rc.1 behavior remains explicitly outstanding.
+The fresh packed probe builds the frozen production bundle, then applies an ephemeral test-only
+manifest/compatibility overlay so that identical emitted code can activate on an isolated
+`0.1.1-rc.1` Host. It does not change repository compatibility metadata or publish anything. The
+probe pins the isolated Host's DSH release-line packages to `0.1.1-rc.1`, shares all six direct
+plugin peers with that Host, retains two pi-ai copies, rejects duplicate adapters and directories,
+proves signed-out requests fail before provider I/O, verifies CLI diagnostics, persists the
+package-owned credential across a process restart through logout, and persists/deletes a separate
+native record across two Host processes. Generated sentinels are redacted from failures and checked
+against printable output. Attachment/replay/retry/cancellation remain covered by source-level rc.1
+and rc.7 contract lanes rather than this fresh-install lane; natural refresh remains #33 and a
+real-account smoke remains promotion-gated.
+
+The supported matrix is enforced by CI. The isolated source and fresh-packed candidate lanes run as
+dedicated Node 24 CI jobs.
 
 The production runtime guard intentionally rejects candidate DSH before registration. A future
 alpha may update peers only after this decision and the complete exact-artifact matrix pass.
@@ -103,7 +115,8 @@ without publishing an unverified combination.
 
 ## Follow-ups
 
-- Run fresh packed-install validation against DSH `0.1.1-rc.1` without peer overrides.
+- Broaden fresh packed rc.1 evidence to attachment, replay, retry, and cancellation after the
+  ownership decision is accepted.
 - Decide whether to broaden the candidate lane beyond Node 24 after upstream compatibility stabilizes.
 - Track natural OAuth refresh through normal use until a maintainer-controlled real-account smoke runs.
 - Revisit ownership when DSH ships the Web/browser login-start surface.

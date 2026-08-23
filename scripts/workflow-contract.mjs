@@ -302,6 +302,25 @@ function assertCandidateLaneJob(job, label) {
   )
 }
 
+function assertPackedCandidateLaneJob(job, label) {
+  invariant(
+    count(job, 'runs-on: ubuntu-latest') === 1,
+    `${label} packed-candidate-lane job must use the reviewed Linux runner exactly once.`,
+  )
+  invariant(
+    count(job, 'node-version: 24') === 1,
+    `${label} packed-candidate-lane job must pin Node 24 exactly once.`,
+  )
+  invariant(
+    count(job, 'pnpm install --frozen-lockfile') === 1,
+    `${label} packed-candidate-lane job must install the locked graph exactly once.`,
+  )
+  invariant(
+    count(job, 'pnpm run test:packed-candidate-lane') === 1,
+    `${label} packed-candidate-lane job must execute the reviewed fresh-install probe exactly once.`,
+  )
+}
+
 function assertArtifactConsumer(job, expected, label) {
   assertMatrix(job, expected, label)
   invariant(/^    needs: candidate$/mu.test(job), `${label} must depend on the candidate job.`)
@@ -622,10 +641,11 @@ export function validateWorkflowContracts({
   assertSerializedReleaseWorkflow(releaseWorkflow)
   assertExactJobSet(
     ciWorkflow,
-    ['candidate', 'candidate-lane', 'check', 'dependency-review', 'packed-install'],
+    ['candidate', 'candidate-lane', 'check', 'dependency-review', 'packed-candidate-lane', 'packed-install'],
     'CI workflow',
   )
   assertCandidateLaneJob(jobBody(ciWorkflow, 'candidate-lane'), 'CI')
+  assertPackedCandidateLaneJob(jobBody(ciWorkflow, 'packed-candidate-lane'), 'CI')
   const releaseJobs = ['candidate', 'candidate-install', 'candidate-ready', 'release-ref', 'source-checks']
   if (releaseMode === 'staged') {
     releaseJobs.push('stage-publish')
