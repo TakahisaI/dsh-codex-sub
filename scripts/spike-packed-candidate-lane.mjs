@@ -225,7 +225,7 @@ async function stopChild(child, exited) {
 }
 
 function assertNoSentinel(value, label) {
-  for (const secret of Object.values(sentinels)) {
+  for (const secret of allSentinels) {
     invariant(!value.includes(secret), `${label} exposed a generated sentinel.`)
   }
 }
@@ -270,7 +270,7 @@ async function bootProbe(environment, resultPath, patchPath) {
     throw new Error(
       `${String(failure)}\n${redact(
         `${bootOutput.stdout.value}\n${bootOutput.stderr.value}`,
-        Object.values(sentinels),
+        allSentinels,
       )}`,
     )
   }
@@ -286,11 +286,23 @@ const stagingDirectory = join(temporaryRoot, 'candidate-staging')
 const hostRoot = join(temporaryRoot, 'host')
 const dshHome = join(hostRoot, 'home')
 const dshExecutable = join(hostRoot, 'node_modules', '.bin', 'dsh')
-const sentinels = {
-  access: `ACCESS_SENTINEL_${randomUUID()}`,
-  refresh: `REFRESH_SENTINEL_${randomUUID()}`,
-  account: `ACCOUNT_SENTINEL_${randomUUID()}`,
+const nativeSentinels = {
+  access: `NATIVE_ACCESS_SENTINEL_${randomUUID()}`,
+  refresh: `NATIVE_REFRESH_SENTINEL_${randomUUID()}`,
+  account: `NATIVE_ACCOUNT_SENTINEL_${randomUUID()}`,
 }
+const packageSentinels = {
+  access: `PACKAGE_ACCESS_SENTINEL_${randomUUID()}`,
+  refresh: `PACKAGE_REFRESH_SENTINEL_${randomUUID()}`,
+  account: `PACKAGE_ACCOUNT_SENTINEL_${randomUUID()}`,
+}
+const siblingSentinel = `SIBLING_SENTINEL_${randomUUID()}`
+const allSentinels = [
+  ...Object.values(nativeSentinels),
+  ...Object.values(packageSentinels),
+  siblingSentinel,
+]
+invariant(new Set(allSentinels).size === allSentinels.length, 'Generated credential sentinels collided.')
 
 try {
   await mkdir(artifactDirectory, { recursive: true })
@@ -476,9 +488,12 @@ try {
   ].join('\n')}`)
   const probeEnvironment = {
     ...baseEnvironment,
-    CANDIDATE_ACCESS_SENTINEL: sentinels.access,
-    CANDIDATE_ACCOUNT_SENTINEL: sentinels.account,
-    CANDIDATE_REFRESH_SENTINEL: sentinels.refresh,
+    CANDIDATE_ACCESS_SENTINEL: nativeSentinels.access,
+    CANDIDATE_ACCOUNT_SENTINEL: nativeSentinels.account,
+    CANDIDATE_PACKAGE_ACCESS_SENTINEL: packageSentinels.access,
+    CANDIDATE_PACKAGE_ACCOUNT_SENTINEL: packageSentinels.account,
+    CANDIDATE_PACKAGE_REFRESH_SENTINEL: packageSentinels.refresh,
+    CANDIDATE_REFRESH_SENTINEL: nativeSentinels.refresh,
     DSH_CODEX_SUB_PROBE_RESULT: resultPath,
     DSH_CODEX_SUB_CANDIDATE_PROBE_PHASE: 'save',
     NODE_OPTIONS: [`--import=${pathToFileURL(blockerPath).href}`],
@@ -495,6 +510,7 @@ try {
   invariant(probe.phase === 'save' && probe.nativeCredentialKind === 'grant', 'Native credential save did not produce a grant record.')
   invariant(probe.nativeCredentialType === 'oauth', 'Native credential save did not preserve OAuth type.')
   invariant(probe.nativeCredentialMatches === true, 'Saved native credential content drifted.')
+  invariant(probe.nativeCredentialMatchesForeignValues === false, 'Native save reused package-owned sentinel values.')
   invariant(probe.authFailureCode === 'CODEX_AUTH_REQUIRED', 'Signed-out request did not fail safely.')
   invariant(probe.networkAttempts === 0, 'Signed-out candidate request reached the network boundary.')
 
@@ -508,7 +524,8 @@ try {
     verifyProbe.phase === 'verify'
       && verifyProbe.nativeCredentialKind === 'grant'
       && verifyProbe.nativeCredentialType === 'oauth'
-      && verifyProbe.nativeCredentialMatches === true,
+      && verifyProbe.nativeCredentialMatches === true
+      && verifyProbe.nativeCredentialMatchesForeignValues === false,
     'Native credential did not survive a Host process restart.',
   )
   invariant(verifyProbe.authFailureCode === 'CODEX_AUTH_REQUIRED', 'Post-restart request did not fail safely.')
@@ -521,7 +538,7 @@ try {
     accepted: [1],
     env: baseEnvironment,
     label: 'candidate signed-out status',
-    secrets: Object.values(sentinels),
+    secrets: allSentinels,
   })
   const signedOutReport = parseJson(signedOut.stdout, 'signed-out status')
   invariant(
@@ -534,7 +551,7 @@ try {
     cwd: hostRoot,
     env: baseEnvironment,
     label: 'candidate doctor',
-    secrets: Object.values(sentinels),
+    secrets: allSentinels,
   })
   const doctorReport = parseJson(doctor.stdout, 'candidate doctor')
   invariant(doctorReport.overall === 'compatible', 'Candidate doctor rejected the isolated rc.1 graph.')
@@ -547,17 +564,16 @@ try {
     schemaVersion: 1,
     provider: 'openai-codex',
     credential: {
-      accessToken: sentinels.access,
-      refreshToken: sentinels.refresh,
+      accessToken: packageSentinels.access,
+      refreshToken: packageSentinels.refresh,
       expiresAt: Date.now() + 86_400_000,
-      providerData: { accountId: sentinels.account },
+      providerData: { accountId: packageSentinels.account },
     },
   })}\n`
   await writeFile(authFile, credentialBytes, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
   const siblingFile = join(authDirectory, 'logout-preservation.marker')
-  const siblingMarker = `SIBLING_MARKER_${randomUUID()}\n`
-  await writeFile(siblingFile, siblingMarker, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
-  const logoutSecrets = [...Object.values(sentinels), siblingMarker]
+  await writeFile(siblingFile, `${siblingSentinel}\n`, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  const logoutSecrets = allSentinels
   const signedIn = run(dshExecutable, [
     'plugin', '--profile', 'web', 'exec', packageName, 'status', '--json',
   ], {
@@ -577,7 +593,7 @@ try {
     secrets: logoutSecrets,
   })
   await assertAbsent(authFile, 'Candidate logout did not remove package-owned auth.json.')
-  invariant(await readFile(siblingFile, 'utf8') === siblingMarker, 'Candidate logout disturbed an adjacent file.')
+  invariant(await readFile(siblingFile, 'utf8') === `${siblingSentinel}\n`, 'Candidate logout disturbed an adjacent file.')
 
   const postLogoutResultPath = join(temporaryRoot, 'probe-post-logout-result.json')
   const postLogoutProbe = await bootProbe({
@@ -589,7 +605,9 @@ try {
     postLogoutProbe.phase === 'post-logout'
       && postLogoutProbe.nativeCredentialKind === 'grant'
       && postLogoutProbe.nativeCredentialType === 'oauth'
-      && postLogoutProbe.nativeCredentialMatches === true,
+      && postLogoutProbe.nativeCredentialMatches === true
+      && postLogoutProbe.nativeCredentialMatchesForeignValues === false
+      && postLogoutProbe.nativeCredentialDeleted === true,
     'Package-owned logout changed the independent native credential.',
   )
   invariant(postLogoutProbe.authFailureCode === 'CODEX_AUTH_REQUIRED', 'Post-logout request did not fail safely.')

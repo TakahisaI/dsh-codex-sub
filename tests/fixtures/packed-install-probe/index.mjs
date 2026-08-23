@@ -76,6 +76,7 @@ export async function apply(ctx) {
   let directoryConflictCode
   let nativeCredential
   let nativeCredentialMatches = false
+  let nativeCredentialMatchesForeignValues = false
   let nativeCredentialDeleted = false
   if (phase !== undefined) {
     const directoryEntry = {
@@ -106,11 +107,17 @@ export async function apply(ctx) {
       nativeCredentialMatches = nativeCredential?.payload?.access === process.env.CANDIDATE_ACCESS_SENTINEL
         && nativeCredential?.payload?.refresh === process.env.CANDIDATE_REFRESH_SENTINEL
         && nativeCredential?.payload?.accountId === process.env.CANDIDATE_ACCOUNT_SENTINEL
+      nativeCredentialMatchesForeignValues = nativeCredential?.payload?.access === process.env.CANDIDATE_PACKAGE_ACCESS_SENTINEL
+        || nativeCredential?.payload?.refresh === process.env.CANDIDATE_PACKAGE_REFRESH_SENTINEL
+        || nativeCredential?.payload?.accountId === process.env.CANDIDATE_PACKAGE_ACCOUNT_SENTINEL
     } else {
       nativeCredential = await ctx.credentials.readRecord(nativeRecordKey)
       nativeCredentialMatches = nativeCredential?.payload?.access === process.env.CANDIDATE_ACCESS_SENTINEL
         && nativeCredential?.payload?.refresh === process.env.CANDIDATE_REFRESH_SENTINEL
         && nativeCredential?.payload?.accountId === process.env.CANDIDATE_ACCOUNT_SENTINEL
+      nativeCredentialMatchesForeignValues = nativeCredential?.payload?.access === process.env.CANDIDATE_PACKAGE_ACCESS_SENTINEL
+        || nativeCredential?.payload?.refresh === process.env.CANDIDATE_PACKAGE_REFRESH_SENTINEL
+        || nativeCredential?.payload?.accountId === process.env.CANDIDATE_PACKAGE_ACCOUNT_SENTINEL
       if (phase === 'post-logout') {
         await ctx.credentials.deleteRecord(nativeRecordKey)
         nativeCredentialDeleted = await ctx.credentials.readRecord(nativeRecordKey) === undefined
@@ -132,6 +139,7 @@ export async function apply(ctx) {
     nativeCredentialType: nativeCredential?.payload?.type,
     networkAttempts: globalThis[networkCounter] ?? -1,
     nativeCredentialMatches,
+    nativeCredentialMatchesForeignValues,
     nativeCredentialDeleted,
     ...(phase === undefined ? {} : { phase }),
     providerDisplayMatches: matchingProviders[0]?.name === PROVIDER_DISPLAY_NAME,

@@ -86,10 +86,12 @@ two pi-ai copies, rejects duplicate adapters and directories, proves signed-out 
 before provider I/O on save/restart/post-logout/confirm-deleted boots, verifies CLI diagnostics,
 preserves the package-owned credential through restart and removes it through logout without
 disturbing an adjacent marker file, and deletes an independent native record across process
-boundaries. Generated sentinels bound subprocess captures through stdio close, are redacted from
-failures, and are checked against printable output. Attachment/replay/retry/cancellation remain
-covered by source-level rc.1 and rc.7 contract lanes rather than this fresh-install lane; natural
-refresh remains #33 and a real-account smoke remains promotion-gated.
+boundaries. Native and package-owned stores receive distinct generated sentinel triplets, and the
+native record is required to match only its own triplet. Generated sentinels bound subprocess
+captures through stdio close, are redacted from failures, and are checked against printable output.
+Attachment/replay/retry/cancellation remain covered by source-level rc.1 and rc.7 contract lanes
+rather than this fresh-install lane; natural refresh remains #33 and a real-account smoke remains
+promotion-gated.
 
 The supported matrix is enforced by CI. The isolated source and fresh-packed candidate lanes run as
 dedicated Node 24 CI jobs.
