@@ -62,11 +62,17 @@ export function assertPackedCompatibilityMatchesSource(extractedCompatibility, r
  * `name@<release version>` before the first `(` counts, and only keys shaped
  * `'@deepseek-ai/dsh…@…':` inside the packages section are collected, so
  * versions mentioned in importers, prose, or peer suffixes never leak in.
+ * The section ends at the next top-level key (`snapshots:` on pnpm 9+), so
+ * later sections are never scanned.
  */
 export function collectLockfileDshPackageEntries(lockText) {
   const packagesIndex = lockText.indexOf('\npackages:\n')
   if (packagesIndex < 0) return []
-  const packagesSection = lockText.slice(packagesIndex + '\npackages:\n'.length)
+  const sectionStart = packagesIndex + '\npackages:\n'.length
+  const nextSection = lockText.slice(sectionStart).match(/\n[a-zA-Z][a-zA-Z0-9-]*:\s*\n/u)
+  const packagesSection = nextSection === null
+    ? lockText.slice(sectionStart)
+    : lockText.slice(sectionStart, sectionStart + nextSection.index + 1)
   const entries = []
   const seen = new Set()
   const entryPattern = /^  '((?:@deepseek-ai\/dsh[^']*)@[^']*)':\s*$/gmu

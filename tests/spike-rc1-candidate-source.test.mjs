@@ -164,6 +164,25 @@ describe('lockfile DSH release-line enumeration', () => {
   it('returns nothing when a packages section is absent', () => {
     expect(collectLockfileDshPackageEntries("lockfileVersion: '9.0'\n")).toEqual([])
   })
+
+  it('stops at the next top-level section instead of scanning snapshots', () => {
+    const lockText = [
+      "lockfileVersion: '9.0'",
+      '',
+      'packages:',
+      '',
+      "  '@deepseek-ai/dsh-llm@0.1.1-rc.1':",
+      '    resolution: {integrity: sha512-a}',
+      '',
+      'snapshots:',
+      '',
+      "  '@deepseek-ai/dsh-llm@0.1.1-rc.2(snap)':",
+      '    dependencies: {}',
+    ].join('\n')
+    expect(collectLockfileDshPackageEntries(lockText)).toEqual([
+      { name: '@deepseek-ai/dsh-llm', version: '0.1.1-rc.1' },
+    ])
+  })
 })
 
 describe('candidate version equality', () => {
