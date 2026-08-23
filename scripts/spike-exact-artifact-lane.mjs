@@ -17,6 +17,10 @@ import { appendCapture, assertCaptureComplete } from './capture-output.mjs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { validatePackageTarball } from './package-tarball.mjs'
 import {
+  assertCandidateVersion,
+  assertPackedCompatibilityMatchesSource,
+  assertPackedManifestMatchesSource,
+  collectLockfileDshPackageEntries,
   deriveRc1CandidateSource,
   readRepositoryCandidateInputs,
   RC1_CANDIDATE_VERSION,
@@ -230,24 +234,20 @@ async function enumerateHostDshPackages() {
  *    earlier install are garbage, not part of the graph.
  */
 async function assertWholeGraphIsCandidateVersion(seedNames) {
-  // The pnpm lockfile is the authoritative resolution: it must reference the
-  // candidate and no other DSH release-line version.
+  // The pnpm lockfile is the authoritative resolution: every DSH release-line
+  // entry it references must be the exact candidate version.
   const lockText = await readFile(join(hostRoot, 'pnpm-lock.yaml'), 'utf8')
-  invariant(lockText.includes(`dsh@${candidateVersion}`), 'The Host lockfile lost the candidate pin.')
-  const staleLockReferences = lockText.match(/0\.1\.\d+-rc(?!\.1)\d*/gu) ?? []
-  invariant(
-    staleLockReferences.length === 0,
-    `The Host lockfile still references non-candidate releases (${staleLockReferences.length} matches).`,
-  )
+  const lockEntries = collectLockfileDshPackageEntries(lockText)
+  invariant(lockEntries.length > 0, 'The Host lockfile referenced no DSH release-line packages.')
+  for (const { name, version } of lockEntries) {
+    assertCandidateVersion(name, version, candidateVersion)
+  }
+  const referencedPairs = new Set(lockEntries.map(({ name, version }) => `${name}@${version}`))
 
   // Physical store check: every store directory whose name+version pair is
   // referenced by the resolution must sit at the candidate version. pnpm
   // keeps unreferenced directories from earlier installs on disk, so entries
   // absent from the lockfile are garbage, not part of the graph.
-  const referencedPairs = new Set(
-    [...lockText.matchAll(/'(@deepseek-ai\/dsh[^@']*)@(0\.1\.\d+-rc\.\d+)':/gu)]
-      .map(([, name, version]) => `${name}@${version}`),
-  )
   const physical = await enumerateHostDshPackages()
   invariant(physical.length > 0, 'The Host graph resolved without any DSH packages.')
   const byName = new Map()
@@ -262,10 +262,7 @@ async function assertWholeGraphIsCandidateVersion(seedNames) {
   }
   for (const [name, copies] of byName) {
     for (const copy of copies) {
-      invariant(
-        copy.version === candidateVersion,
-        `${name} remained at ${copy.version} instead of ${candidateVersion}.`,
-      )
+      assertCandidateVersion(name, copy.version, candidateVersion)
     }
   }
 
@@ -417,30 +414,17 @@ async function buildExactCandidateArtifact() {
   })
 
   // Derivation inputs come from the extracted artifact itself and must equal
-  // the reviewed source semantically. pnpm pack normalizes package.json
-  // (dropping `packageManager` and reordering), so compare parsed content
-  // with those normalizations applied to the repository manifest as well.
+  // the reviewed source deeply. pnpm pack normalizes package.json (dropping
+  // `packageManager` and reordering keys), which the comparison tolerates;
+  // every other value, including nested dependency and bundle metadata, must
+  // match exactly.
   const repositoryInputs = await readRepositoryCandidateInputs()
   const extractedManifestText = await readFile(join(packageRoot, 'package.json'), 'utf8')
   const extractedCompatibilityText = await readFile(join(packageRoot, 'compatibility.json'), 'utf8')
   const extractedManifest = JSON.parse(extractedManifestText)
-  const PACK_NORMALIZED_KEYS = ['packageManager']
-  const expectedManifest = Object.fromEntries(
-    Object.entries(repositoryInputs.manifest).filter(([key]) => !PACK_NORMALIZED_KEYS.includes(key)),
-  )
-  const actualManifest = Object.fromEntries(
-    Object.entries(extractedManifest).filter(([key]) => !PACK_NORMALIZED_KEYS.includes(key)),
-  )
-  invariant(
-    JSON.stringify(actualManifest, Object.keys(actualManifest).sort())
-      === JSON.stringify(expectedManifest, Object.keys(expectedManifest).sort()),
-    'The packed manifest did not match the reviewed source.',
-  )
+  assertPackedManifestMatchesSource(extractedManifest, repositoryInputs.manifest)
   const extractedCompatibility = JSON.parse(extractedCompatibilityText)
-  invariant(
-    JSON.stringify(extractedCompatibility) === JSON.stringify(repositoryInputs.compatibility),
-    'The packed compatibility document did not match the reviewed source.',
-  )
+  assertPackedCompatibilityMatchesSource(extractedCompatibility, repositoryInputs.compatibility)
   const candidateSource = deriveRc1CandidateSource({
     compatibility: extractedCompatibility,
     manifest: extractedManifest,

@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises'
 import { fileURLToPath } from 'node:url'
 import { join } from 'node:path'
+import { isDeepStrictEqual } from 'node:util'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 
@@ -8,8 +9,99 @@ export const RC1_CANDIDATE_VERSION = '0.1.1-rc.1'
 // Upstream inspected release for the rc.1 ownership decision (ADR 0017).
 export const RC1_UPSTREAM_COMMIT = '528c682e061696f5a160f363f236ecbf53cbd006'
 
+// pnpm pack normalizes package.json: it drops `packageManager` (pnpm reads
+// that setting from pnpm-workspace.yaml since v10) and reorders keys. The
+// extracted manifest must otherwise equal the reviewed source.
+const PACK_NORMALIZED_KEYS = new Set(['packageManager'])
+
+const DSH_RELEASE_LINE_PREFIX = '@deepseek-ai/dsh'
+
 function invariant(condition, message) {
   if (!condition) throw new Error(message)
+}
+
+function stripPackNormalizedKeys(manifest) {
+  const copy = structuredClone(manifest)
+  for (const key of PACK_NORMALIZED_KEYS) delete copy[key]
+  return copy
+}
+
+/**
+ * Compare the packed manifest with the reviewed source manifest deeply.
+ *
+ * `packageManager` is dropped from both sides because pnpm pack removes it;
+ * everything else — including nested peerDependencies, exports, scripts,
+ * bin, engines, and the dsh bundle patch — must match exactly.
+ */
+export function assertPackedManifestMatchesSource(extractedManifest, repositoryManifest) {
+  invariant(
+    isDeepStrictEqual(
+      stripPackNormalizedKeys(extractedManifest),
+      stripPackNormalizedKeys(repositoryManifest),
+    ),
+    'The packed manifest did not match the reviewed source.',
+  )
+}
+
+/**
+ * Compare the packed compatibility document with the reviewed source deeply.
+ */
+export function assertPackedCompatibilityMatchesSource(extractedCompatibility, repositoryCompatibility) {
+  invariant(
+    isDeepStrictEqual(extractedCompatibility, repositoryCompatibility),
+    'The packed compatibility document did not match the reviewed source.',
+  )
+}
+
+/**
+ * Parse every DSH release-line package entry from a pnpm lockfile's
+ * `packages:` section and return `{ name, version }` pairs.
+ *
+ * Lockfile package keys are either `'name@version':` or the peer-resolved
+ * form `'name@version(peer@peerVersion)(…)':`. Only the leading
+ * `name@<release version>` before the first `(` counts, and only keys shaped
+ * `'@deepseek-ai/dsh…@…':` inside the packages section are collected, so
+ * versions mentioned in importers, prose, or peer suffixes never leak in.
+ */
+export function collectLockfileDshPackageEntries(lockText) {
+  const packagesIndex = lockText.indexOf('\npackages:\n')
+  if (packagesIndex < 0) return []
+  const packagesSection = lockText.slice(packagesIndex + '\npackages:\n'.length)
+  const entries = []
+  const seen = new Set()
+  const entryPattern = /^  '((?:@deepseek-ai\/dsh[^']*)@[^']*)':\s*$/gmu
+  for (const match of packagesSection.matchAll(entryPattern)) {
+    const key = match[1]
+    const openParen = key.indexOf('(')
+    const identity = openParen >= 0 ? key.slice(0, openParen) : key
+    const atSign = identity.indexOf('@', DSH_RELEASE_LINE_PREFIX.length - 1)
+    if (atSign < DSH_RELEASE_LINE_PREFIX.length) continue
+    const name = identity.slice(0, atSign)
+    if (!name.startsWith(DSH_RELEASE_LINE_PREFIX)) continue
+    const version = identity.slice(atSign + 1)
+    const dedupe = `${name}@${version}`
+    if (seen.has(dedupe)) continue
+    seen.add(dedupe)
+    entries.push({ name, version })
+  }
+  return entries
+}
+
+/**
+ * Assert a parsed semver-like release version equals the candidate exactly.
+ *
+ * Accepts only `<major>.<minor>.<patch>` with optional `-<prerelease>`; any
+ * prerelease on top of a different release (rc.2), a higher patch line, or a
+ * later prerelease counter fails against the candidate.
+ */
+export function assertCandidateVersion(name, version, candidateVersion) {
+  const shape = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/u
+  const match = shape.exec(version)
+  invariant(match !== null, `${name} lockfile version ${version} was not a plain release version.`)
+  invariant(
+    version === candidateVersion,
+    `${name} lockfile version was ${version}, expected ${candidateVersion}.`,
+  )
 }
 
 /**
