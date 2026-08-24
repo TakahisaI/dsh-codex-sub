@@ -90,11 +90,11 @@ function compatibleRuntime(): RuntimeCompatibilityReport {
     node: check('^22.19.0 || ^24.0.0 || ^26.0.0'),
     packages: Object.freeze({
       '@deepseek-ai/cordis': check('4.0.1'),
-      '@deepseek-ai/dsh-attachment': check('0.1.0-rc.7'),
-      '@deepseek-ai/dsh-atomic-write': check('0.1.0-rc.7'),
-      '@deepseek-ai/dsh-home-paths': check('0.1.0-rc.7'),
-      '@deepseek-ai/dsh-llm': check('0.1.0-rc.7'),
-      '@deepseek-ai/dsh-llm-pi-ai': check('0.1.0-rc.7'),
+      '@deepseek-ai/dsh-attachment': check('0.1.1-rc.1'),
+      '@deepseek-ai/dsh-atomic-write': check('0.1.1-rc.1'),
+      '@deepseek-ai/dsh-home-paths': check('0.1.1-rc.1'),
+      '@deepseek-ai/dsh-llm': check('0.1.1-rc.1'),
+      '@deepseek-ai/dsh-llm-pi-ai': check('0.1.1-rc.1'),
       '@earendil-works/pi-ai': check('0.82.1'),
     }),
   })

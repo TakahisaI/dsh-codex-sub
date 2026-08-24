@@ -1,6 +1,6 @@
 {
   "name": "dsh-codex-sub",
-  "version": "0.1.0-alpha.1",
+  "version": "0.1.0-alpha.2",
   "description": "ChatGPT subscription authentication and OpenAI Codex models for DeepSeek Harness.",
   "private": false,
   "license": "MIT",
@@ -63,6 +63,7 @@
     "test": "vitest run",
     "check:boundaries": "node scripts/check-core-boundaries.mjs",
     "check:compatibility": "node scripts/check-compatibility.mjs",
+    "check:dsh-release-family-lock": "node scripts/check-dsh-release-family-lock.mjs",
     "check:licenses": "node scripts/check-dependency-licenses.mjs",
     "check:release-state": "node scripts/check-release-state.mjs",
     "test:packed-install": "node scripts/packed-install.mjs",
@@ -70,37 +71,38 @@
     "test:packed-candidate-lane": "node scripts/spike-packed-candidate-lane.mjs",
     "test:exact-artifact-lane": "node scripts/spike-exact-artifact-lane.mjs",
     "pack:check": "node scripts/check-pack.mjs",
-    "check": "pnpm run lint && pnpm run typecheck && pnpm run check:upstream-declarations && pnpm run test && pnpm run check:boundaries && pnpm run build && pnpm run check:built-entry && pnpm run check:built-cli && pnpm run check:compatibility && pnpm run check:licenses && pnpm run check:release-state && pnpm run pack:check"
+    "check": "pnpm run lint && pnpm run typecheck && pnpm run check:upstream-declarations && pnpm run test && pnpm run check:boundaries && pnpm run build && pnpm run check:built-entry && pnpm run check:built-cli && pnpm run check:compatibility && pnpm run check:dsh-release-family-lock && pnpm run check:licenses && pnpm run check:release-state && pnpm run pack:check"
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
-    "@deepseek-ai/dsh-attachment": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-atomic-write": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-home-paths": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-llm": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-llm-pi-ai": "0.1.0-rc.7"
+    "@deepseek-ai/dsh-atomic-write": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-attachment": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-home-paths": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-llm": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.1.1-rc.1"
   },
   "dependencies": {
     "@earendil-works/pi-ai": "0.82.1"
   },
   "devDependencies": {
     "@deepseek-ai/cordis": "4.0.1",
-    "@deepseek-ai/dsh-attachment": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-atomic-write": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-home-paths": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-llm": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-llm-pi-ai": "0.1.0-rc.7",
-    "@deepseek-ai/dsh": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-agent-loop": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-agent-loop-testkit": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-llm-retry": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-session": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-session-persistence-jsonl": "0.1.0-rc.7",
-    "@deepseek-ai/dsh-tools": "0.1.0-rc.7",
+    "@deepseek-ai/dsh": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-agent-loop": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-agent-loop-testkit": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-atomic-write": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-attachment": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-home-paths": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-llm": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-llm-retry": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-session": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-session-persistence-jsonl": "0.1.1-rc.1",
+    "@deepseek-ai/dsh-tools": "0.1.1-rc.1",
     "@types/node": "22.20.1",
     "oxlint": "1.76.0",
     "tsdown": "0.22.2",
     "typescript": "6.0.3",
-    "vitest": "4.1.8"
+    "vitest": "4.1.8",
+    "yaml": "2.9.0"
   }
 }

@@ -1,5 +1,9 @@
 # Testing strategy
 
+The current test baseline targets the unpublished `0.1.0-alpha.2` candidate: DSH `0.1.1-rc.1`,
+Cordis `4.0.1`, and pi-ai `0.82.1`. Passing local checks do not turn this candidate into public
+support or a release-ready artifact.
+
 ## 1. Test layers
 
 ### 1.1 Pure unit tests

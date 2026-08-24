@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+## 0.1.0-alpha.2
+
+> Release candidate. This version has not been published, staged, or verified as public support.
+
+### Changed
+
+- Updated the reviewed candidate compatibility line to DeepSeek Harness `0.1.1-rc.1` at commit
+  `528c682e061696f5a160f363f236ecbf53cbd006`.
+- Kept Cordis at `4.0.1` and pi-ai at `0.82.1`; the pi-ai `0.83.0` spike remains a conclusion-B
+  compatibility report only.
+- Added fail-closed native DSH auth injection and a fixed 20 MiB DSH-owned image replacement
+  budget.
+
+This is an unpublished candidate record. No npm staging, publishing, GitHub release, or real
+credential operation is part of this change.
+
 ## 0.1.0-alpha.1
 
 ### Changed

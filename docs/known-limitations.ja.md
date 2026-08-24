@@ -2,12 +2,12 @@
 
 ## 検証済みの組み合わせ
 
-最初の Alpha が対応するのは、次の組み合わせだけです。
-新しいバージョンは、公開APIとpacked installを再検証するまで未対応です。
+未公開の `0.1.0-alpha.2` candidateが記録するのは、次の組み合わせだけです。
+まだ公開または公開サポートとして検証していません。新しいバージョンは、公開APIとpacked installを再検証するまで未対応です。
 
 | 構成要素 | 検証済みの値 |
 | --- | --- |
-| DeepSeek Harness | `0.1.0-rc.7` |
+| DeepSeek Harness | `0.1.1-rc.1` |
 | `@deepseek-ai/cordis` | `4.0.1` |
 | `@earendil-works/pi-ai` | `0.82.1` |
 | Node.js | `^22.19.0 || ^24.0.0 || ^26.0.0` |

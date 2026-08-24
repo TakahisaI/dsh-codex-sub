@@ -339,12 +339,15 @@ function assertPackedCandidateLaneJob(job, label) {
     count(job, '--package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"') === 1,
     `${label} packed-candidate-lane job must install the verified tarball.`,
   )
+  invariant(
+    count(job, '--expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"') === 1,
+    `${label} packed-candidate-lane job must pass the verified SHA-256 to the runner.`,
+  )
   assertNoArtifactMutation(job, label)
 }
 
-// The exact-artifact lane derives its own rc.1 candidate from reviewed source
-// inside the probe, builds it before installation, and never consumes the
-// shared candidate artifact.
+// The exact-artifact lane consumes the same immutable workflow artifact as the
+// packed-candidate lane and installs it into a fresh exact DSH Host.
 function assertExactArtifactLaneJob(job, label) {
   invariant(
     count(job, 'runs-on: ubuntu-latest') === 1,
@@ -359,17 +362,34 @@ function assertExactArtifactLaneJob(job, label) {
     `${label} exact-artifact-lane job must install the locked graph exactly once.`,
   )
   invariant(
-    !/^    needs:/mu.test(job),
-    `${label} exact-artifact-lane job must derive its own candidate instead of consuming an artifact.`,
+    /^    needs: candidate$/mu.test(job),
+    `${label} exact-artifact-lane job must consume the candidate artifact.`,
   )
   invariant(
-    count(job, PINNED_ACTIONS.downloadArtifact) === 0,
-    `${label} exact-artifact-lane job must not download the shared artifact.`,
+    count(job, PINNED_ACTIONS.downloadArtifact) === 1,
+    `${label} exact-artifact-lane job must download the shared artifact exactly once.`,
+  )
+  invariant(
+    count(job, `name: ${RELEASE_ARTIFACT_NAME}`) === 1,
+    `${label} exact-artifact-lane job must download the canonical workflow artifact.`,
+  )
+  invariant(
+    count(job, 'node scripts/release-artifact.mjs verify') === 1,
+    `${label} exact-artifact-lane job must verify the downloaded artifact exactly once.`,
   )
   invariant(
     count(job, 'pnpm run test:exact-artifact-lane') === 1,
     `${label} exact-artifact-lane job must execute the reviewed probe exactly once.`,
   )
+  invariant(
+    count(job, '--package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"') === 1,
+    `${label} exact-artifact-lane job must install the verified tarball.`,
+  )
+  invariant(
+    count(job, '--expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"') === 1,
+    `${label} exact-artifact-lane job must pass the verified SHA-256 to the runner.`,
+  )
+  assertNoArtifactMutation(job, label)
 }
 
 function assertArtifactConsumer(job, expected, label) {

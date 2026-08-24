@@ -3,11 +3,10 @@
 `dsh-codex-sub` is a DeepSeek Harness plugin that exposes the pi-ai `openai-codex`
 provider as a normal DSH model route using ChatGPT subscription authentication.
 
-> Status: Milestones 0 through 8 are complete: repository tooling, pure core contracts, the
-> credential document codec, the secure package-owned file vault, pi-ai OAuth integration, and the
-> native DSH LLM provider route, plus the package CLI, offline diagnostics, and packed-install
-> release gates. `0.1.0-alpha.1` is published to npm under the `alpha` dist-tag with provenance and
-> a matching GitHub prerelease.
+> Status: This worktree contains the unpublished `0.1.0-alpha.2` release candidate. It has not
+> been published, staged, or verified as public support. The last published `0.1.0-alpha.1`
+> record remains historical evidence; this candidate updates the DSH compatibility line to
+> `0.1.1-rc.1` while retaining pi-ai `0.82.1`.
 
 ## Product contract
 
@@ -54,7 +53,7 @@ Human readers should continue with:
 
 | Component | Verified value |
 | --- | --- |
-| DeepSeek Harness | `0.1.0-rc.7` |
+| DeepSeek Harness | `0.1.1-rc.1` (unpublished candidate) |
 | `@deepseek-ai/cordis` | `4.0.1` |
 | `@earendil-works/pi-ai` | `0.82.1` |
 | Node.js | `^22.19.0 || ^24.0.0 || ^26.0.0` |
@@ -64,9 +63,10 @@ See
 [known limitations](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/known-limitations.md)
 for the account, storage, platform, and product boundaries of the first Alpha.
 
-## Install the Alpha
+## Install the published Alpha
 
-Add the current npm Alpha to a DSH Web profile:
+The commands below install the previously published npm Alpha. They do not install this
+unpublished candidate, which must not be treated as release-ready or public support:
 
 ```sh
 dsh plugin --profile web add dsh-codex-sub@alpha \

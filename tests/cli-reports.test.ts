@@ -39,11 +39,11 @@ function runtime(
   })
   const packages = overrides.packages ?? Object.freeze({
     '@deepseek-ai/cordis': versionCheck('4.0.1'),
-    '@deepseek-ai/dsh-llm': versionCheck('0.1.0-rc.7'),
-    '@deepseek-ai/dsh-llm-pi-ai': versionCheck('0.1.0-rc.7'),
-    '@deepseek-ai/dsh-attachment': versionCheck('0.1.0-rc.7'),
-    '@deepseek-ai/dsh-atomic-write': versionCheck('0.1.0-rc.7'),
-    '@deepseek-ai/dsh-home-paths': versionCheck('0.1.0-rc.7'),
+    '@deepseek-ai/dsh-llm': versionCheck('0.1.1-rc.1'),
+    '@deepseek-ai/dsh-llm-pi-ai': versionCheck('0.1.1-rc.1'),
+    '@deepseek-ai/dsh-attachment': versionCheck('0.1.1-rc.1'),
+    '@deepseek-ai/dsh-atomic-write': versionCheck('0.1.1-rc.1'),
+    '@deepseek-ai/dsh-home-paths': versionCheck('0.1.1-rc.1'),
     '@earendil-works/pi-ai': versionCheck('0.82.1'),
   })
   const checks = [node, ...Object.values(packages)]
@@ -112,28 +112,28 @@ describe('CLI report projections', () => {
             status: 'compatible',
           },
           '@deepseek-ai/dsh-llm': {
-            supported: '0.1.0-rc.7',
-            installed: '0.1.0-rc.7',
+            supported: '0.1.1-rc.1',
+            installed: '0.1.1-rc.1',
             status: 'compatible',
           },
           '@deepseek-ai/dsh-llm-pi-ai': {
-            supported: '0.1.0-rc.7',
-            installed: '0.1.0-rc.7',
+            supported: '0.1.1-rc.1',
+            installed: '0.1.1-rc.1',
             status: 'compatible',
           },
           '@deepseek-ai/dsh-attachment': {
-            supported: '0.1.0-rc.7',
-            installed: '0.1.0-rc.7',
+            supported: '0.1.1-rc.1',
+            installed: '0.1.1-rc.1',
             status: 'compatible',
           },
           '@deepseek-ai/dsh-atomic-write': {
-            supported: '0.1.0-rc.7',
-            installed: '0.1.0-rc.7',
+            supported: '0.1.1-rc.1',
+            installed: '0.1.1-rc.1',
             status: 'compatible',
           },
           '@deepseek-ai/dsh-home-paths': {
-            supported: '0.1.0-rc.7',
-            installed: '0.1.0-rc.7',
+            supported: '0.1.1-rc.1',
+            installed: '0.1.1-rc.1',
             status: 'compatible',
           },
           '@earendil-works/pi-ai': {

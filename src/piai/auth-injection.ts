@@ -5,7 +5,6 @@ import type {
   CredentialStore,
 } from '@earendil-works/pi-ai'
 
-import { PROVIDER_ID } from '../core/constants.js'
 import { CodexError } from '../core/errors.js'
 
 function nativeStoreDisabled(): CodexError {
@@ -13,14 +12,6 @@ function nativeStoreDisabled(): CodexError {
     'The DSH-native credential path is disabled while package-owned OAuth is active.',
     'CODEX_UPSTREAM_PROTOCOL',
     { safeDetails: { reason: 'native_store_disabled' } },
-  )
-}
-
-function unsupportedProvider(): CodexError {
-  return new CodexError(
-    'The fail-closed auth injection does not own this provider.',
-    'CODEX_UPSTREAM_PROTOCOL',
-    { safeDetails: { reason: 'provider' } },
   )
 }
 
@@ -36,9 +27,6 @@ export function createFailClosedPiAiAuthInjection(): {
 } {
   const credentials: CredentialStore = {
     async read(_providerId: string): Promise<Credential | undefined> {
-      if (_providerId !== PROVIDER_ID) {
-        throw unsupportedProvider()
-      }
       return undefined
     },
     async list(): Promise<readonly CredentialInfo[]> {

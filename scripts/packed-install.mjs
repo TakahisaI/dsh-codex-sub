@@ -5,6 +5,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -21,6 +22,7 @@ import {
   assertCaptureComplete,
 } from './capture-output.mjs'
 import { validatePackageTarball } from './package-tarball.mjs'
+import { assertNoPiAiTopology, formatOpaquePiAiTopology } from './pi-ai-topology.mjs'
 
 const PACKAGE_NAME = 'dsh-codex-sub'
 const PLUGIN_ROW_ID = 'llm-codex-sub'
@@ -33,6 +35,18 @@ const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const dshExecutable = join(repositoryRoot, 'node_modules', '.bin', 'dsh')
 const probeDirectory = join(repositoryRoot, 'tests', 'fixtures', 'packed-install-probe')
 const blockerPath = join(probeDirectory, 'block-network.mjs')
+const truthyEnvironment = (value) => ['1', 'true', 'yes'].includes(String(value).toLowerCase())
+const temporaryPrefix = 'dsh-codex-sub-packed-install-'
+let temporaryRoot
+let sentinels = []
+let topologyReportMode = false
+const knownPaths = new Set([repositoryRoot])
+
+function registerPath(path) {
+  if (typeof path === 'string' && path.length > 0) {
+    knownPaths.add(path)
+  }
+}
 
 function invariant(condition, message) {
   if (!condition) {
@@ -48,15 +62,42 @@ function parseJson(text, label) {
   }
 }
 
-function redactTestOutput(text) {
-  let detail = text.slice(-4_000).replaceAll(temporaryRoot, '[TEMP]')
+function sanitizeFailureText(text) {
+  let detail = String(text)
+  // Replace the longest known roots first so a nested profile/store path is
+  // never exposed through a shorter parent replacement.
+  for (const path of [...knownPaths].sort((first, second) => second.length - first.length)) {
+    detail = detail.replaceAll(path, '[PATH]')
+  }
+  detail = detail.replaceAll(temporaryPrefix, '[TEMP]')
+  // DSH and package-manager diagnostics may print a physical dependency path
+  // that was not encountered by the topology census yet.
+  detail = detail.replaceAll('node_modules', '[DEPS]')
   for (const sentinel of sentinels) {
     detail = detail.replaceAll(sentinel, '[REDACTED]')
   }
-  return detail
+  return detail.slice(-4_000)
+}
+
+function redactTestOutput(text) {
+  return sanitizeFailureText(text)
+}
+
+function sanitizedFailureReason(error) {
+  const reason = error instanceof Error ? error.message : String(error)
+  return sanitizeFailureText(reason)
+    .split(/\r?\n/u)
+    .filter((line) => !/^\s*at\s+/u.test(line))
+    .join('\n')
 }
 
 function run(command, arguments_, options = {}) {
+  registerPath(options.cwd ?? repositoryRoot)
+  for (const argument of arguments_) {
+    if (typeof argument === 'string' && isAbsolute(argument)) {
+      registerPath(argument)
+    }
+  }
   const result = spawnSync(command, arguments_, {
     cwd: options.cwd ?? repositoryRoot,
     encoding: 'utf8',
@@ -148,6 +189,7 @@ async function readPackageRoot(packageName, parentFile) {
         }
         continue
       }
+      registerPath(resolved)
       const manifest = parseJson(
         await readFile(join(resolved, 'package.json'), 'utf8'),
         packageName,
@@ -176,6 +218,20 @@ async function assertAbsent(path, message) {
     throw error
   }
   throw new Error(message)
+}
+
+async function readOptionalText(path) {
+  try {
+    return await readFile(path, 'utf8')
+  } catch (error) {
+    if (error?.code === 'ENOENT') return undefined
+    throw error
+  }
+}
+
+async function readOptionalJson(path, label) {
+  const text = await readOptionalText(path)
+  return text === undefined ? undefined : parseJson(text, label)
 }
 
 async function inspectDependencyTopology(dshHome, compatibility) {
@@ -210,37 +266,212 @@ async function inspectDependencyTopology(dshHome, compatibility) {
     '@earendil-works/pi-ai',
     join(plugin.directory, 'package.json'),
   )
+  // The Host adapter declares a regular dependency on pi-ai, so it resolves
+  // its own copy; the checks above cannot stand in for what the adapter loads.
+  const hostAdapter = await readPackageRoot('@deepseek-ai/dsh-llm-pi-ai', hostParent)
+  const hostAdapterPiAi = await readPackageRoot(
+    '@earendil-works/pi-ai',
+    join(hostAdapter.directory, 'package.json'),
+  )
   invariant(hostPiAi.manifest.version === compatibility.piAi.version, 'Host pi-ai version drifted.')
   invariant(pluginPiAi.manifest.version === compatibility.piAi.version, 'Plugin pi-ai version drifted.')
-  invariant(hostPiAi.directory !== pluginPiAi.directory, 'Packed install did not exercise two pi-ai copies.')
+  if (!topologyReportMode) {
+    invariant(
+      hostAdapterPiAi.manifest.version === compatibility.piAi.version,
+      `Host adapter pi-ai resolved at ${hostAdapterPiAi.manifest.version}, expected ${compatibility.piAi.version}.`,
+    )
+  }
+  const distinctPiAiDirectories = [
+    ...new Set([hostPiAi.directory, pluginPiAi.directory, hostAdapterPiAi.directory]),
+  ]
+  if (!topologyReportMode) {
+    invariant(
+      distinctPiAiDirectories.length === 2,
+      `Expected exactly two physical pi-ai copies (host root, plugin); observed ${distinctPiAiDirectories.length}.`,
+    )
+  }
 
-  const hostPiAiAdapter = await readPackageRoot('@deepseek-ai/dsh-llm-pi-ai', hostParent)
-  for (const [packageName, supported] of Object.entries(hostPiAiAdapter.manifest.peerDependencies)) {
+  const topologyManifests = [
+    { label: 'repository package.json', path: join(repositoryRoot, 'package.json') },
+    { label: 'probe package.json', path: join(probeDirectory, 'package.json') },
+    { label: 'profile package.json', path: hostParent },
+    { label: 'profile-web package.json', path: profileParent },
+    { label: 'installed plugin package.json', path: join(plugin.directory, 'package.json') },
+  ]
+  const manifests = []
+  for (const { label, path } of topologyManifests) {
+    const manifest = await readOptionalJson(path, label)
+    if (manifest !== undefined) manifests.push({ label, manifest })
+  }
+  const topologyWorkspaces = [
+    { label: 'repository pnpm-workspace.yaml', path: join(repositoryRoot, 'pnpm-workspace.yaml') },
+    { label: 'profiles pnpm-workspace.yaml', path: join(profilesDirectory, 'pnpm-workspace.yaml') },
+    { label: 'profile-web pnpm-workspace.yaml', path: join(profileDirectory, 'pnpm-workspace.yaml') },
+  ]
+  const workspaces = []
+  for (const { label, path } of topologyWorkspaces) {
+    const text = await readOptionalText(path)
+    if (text !== undefined) workspaces.push({ label, text })
+  }
+  const topologyLocks = [
+    { label: 'repository pnpm-lock.yaml', path: join(repositoryRoot, 'pnpm-lock.yaml') },
+    { label: 'profiles pnpm-lock.yaml', path: join(profilesDirectory, 'pnpm-lock.yaml') },
+    { label: 'profile-web pnpm-lock.yaml', path: join(profileDirectory, 'pnpm-lock.yaml') },
+  ]
+  const locks = []
+  for (const { label, path } of topologyLocks) {
+    const text = await readOptionalText(path)
+    if (text !== undefined) locks.push({ label, text })
+  }
+  assertNoPiAiTopology({ locks, manifests, workspaces })
+
+  // Census every physical pi-ai identity visible to the installed profile, so
+  // an extra copy cannot hide behind the three resolution points above.
+  const virtualStoreDirectories = [
+    join(profilesDirectory, 'node_modules', '.pnpm'),
+    join(profileDirectory, 'node_modules', '.pnpm'),
+    // The Host runtime executes from the repository checkout during this probe,
+    // so resolutions can physically live in the repository's own virtual store.
+    join(repositoryRoot, 'node_modules', '.pnpm'),
+  ]
+  const directPackageRoots = [
+    join(profilesDirectory, 'node_modules', '@earendil-works', 'pi-ai'),
+    join(profileDirectory, 'node_modules', '@earendil-works', 'pi-ai'),
+    join(repositoryRoot, 'node_modules', '@earendil-works', 'pi-ai'),
+  ]
+  const censusEntries = []
+  for (const virtualStoreDirectory of virtualStoreDirectories) {
+    let storeEntries = []
+    try {
+      storeEntries = await readdir(virtualStoreDirectory)
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+      continue
+    }
+    for (const entry of storeEntries) {
+      if (!entry.startsWith('@earendil-works+pi-ai@')) continue
+      const storePackageRoot = join(
+        virtualStoreDirectory,
+        entry,
+        'node_modules',
+        '@earendil-works',
+        'pi-ai',
+      )
+      try {
+        const storeManifest = parseJson(
+          await readFile(join(storePackageRoot, 'package.json'), 'utf8'),
+          'pi-ai virtual-store manifest',
+        )
+        censusEntries.push({
+          directory: await realpath(storePackageRoot),
+          version: storeManifest.version,
+        })
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error
+      }
+    }
+  }
+  for (const directRoot of directPackageRoots) {
+    try {
+      const directManifest = parseJson(
+        await readFile(join(directRoot, 'package.json'), 'utf8'),
+        'pi-ai direct manifest',
+      )
+      censusEntries.push({ directory: await realpath(directRoot), version: directManifest.version })
+    } catch (error) {
+      if (error?.code !== 'ENOENT') throw error
+    }
+  }
+  const observedCopies = new Map(
+    censusEntries.map((copy) => [`${copy.version} ${copy.directory}`, copy]),
+  )
+  const copyLabels = new Map(
+    [...distinctPiAiDirectories]
+      .sort()
+      .map((directory, index) => [directory, `copy-${String(index + 1)}`]),
+  )
+  for (const directory of distinctPiAiDirectories) {
+    invariant(
+      [...observedCopies.values()].some((copy) => copy.directory === directory),
+      `Resolved pi-ai ${copyLabels.get(directory) ?? 'copy'} is missing from the virtual-store census.`,
+    )
+  }
+  const servingCopies = new Map(
+    distinctPiAiDirectories.map((directory) => [
+      directory,
+      [...observedCopies.values()].find((copy) => copy.directory === directory),
+    ]),
+  )
+  for (const [directory, copy] of servingCopies) {
+    const label = copyLabels.get(directory) ?? 'copy'
+    invariant(copy !== undefined, `Resolved pi-ai ${label} disappeared from the census.`)
+    if (!topologyReportMode) {
+      invariant(
+        copy.version === compatibility.piAi.version,
+        `Physical pi-ai ${label} resolved at ${copy.version}, expected ${compatibility.piAi.version}.`,
+      )
+    }
+  }
+  const additionalStoreIdentities = [...observedCopies.values()]
+    .filter((copy) => !distinctPiAiDirectories.includes(copy.directory))
+    .map((copy) => ({ directory: copy.directory, version: copy.version }))
+
+  for (const [packageName, supported] of Object.entries(hostAdapter.manifest.peerDependencies)) {
     const peer = await readPackageRoot(packageName, hostParent)
     const minimum = supported.startsWith('^') ? supported.slice(1) : supported
     invariant(peer.manifest.version === minimum, `${packageName} did not resolve at the verified Host version.`)
   }
 
+  const opaqueTopology = formatOpaquePiAiTopology({
+    resolutions: {
+      hostRoot: { directory: hostPiAi.directory, version: hostPiAi.manifest.version },
+      hostAdapter: { directory: hostAdapterPiAi.directory, version: hostAdapterPiAi.manifest.version },
+      plugin: { directory: pluginPiAi.directory, version: pluginPiAi.manifest.version },
+    },
+    additional: additionalStoreIdentities,
+  })
   return {
     dshPeersSharedWithHost: Object.keys(plugin.manifest.peerDependencies).length,
-    piAiCopies: 2,
-    transitiveHostPeersResolved: Object.keys(hostPiAiAdapter.manifest.peerDependencies).length,
+    ...opaqueTopology,
+    transitiveHostPeersResolved: Object.keys(hostAdapter.manifest.peerDependencies).length,
   }
 }
 
-const suppliedPackageTarball = parseCommandLine(process.argv.slice(2))
-const temporaryRoot = await mkdtemp(join(tmpdir(), 'dsh-codex-sub-packed-install-'))
-const artifactDirectory = join(temporaryRoot, 'artifacts')
-const dshHome = join(temporaryRoot, 'dsh-home')
-const resultPath = join(temporaryRoot, 'probe-result.json')
-const transcript = []
-const sentinels = [
-  `ACCESS_SENTINEL_${randomUUID()}`,
-  `REFRESH_SENTINEL_${randomUUID()}`,
-  `ACCOUNT_SENTINEL_${randomUUID()}`,
-]
+async function main() {
+  // Compatibility spikes may request an observational topology report, but
+  // this mode is deliberately unavailable to CI/release runs. The extra
+  // explicit opt-in prevents a stale environment variable from weakening the
+  // normal gate.
+  const topologyReportRequested = process.env.PACKED_INSTALL_TOPOLOGY_REPORT === '1'
+  const restrictedExecution = truthyEnvironment(process.env.CI)
+    || truthyEnvironment(process.env.GITHUB_ACTIONS)
+    || truthyEnvironment(process.env.RELEASE)
+    || process.env.NODE_ENV === 'production'
+  topologyReportMode = topologyReportRequested
+    && process.env.PACKED_INSTALL_COMPATIBILITY_SPIKE === '1'
+    && !restrictedExecution
+  if (topologyReportRequested && !topologyReportMode) {
+    throw new Error(
+      'PACKED_INSTALL_TOPOLOGY_REPORT requires PACKED_INSTALL_COMPATIBILITY_SPIKE=1 and is unavailable in CI/release mode.',
+    )
+  }
 
-try {
+  const suppliedPackageTarball = parseCommandLine(process.argv.slice(2))
+  temporaryRoot = await mkdtemp(join(tmpdir(), temporaryPrefix))
+  registerPath(temporaryRoot)
+  const artifactDirectory = join(temporaryRoot, 'artifacts')
+  const dshHome = join(temporaryRoot, 'dsh-home')
+  const resultPath = join(temporaryRoot, 'probe-result.json')
+  registerPath(artifactDirectory)
+  registerPath(dshHome)
+  const transcript = []
+  sentinels = [
+    `ACCESS_SENTINEL_${randomUUID()}`,
+    `REFRESH_SENTINEL_${randomUUID()}`,
+    `ACCOUNT_SENTINEL_${randomUUID()}`,
+  ]
+
+  try {
   await mkdir(artifactDirectory, { recursive: true })
   const compatibility = parseJson(
     await readFile(join(repositoryRoot, 'compatibility.json'), 'utf8'),
@@ -461,6 +692,14 @@ try {
     packedFiles,
     topology,
   })}\n`)
-} finally {
-  await rm(temporaryRoot, { force: true, recursive: true })
+  } finally {
+    if (temporaryRoot !== undefined) {
+      await rm(temporaryRoot, { force: true, recursive: true })
+    }
+  }
 }
+
+main().catch((error) => {
+  process.stderr.write(`packed-install failed: ${sanitizedFailureReason(error)}\n`)
+  process.exitCode = 1
+})

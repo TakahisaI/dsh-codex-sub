@@ -2,12 +2,13 @@
 
 ## Verified compatibility
 
-The first Alpha supports only the combination below. A newer version is unsupported until its
-public contracts and packed installation have been reviewed.
+The unpublished `0.1.0-alpha.2` candidate records only the combination below. It has not been
+published or verified as public support; a newer version is unsupported until its public contracts
+and packed installation have been reviewed.
 
 | Component | Verified value |
 | --- | --- |
-| DeepSeek Harness | `0.1.0-rc.7` |
+| DeepSeek Harness | `0.1.1-rc.1` |
 | `@deepseek-ai/cordis` | `4.0.1` |
 | `@earendil-works/pi-ai` | `0.82.1` |
 | Node.js | `^22.19.0 || ^24.0.0 || ^26.0.0` |

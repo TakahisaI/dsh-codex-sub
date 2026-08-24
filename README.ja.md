@@ -3,9 +3,8 @@
 `dsh-codex-sub` は、pi-ai の `openai-codex` プロバイダーを DeepSeek Harness（DSH）の通常のモデル経路として登録するプラグインです。
 認証には OpenAI Platform API キーではなく、ChatGPT 契約の OAuth を使います。
 
-> Milestone 0から8まで完了しています。
-> リポジトリ基盤、core契約、資格情報文書、package-owned file vault、pi-ai OAuth連携、DSHのLLM provider route、CLI、offline diagnostics、packed-install release gateが含まれます。
-> `0.1.0-alpha.1` はnpmの `alpha` dist-tagでprovenance付きで公開済みで、対応するGitHub prereleaseもあります。
+> このworktreeには、未公開の `0.1.0-alpha.2` release candidateがあります。まだpublishまたはstageしておらず、公開サポートとして検証済みとは扱いません。
+> 最後に公開した `0.1.0-alpha.1` の記録は履歴として保持し、このcandidateではDSHの互換性を `0.1.1-rc.1`、pi-aiを `0.82.1` に固定しています。
 
 ## プラグインが担う範囲
 
@@ -25,7 +24,7 @@ Codex へ最初に渡す指示は [`CODEX_BOOTSTRAP_PROMPT.md`](https://github.c
 
 | 構成要素 | 検証済みの値 |
 | --- | --- |
-| DeepSeek Harness | `0.1.0-rc.7` |
+| DeepSeek Harness | `0.1.1-rc.1`（未公開candidate） |
 | `@deepseek-ai/cordis` | `4.0.1` |
 | `@earendil-works/pi-ai` | `0.82.1` |
 | Node.js | `^22.19.0 || ^24.0.0 || ^26.0.0` |
@@ -33,9 +32,9 @@ Codex へ最初に渡す指示は [`CODEX_BOOTSTRAP_PROMPT.md`](https://github.c
 
 最初のAlphaにおけるaccount、storage、platform、productの境界は、[既知の制約](https://github.com/TakahisaI/dsh-codex-sub/blob/main/docs/known-limitations.ja.md)にまとめています。
 
-## Alphaの導入
+## 公開済みAlphaの導入
 
-npmで公開している現在のAlphaをDSH Web profileへ追加します。
+npmで公開済みのAlphaをDSH Web profileへ追加します。未公開candidateは導入手順や公開サポートの対象ではありません。
 
 ```sh
 dsh plugin --profile web add dsh-codex-sub@alpha \
