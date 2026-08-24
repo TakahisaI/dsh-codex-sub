@@ -1,6 +1,10 @@
 import { readFile, readdir } from 'node:fs/promises'
 import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import {
+  assertCurrentCandidateReleaseNote,
+  assertPublishedReleaseRecordHashes,
+} from './compatibility-release-notes.mjs'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 
@@ -52,12 +56,22 @@ const releaseNoteFiles = (await readdir(join(repositoryRoot, 'docs/releases')))
   .sort()
   .map((filename) => `docs/releases/${filename}`)
 
+const releaseNotes = await Promise.all(releaseNoteFiles.map(async (filename) => ({
+  filename,
+  text: await readText(filename),
+})))
+assertPublishedReleaseRecordHashes(releaseNotes)
+const currentCandidateNote = assertCurrentCandidateReleaseNote(
+  releaseNotes,
+  packageJson.version,
+)
+
 for (const filename of [
   'README.md',
   'README.ja.md',
   'docs/known-limitations.md',
   'docs/known-limitations.ja.md',
-  ...releaseNoteFiles,
+  currentCandidateNote.filename,
 ]) {
   const contents = await readText(filename)
   expectIncludes(`${filename}: DSH release`, contents, compatibility.dsh.release)

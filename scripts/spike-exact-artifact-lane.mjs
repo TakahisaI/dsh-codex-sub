@@ -9,30 +9,33 @@ import {
   writeFile,
 } from 'node:fs/promises'
 import { randomUUID } from 'node:crypto'
+import { parseArgs } from 'node:util'
 import { tmpdir } from 'node:os'
-import { basename, dirname, join } from 'node:path'
+import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
 import { once } from 'node:events'
 import { setTimeout as delay } from 'node:timers/promises'
 import { appendCapture, assertCaptureComplete } from './capture-output.mjs'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { validatePackageTarball } from './package-tarball.mjs'
 import {
-  assertCandidateVersion,
-  assertPackedCompatibilityMatchesSource,
-  assertPackedManifestMatchesSource,
-  collectLockfileDshPackageEntries,
-  deriveRc1CandidateSource,
-  readRepositoryCandidateInputs,
+  assertWorkflowArtifactSha256,
+  assertWorkflowArtifactSourceIdentity,
+} from './exact-artifact-contract.mjs'
+import {
   RC1_CANDIDATE_VERSION,
   RC1_UPSTREAM_COMMIT,
 } from './spike-rc1-candidate-source.mjs'
+import {
+  assertDshReleaseFamilyLock,
+  assertHostDshPackages,
+  enumerateHostDshPackages,
+} from './dsh-release-family-lock.mjs'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const candidateVersion = RC1_CANDIDATE_VERSION
 const upstreamCommit = RC1_UPSTREAM_COMMIT
 const packageName = 'dsh-codex-sub'
 const pluginRowId = 'llm-codex-sub'
-const probeName = 'dsh-codex-sub-packed-install-probe'
 const probeDirectory = join(repositoryRoot, 'tests', 'fixtures', 'packed-install-probe')
 const maxCaptureBytes = 4 * 1024 * 1024
 const bootTimeoutMs = 60_000
@@ -48,6 +51,29 @@ function parseJson(text, label) {
   } catch (cause) {
     throw new Error(`${label} did not emit valid JSON.`, { cause })
   }
+}
+
+function packageTarballArguments() {
+  const { values } = parseArgs({
+    args: process.argv[2] === '--' ? process.argv.slice(3) : process.argv.slice(2),
+    allowPositionals: false,
+    options: {
+      'expected-sha256': { type: 'string' },
+      'package-tarball': { type: 'string' },
+    },
+    strict: true,
+  })
+  const packageTarball = values['package-tarball']
+  const expectedSha256 = values['expected-sha256']
+    ?? process.env.DSH_WORKFLOW_ARTIFACT_SHA256
+  invariant(packageTarball !== undefined, '--package-tarball is required for the exact artifact lane.')
+  invariant(isAbsolute(packageTarball), '--package-tarball must be an absolute path.')
+  invariant(packageTarball.endsWith('.tgz'), '--package-tarball must name a .tgz file.')
+  invariant(
+    expectedSha256 !== undefined && /^[0-9a-f]{64}$/u.test(expectedSha256),
+    '--expected-sha256 (or DSH_WORKFLOW_ARTIFACT_SHA256) must be a lowercase SHA-256 digest.',
+  )
+  return { expectedSha256, packageTarball: resolve(packageTarball) }
 }
 
 function redact(value, secrets = []) {
@@ -187,40 +213,6 @@ function countExactLine(text, line) {
 }
 
 /**
- * Enumerate every physical DSH release-line package in the Host graph.
- *
- * Scans pnpm's store directory (`@deepseek-ai+dsh-<name>@<version>_…`) and
- * returns one entry per physical copy with its name, exact version, and
- * store-relative directory. Cordis-scoped and schemastery packages are
- * versioned independently and are never pinned to the DSH candidate version.
- */
-async function enumerateHostDshPackages() {
-  const storeDirectory = join(hostRoot, 'node_modules', '.pnpm')
-  let entries
-  try {
-    entries = await readdir(storeDirectory)
-  } catch (error) {
-    if (error?.code === 'ENOENT') return []
-    throw error
-  }
-  const packages = []
-  for (const entry of entries) {
-    if (!entry.startsWith('@deepseek-ai+')) continue
-    const remainder = entry.slice('@deepseek-ai+'.length)
-    const atSign = remainder.indexOf('@')
-    if (atSign <= 0) continue
-    const namePart = remainder.slice(0, atSign)
-    if (!namePart.startsWith('dsh')) continue
-    packages.push({
-      directory: entry,
-      name: `@deepseek-ai/${namePart}`,
-      version: remainder.slice(atSign + 1).split('_')[0],
-    })
-  }
-  return packages.sort((first, second) => first.directory.localeCompare(second.directory))
-}
-
-/**
  * Assert the final Host graph resolves entirely to the candidate version.
  *
  * Three independent checks:
@@ -237,34 +229,25 @@ async function assertWholeGraphIsCandidateVersion(seedNames) {
   // The pnpm lockfile is the authoritative resolution: every DSH release-line
   // entry it references must be the exact candidate version.
   const lockText = await readFile(join(hostRoot, 'pnpm-lock.yaml'), 'utf8')
-  const lockEntries = collectLockfileDshPackageEntries(lockText)
-  invariant(lockEntries.length > 0, 'The Host lockfile referenced no DSH release-line packages.')
-  for (const { name, version } of lockEntries) {
-    assertCandidateVersion(name, version, candidateVersion)
-  }
-  const referencedPairs = new Set(lockEntries.map(({ name, version }) => `${name}@${version}`))
+  const workspaceText = await readFile(join(hostRoot, 'pnpm-workspace.yaml'), 'utf8')
+  const lockReport = assertDshReleaseFamilyLock({
+    lockText,
+    workspaceText,
+    version: candidateVersion,
+  })
+  const referencedPairs = new Set([
+    ...lockReport.packageIdentities,
+    ...lockReport.snapshotIdentities,
+  ].map(({ name, version }) => `${name}@${version}`))
 
   // Physical store check: every store directory whose name+version pair is
   // referenced by the resolution must sit at the candidate version. pnpm
   // keeps unreferenced directories from earlier installs on disk, so entries
   // absent from the lockfile are garbage, not part of the graph.
-  const physical = await enumerateHostDshPackages()
+  const physical = await enumerateHostDshPackages(hostRoot)
   invariant(physical.length > 0, 'The Host graph resolved without any DSH packages.')
-  const byName = new Map()
-  for (const pkg of physical) {
-    if (!referencedPairs.has(`${pkg.name}@${pkg.version}`)) continue
-    const known = byName.get(pkg.name) ?? []
-    known.push(pkg)
-    byName.set(pkg.name, known)
-  }
-  for (const seed of seedNames) {
-    invariant(byName.has(seed), `${seed} was absent from the final Host graph.`)
-  }
-  for (const [name, copies] of byName) {
-    for (const copy of copies) {
-      assertCandidateVersion(name, copy.version, candidateVersion)
-    }
-  }
+  const selectedPhysical = physical.filter(pkg => referencedPairs.has(`${pkg.name}@${pkg.version}`))
+  assertHostDshPackages(selectedPhysical, seedNames, candidateVersion)
 
   // Live links must resolve into candidate-version copies too.
   const liveRoots = [
@@ -381,98 +364,6 @@ async function bootProbe(environment, resultPath) {
   return parseJson(probeText, 'exact-artifact packed probe')
 }
 
-/**
- * Build the exact rc.1 candidate tarball before any installation happens.
- *
- * The supported-line artifact is always built from the current reviewed
- * source — no external tarball input exists, so stale code cannot hide under
- * fresh metadata. It is packed by the reviewed pipeline, extracted once, and
- * transformed by the reviewed derivation: peers and the machine-readable
- * compatibility document move together to the candidate versions, and the
- * bundled compatibility identity inside lib follows them. The derivation
- * inputs are read from the extracted artifact itself and must match the
- * repository exactly before any mutation. Nothing is mutated after
- * installation; the Host receives these final bytes through its ordinary
- * `plugin add` path.
- */
-async function buildExactCandidateArtifact() {
-  const inputDestination = join(temporaryRoot, 'artifact-input')
-  await mkdir(inputDestination, { recursive: true })
-  run('pnpm', ['run', 'build'], { label: 'build supported source' })
-  const inputPack = parseJson(run('pnpm', [
-    'pack', '--pack-destination', inputDestination, '--json',
-  ], { label: 'pack supported artifact' }).stdout, 'supported pack')
-  const inputArtifact = await validatePackageTarball(inputPack.filename)
-
-  // Extract once, then apply the reviewed derivation before anything is
-  // installed so the Host only ever sees final candidate bytes.
-  const stagingRoot = join(temporaryRoot, 'candidate-source-staging')
-  const packageRoot = join(stagingRoot, 'package')
-  await mkdir(stagingRoot, { recursive: true })
-  run('tar', ['-xzf', inputArtifact.canonicalPath, '-C', stagingRoot], {
-    label: 'extract candidate staging',
-  })
-
-  // Derivation inputs come from the extracted artifact itself and must equal
-  // the reviewed source deeply. pnpm pack normalizes package.json (dropping
-  // `packageManager` and reordering keys), which the comparison tolerates;
-  // every other value, including nested dependency and bundle metadata, must
-  // match exactly.
-  const repositoryInputs = await readRepositoryCandidateInputs()
-  const extractedManifestText = await readFile(join(packageRoot, 'package.json'), 'utf8')
-  const extractedCompatibilityText = await readFile(join(packageRoot, 'compatibility.json'), 'utf8')
-  const extractedManifest = JSON.parse(extractedManifestText)
-  assertPackedManifestMatchesSource(extractedManifest, repositoryInputs.manifest)
-  const extractedCompatibility = JSON.parse(extractedCompatibilityText)
-  assertPackedCompatibilityMatchesSource(extractedCompatibility, repositoryInputs.compatibility)
-  const candidateSource = deriveRc1CandidateSource({
-    compatibility: extractedCompatibility,
-    manifest: extractedManifest,
-  })
-  const candidateManifestPath = join(packageRoot, 'package.json')
-  await writeFile(
-    candidateManifestPath,
-    `${JSON.stringify(candidateSource.manifest, null, 2)}\n`,
-    'utf8',
-  )
-  await writeFile(
-    join(packageRoot, 'compatibility.json'),
-    `${JSON.stringify(candidateSource.compatibility, null, 2)}\n`,
-    'utf8',
-  )
-
-  // tsdown inlines the compatibility document into every emitted entry, so
-  // move only the pinned identity fields inside lib to match the reviewed
-  // derivation while keeping the verified production bytecode unchanged.
-  const libDirectory = join(packageRoot, 'lib')
-  for (const entry of await readdir(libDirectory, { recursive: true })) {
-    if (!entry.endsWith('.mjs')) continue
-    const path = join(libDirectory, entry)
-    let source = await readFile(path, 'utf8')
-    source = source
-      .replaceAll('"release": "0.1.0-rc.7"', `"release": "${candidateVersion}"`)
-      .replaceAll('"repositoryCommit": "99f6f02fecdb7dff40c3fbc9470f5907c29f74ca"', `"repositoryCommit": "${upstreamCommit}"`)
-      .replaceAll('"0.1.0-rc.7"', `"${candidateVersion}"`)
-    await writeFile(path, source, 'utf8')
-  }
-
-  const candidatePack = parseJson(run('pnpm', [
-    '--dir', packageRoot, 'pack', '--pack-destination', artifactDirectory, '--json',
-  ], { label: 'pack exact candidate artifact' }).stdout, 'candidate pack')
-  const candidate = await validatePackageTarball(candidatePack.filename)
-
-  const stagedManifest = parseJson(await readFile(candidateManifestPath, 'utf8'), 'staged manifest')
-  for (const [name, expected] of Object.entries(stagedManifest.peerDependencies)) {
-    if (name === '@deepseek-ai/cordis') continue
-    invariant(expected === candidateVersion, `${name} candidate peer was not applied.`)
-  }
-  const stagedCompatibility = candidateSource.compatibility
-  invariant(stagedCompatibility.dsh.release === candidateVersion, 'Candidate release identity drifted.')
-  invariant(stagedCompatibility.dsh.repositoryCommit === upstreamCommit, 'Candidate commit identity drifted.')
-
-  return { candidateSource, candidate, inputArtifact }
-}
-
 const temporaryRoot = await mkdtemp(join(tmpdir(), 'dsh-codex-sub-exact-artifact-'))
 const artifactDirectory = join(temporaryRoot, 'artifacts')
 const hostRoot = join(temporaryRoot, 'host')
@@ -497,8 +388,27 @@ const allSentinels = [
 invariant(new Set(allSentinels).size === allSentinels.length, 'Generated credential sentinels collided.')
 
 try {
+  const { expectedSha256, packageTarball } = packageTarballArguments()
+  const inputArtifact = await validatePackageTarball(packageTarball)
+  assertWorkflowArtifactSha256(inputArtifact.sha256, expectedSha256)
+  const packedManifest = parseJson(run('tar', [
+    '-xOf', inputArtifact.canonicalPath, 'package/package.json',
+  ], { label: 'read workflow artifact manifest' }).stdout, 'workflow artifact manifest')
+  const packedCompatibility = parseJson(run('tar', [
+    '-xOf', inputArtifact.canonicalPath, 'package/compatibility.json',
+  ], { label: 'read workflow artifact compatibility' }).stdout, 'workflow artifact compatibility')
+  const repositoryManifest = parseJson(await readFile(join(repositoryRoot, 'package.json'), 'utf8'), 'repository package.json')
+  const repositoryCompatibility = parseJson(await readFile(join(repositoryRoot, 'compatibility.json'), 'utf8'), 'repository compatibility.json')
+  assertWorkflowArtifactSourceIdentity({
+    packedManifest,
+    packedCompatibility,
+    repositoryManifest,
+    repositoryCompatibility,
+    version: candidateVersion,
+    repositoryCommit: upstreamCommit,
+  })
+  const candidateSource = { manifest: packedManifest, compatibility: packedCompatibility }
   await mkdir(artifactDirectory, { recursive: true })
-  const { candidateSource, candidate, inputArtifact } = await buildExactCandidateArtifact()
 
   // Phase 1 — compose a fresh isolated Host graph pinned to exact rc.1
   // packages. Every DSH release-line package declares a caret range, so an
@@ -519,10 +429,14 @@ try {
       '@deepseek-ai/cordis': candidateSource.manifest.peerDependencies['@deepseek-ai/cordis'],
       '@deepseek-ai/schemastery': '^3.18.1',
       '@earendil-works/pi-ai': candidateSource.compatibility.piAi.version,
-      ...Object.fromEntries(seedPackages.map(name => [name, candidateVersion])),
     },
+    devDependencies: Object.fromEntries(seedPackages.map(name => [name, candidateVersion])),
   }
   await writeFile(join(hostRoot, 'package.json'), `${JSON.stringify(hostManifest, null, 2)}\n`)
+  await writeFile(
+    join(hostRoot, 'compatibility.json'),
+    `${JSON.stringify(candidateSource.compatibility, null, 2)}\n`,
+  )
   // pnpm 11 no longer reads the package.json "pnpm" field; overrides live in
   // pnpm-workspace.yaml.
   const workspacePath = join(hostRoot, 'pnpm-workspace.yaml')
@@ -536,7 +450,7 @@ try {
   // exists, so transitive peers drift unless each discovered release-line
   // package is pinned explicitly. Reinstall once with the complete override
   // set, then verify the whole graph below.
-  const discovered = await enumerateHostDshPackages()
+  const discovered = await enumerateHostDshPackages(hostRoot)
   const seedNameSet = new Set(seedPackages)
   const discoveredNames = new Set(discovered.map(pkg => pkg.name))
   for (const seed of seedPackages) {
@@ -575,12 +489,16 @@ try {
   const probePack = parseJson(run('pnpm', [
     '--dir', probeDirectory, 'pack', '--pack-destination', artifactDirectory, '--json',
   ], { env: baseEnvironment, label: 'pack probe fixture' }).stdout, 'probe pack')
+  const beforeInstallArtifact = await validatePackageTarball(inputArtifact.canonicalPath)
+  assertWorkflowArtifactSha256(beforeInstallArtifact.sha256, expectedSha256)
 
   // Phase 2 — install the exact candidate bytes with the ordinary plugin path.
   run(dshExecutable, [
-    'plugin', '--profile', 'web', 'add', candidate.canonicalPath,
+    'plugin', '--profile', 'web', 'add', inputArtifact.canonicalPath,
     '--save-exact', '--allow-build=@google/genai', '--allow-build=protobufjs',
   ], { cwd: hostRoot, env: baseEnvironment, label: 'install exact candidate artifact' })
+  const afterInstallArtifact = await validatePackageTarball(inputArtifact.canonicalPath)
+  assertWorkflowArtifactSha256(afterInstallArtifact.sha256, expectedSha256)
   run(dshExecutable, [
     'plugin', '--profile', 'web', 'add', probePack.filename, '--save-exact',
   ], { cwd: hostRoot, env: baseEnvironment, label: 'install probe fixture' })
@@ -607,7 +525,7 @@ try {
   const resultPath = join(temporaryRoot, 'probe-result.json')
   const blockerPath = join(probeDirectory, 'block-network.mjs')
   // The probe fixture's own dsh.bundle.patch (cordis.patch.yml) inserts its
-  // loader entry as part of the bundle stack; no extra --patch overlay is
+  // loader entry as part of the bundle stack; no extra patch argument is
   // needed and re-inserting the same id would fail with a duplicate entry.
   const probeEnvironment = {
     ...baseEnvironment,
@@ -765,12 +683,12 @@ try {
   }), 'Exact-artifact lane summary')
 
   process.stdout.write(`${JSON.stringify({
-    candidateArtifactSha256: candidate.sha256,
+    installedArtifactSha256: afterInstallArtifact.sha256,
     candidateVersion,
     catalogModelCount: probe.modelCount,
     doctorOverall: doctorReport.overall,
     hostDshPhysicalCopies: finalPhysicalCopies,
-    inputArtifactSha256: inputArtifact.sha256,
+    workflowArtifactSha256: inputArtifact.sha256,
     nativeCredentialDeletedAfterRestart: confirmDeletedProbe.nativeCredentialDeleted,
     networkAttempts: probe.networkAttempts,
     networkAttemptsAfterDelete: confirmDeletedProbe.networkAttempts,

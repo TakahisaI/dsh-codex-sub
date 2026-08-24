@@ -1,5 +1,9 @@
 # Architecture
 
+The current implementation is the unpublished `0.1.0-alpha.2` candidate: DSH
+`0.1.1-rc.1`, Cordis `4.0.1`, and pi-ai `0.82.1`. This combination is a candidate record, not a
+public support or release-ready claim.
+
 ## 1. Architectural objective
 
 The plugin must place a ChatGPT-authenticated Codex model behind DSH's ordinary LLM seam without

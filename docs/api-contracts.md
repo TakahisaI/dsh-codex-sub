@@ -1,5 +1,9 @@
 # API contracts
 
+These contracts are reviewed against the unpublished `0.1.0-alpha.2` candidate (DSH
+`0.1.1-rc.1`, Cordis `4.0.1`, pi-ai `0.82.1`). The candidate has not been published or verified as
+public support.
+
 These interfaces describe intent. Implementations must adapt them to the exact published types of
 the pinned dependencies and record material mismatches in an ADR.
 

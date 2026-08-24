@@ -2,17 +2,21 @@
 
 ## 1. Baseline
 
-The design baseline is:
+The current unpublished candidate baseline is:
 
-- DeepSeek Harness `0.1.0-rc.7`;
+- DeepSeek Harness `0.1.1-rc.1`;
 - `@deepseek-ai/cordis` `4.0.1`;
-- `@deepseek-ai/dsh-llm-pi-ai` `0.1.0-rc.7`;
+- `@deepseek-ai/dsh-llm-pi-ai` `0.1.1-rc.1`;
 - `@earendil-works/pi-ai` `0.82.1`;
 - Node.js `^22.19.0 || ^24.0.0 || ^26.0.0`;
 - Linux and macOS;
 - pnpm `11.7.0` for repository development.
 
 The exact machine-readable values live in the root `compatibility.json`.
+
+The pi-ai `0.83.0` compatibility spike is retained as evidence only; its conclusion is recorded
+in [`docs/compatibility-reports/pi-ai-0.83.0.md`](compatibility-reports/pi-ai-0.83.0.md). The
+formal candidate remains on pi-ai `0.82.1`.
 
 ## 2. Exact verification, not optimistic ranges
 

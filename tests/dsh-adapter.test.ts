@@ -68,12 +68,16 @@ class AuthServiceProbe implements CodexAuthService {
   async logout(): Promise<void> {}
 }
 
-function profile(provider: Provider, streamIdleTimeoutMs = 1_000): ResolvedPiAiProviderProfile {
+function profile(
+  provider: Provider,
+  streamIdleTimeoutMs = 1_000,
+  maxRequestImageBytes = 20 * 1024 * 1024,
+): ResolvedPiAiProviderProfile {
   return Object.freeze({
     provider: PROVIDER_ID,
     displayName: PROVIDER_DISPLAY_NAME,
     streamIdleTimeoutMs,
-    maxRequestImageBytes: 20 * 1024 * 1024,
+    maxRequestImageBytes,
     retryPolicy: resolveRetryPolicy(undefined, 'test.openai-codex.retryPolicy'),
     piProvider: provider,
     configuredMaxTokens: new Map<string, number>(),
@@ -704,5 +708,58 @@ describe('Codex DSH adapter', () => {
     }))).rejects.toMatchObject({ code: 'UNSUPPORTED_CONTENT' })
     expect(attachmentReads).toBe(0)
     expect(faux.state.callCount).toBe(0)
+  })
+
+  it('replaces an over-budget image with DSH-owned text before provider I/O', async () => {
+    const faux = fauxProvider({
+      provider: PROVIDER_ID,
+      models: [{ id: MODEL_ID, input: ['text', 'image'] }],
+    })
+    const ref = Object.freeze({
+      attachmentId: AttachmentId('over-budget-image'),
+      mediaType: 'image/png' as const,
+      bytes: 4,
+      width: 1,
+      height: 1,
+    })
+    let attachmentReads = 0
+    const attachmentStore = {
+      async readImage(received: typeof ref) {
+        attachmentReads += 1
+        expect(received).toStrictEqual(ref)
+        return { ref, data: new Uint8Array([137, 80, 78, 71]) }
+      },
+    } as unknown as AttachmentStore
+    let providerImageBlocks = 0
+    let providerTextBlocks = 0
+    let providerHasText = false
+    faux.setResponses([
+      (context) => {
+        const message = context.messages[0]
+        const content = message?.role === 'user' && Array.isArray(message.content)
+          ? message.content
+          : []
+        providerImageBlocks = content.filter((block) => block.type === 'image').length
+        providerTextBlocks = content.filter((block) => block.type === 'text').length
+        providerHasText = typeof message?.content === 'string' || providerTextBlocks > 0
+        return fauxAssistantMessage('image replaced')
+      },
+    ])
+    const adapter = new CodexDshAdapter({
+      authService: new AuthServiceProbe(),
+      profile: profile(faux.provider, 1_000, 1),
+      resolveAttachments: () => attachmentStore,
+    })
+    const userMessage = createUserMessage({
+      content: [{ type: 'image', attachment: ref }],
+      source: { kind: 'user' },
+    })
+
+    await collect(adapter.stream({ ...request(), messages: [userMessage] }))
+
+    expect(attachmentReads).toBe(0)
+    expect(faux.state.callCount).toBe(1)
+    expect(providerImageBlocks).toBe(0)
+    expect(providerHasText).toBe(true)
   })
 })

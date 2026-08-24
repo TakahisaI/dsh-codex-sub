@@ -61,7 +61,7 @@ jobs:
       - run: pnpm run test:candidate-lane
 
   packed-candidate-lane:
-    name: Ephemeral-overlay DSH rc.1 packed candidate
+    name: Fresh packed workflow artifact on DSH 0.1.1-rc.1
     needs: candidate
     runs-on: ubuntu-latest
     steps:
@@ -83,9 +83,11 @@ jobs:
       - run: >-
           pnpm run test:packed-candidate-lane --
           --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
+          --expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"
 
   exact-artifact-lane:
-    name: Exact derived artifact on fresh DSH 0.1.1-rc.1
+    name: Exact workflow artifact on fresh DSH 0.1.1-rc.1
+    needs: candidate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -94,7 +96,19 @@ jobs:
           node-version: 24
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
-      - run: pnpm run test:exact-artifact-lane
+      - uses: actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131 # v7.0.0
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:exact-artifact-lane --
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
+          --expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"
 
   packed-install:
     name: Packed install (${{ matrix.os }}, Node ${{ matrix.node }})

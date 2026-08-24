@@ -1,5 +1,11 @@
 # Implementation plan
 
+## Current candidate status
+
+The worktree records an unpublished `0.1.0-alpha.2` candidate on DSH `0.1.1-rc.1`, Cordis
+`4.0.1`, and pi-ai `0.82.1`. It is not release-ready and must not be described as public support
+until the exact artifact and external release gates are completed.
+
 Each milestone should be a separate PR unless the milestone is trivially small. Do not combine OAuth
 and DSH integration in the same first implementation change.
 

@@ -13,9 +13,9 @@ not moved to the separately released pi-ai `0.83`/`0.84` lines.
 
 Public inspection of the release found the native runtime path but no browser implementation that
 starts the Codex login from the Models page or carries its notices/prompts over the Web wire. The
-published plugin, in contrast, already provides a working CLI login surface, package-owned
+previously published plugin line, in contrast, provided a working CLI login surface, package-owned
 owner-only storage, request-time refresh, offline diagnostics, exact rc.7 compatibility, and an
-ordinary DSH model route.
+ordinary DSH model route. The current candidate updates that boundary to DSH `0.1.1-rc.1`.
 
 Upstream inspected release: `dsh-v0.1.1-rc.1`, commit
 `528c682e061696f5a160f363f236ecbf53cbd006`.
@@ -51,24 +51,37 @@ This decision is accepted from two completed, secret-free evidence lanes plus st
   explicit-token provider boundary, zero reads or writes through the fail-closed native store
   during streaming, request-image offload under a deliberately one-byte profile budget, and
   offline fake authorization save/read/delete on the native record seam.
-- The merged fresh-packed ephemeral-overlay lane (#49, closing #47) installed one unpublished
-  production bundle, overlaid for rc.1 metadata only, into an isolated fresh Host: a unique
-  provider route with a seven-model catalog, direct and adapter-transitive peers resolving to the
-  same Host copies with two pi-ai copies retained, duplicate-route and configurable-directory
-  rejection, signed-out `CODEX_AUTH_REQUIRED` with zero provider network attempts across
-  save/restart/post-logout/confirm-deleted boots, working packaged CLI status and doctor, the
-  package-owned credential preserved across restart and removed by logout without disturbing an
-  adjacent file, and an independent native credential record deleted across process boundaries.
+- The merged fresh-packed lane (#49, closing #47) now consumes the immutable exact workflow
+  artifact directly in an isolated fresh Host: a unique provider route with a seven-model catalog,
+  direct and adapter-transitive peers resolving to the same Host copies with two pi-ai copies
+  retained, duplicate-route and configurable-directory rejection, signed-out
+  `CODEX_AUTH_REQUIRED` with zero provider network attempts across save/restart/post-logout/
+  confirm-deleted boots, working packaged CLI status and doctor, the package-owned credential
+  preserved across restart and removed by logout without disturbing an adjacent file, and an
+  independent native credential record deleted across process boundaries.
 - Natural refresh observation on a real account (#33) remains a maintainer-controlled follow-up;
   it is not an ownership prerequisite because refresh contracts are covered offline and the
   supported release line is unchanged.
 - Scheduled upstream drift detection (#36) continues as a non-blocking canary outside blocking CI.
 
+### Candidate-owned image and auth boundary
+
+The candidate keeps the request-image budget fixed at 20 MiB (`20 * 1024 * 1024`) in the adapter.
+DSH's public package root does not export an equivalent constant, so the plugin does not import an
+unpublished DSH subpath. Oversized image and base64 inputs are replaced with DSH-owned text before
+provider I/O. This replacement is an adapter responsibility and is not exposed as plugin
+configuration.
+
+The public rc.1 `PiAiAdapterOptions.auth` type is the only auth-injection seam. The injected
+implementation is fail-closed: native credential reads are unset, native writes/deletes/logout
+return fixed safe errors, and environment/file lookup is empty. No package credential is copied,
+migrated, or used as a native fallback.
+
 ## Verification lanes
 
-The supported lane remains exact DSH `0.1.0-rc.7`, Cordis `4.0.1`, pi-ai `0.82.1`. Root metadata,
-runtime checks, built-entry smoke, packed installation, and release claims stay pinned to that
-combination.
+The current candidate lane is exact DSH `0.1.1-rc.1`, Cordis `4.0.1`, pi-ai `0.82.1`. Root
+metadata, runtime checks, built-entry smoke, packed installation, and candidate claims are pinned
+to that combination. The earlier published rc.7 lane remains historical evidence only.
 
 The candidate lane is isolated in a temporary install root with exact DSH/Cordis packages at
 `0.1.1-rc.1` and pi-ai at `0.82.1`. Its black-box probes bundle the production entry and verify:
@@ -92,63 +105,59 @@ CI runs this lane once on Node 24; broader runtime expansion remains an exit cri
 
 | Lane | Result | Scope |
 | --- | --- | --- |
-| Supported rc.7 full check | PASS locally | lint, types, declarations, tests, boundaries, build, smoke, compatibility, licenses, release state, pack contract |
-| Supported rc.7 packed install | PASS locally | signed-out auth failure before I/O and zero provider network attempts |
+| Historical published rc.7 full check | PASS locally | prior Alpha evidence; not the current candidate claim |
+| Historical published rc.7 packed install | PASS locally | prior Alpha evidence; not the current candidate claim |
 | Candidate rc.1 isolated lane | PASS locally | production adapter stream, fail-closed injection, duplicate route, native record seam |
-| Ephemeral-overlay packed rc.1 candidate | PASS locally | isolated fresh Host install of a test-only rc.1 metadata overlay built from one production bundle; route, duplicate adapter/directory rejection, offline failure across four Host boots, CLI diagnostics, package-owned restart/logout with adjacent-file preservation, native record restart/delete/delete-persistence |
-| Exact derived rc.1 candidate on fresh rc.1 Host | PASS locally | one tarball derived by the reviewed transformation and installed without any post-build mutation into an exact-pinned fresh `0.1.1-rc.1` Host: unique route with seven-model catalog, duplicate adapter/directory rejection, signed-out `CODEX_AUTH_REQUIRED` with zero provider network attempts across save/restart/post-logout/confirm-deleted boots, CLI status/doctor compatible, package-owned credential preserved then removed by logout without disturbing an adjacent file, independent native record deleted across process boundaries |
-| Exact published alpha.1 artifact on rc.1 | NOT TESTED | intentionally rejected by the frozen supported-lane guard; requires the future compatibility release itself and its own matrix (#50 acceptance) |
+| Candidate rc.1 source/contract replay, retry, cancellation | PASS locally | source-level contract suites exercise the DSH-owned conversion and lifecycle boundaries on exact `0.1.1-rc.1` |
+| Fresh-packed rc.1 replay, retry, cancellation | NOT TESTED | deferred to #51; the fresh-packed probe intentionally remains an offline topology/auth gate |
+| Fresh-packed rc.1 workflow artifact | PASS locally | one immutable workflow artifact installed without mutation into an exact-pinned fresh `0.1.1-rc.1` Host: unique route with seven-model catalog, duplicate adapter/directory rejection, signed-out `CODEX_AUTH_REQUIRED` with zero provider network attempts across save/restart/post-logout/confirm-deleted boots, CLI status/doctor compatible, package-owned credential preserved then removed by logout without disturbing an adjacent file, independent native record deleted across process boundaries |
 
-The ephemeral-overlay packed probe starts from one frozen production bundle, then applies a
-test-only manifest/compatibility overlay so that identical emitted code can activate on an isolated
-`0.1.1-rc.1` Host. In CI it consumes the single verified unpublished artifact produced by the
-candidate job; locally it may build that input first. The overlay does not change repository
-compatibility metadata or publish anything, and it must not be reported as the exact public artifact
-running on DSH rc.1. The probe pins the isolated Host's DSH release-line packages to
-`0.1.1-rc.1`, proves direct and adapter-transitive peers resolve to the same Host copies, retains
-two pi-ai copies, rejects duplicate adapters and directories, proves signed-out requests fail
-before provider I/O on save/restart/post-logout/confirm-deleted boots, verifies CLI diagnostics,
-preserves the package-owned credential through restart and removes it through logout without
-disturbing an adjacent marker file, and deletes an independent native record across process
-boundaries. Native and package-owned stores receive distinct generated sentinel triplets, and the
-native record is required to match only its own triplet. Generated sentinels bound subprocess
-captures through stdio close, are redacted from failures, and are checked against printable output.
-Attachment/image-budget behavior is covered by the source-level rc.1 candidate lane. Replay,
-retry, and cancellation remain covered by the supported rc.7 contract suites only and are NOT
-TESTED on rc.1; the candidate-lane probe runs a single stream with retries disabled and exercises
-no replay or cancellation scenario. Fresh-packed rc.1 coverage for all four behaviors is deferred
-to #51. Natural refresh remains #33 and a real-account smoke remains promotion-gated.
+The fresh-packed probe consumes the single verified unpublished workflow artifact produced by the
+candidate job and installs those bytes directly into an isolated Host. It does not rewrite a
+manifest or repack the artifact. The probe
+pins the isolated Host's DSH release-line packages to `0.1.1-rc.1`, proves direct and
+adapter-transitive peers resolve to the same Host copies, retains two pi-ai copies, rejects
+duplicate adapters and directories, proves signed-out requests fail before provider I/O on
+save/restart/post-logout/confirm-deleted boots, verifies CLI diagnostics, preserves the
+package-owned credential through restart and removes it through logout without disturbing an
+adjacent marker file, and deletes an independent native record across process boundaries. Native
+and package-owned stores receive distinct generated sentinel triplets, and the native record is
+required to match only its own triplet. Generated sentinels bound subprocess captures through
+stdio close, are redacted from failures, and are checked against printable output.
+Attachment/image-budget behavior plus replay, retry, and cancellation are PASS in the source-level
+rc.1 contract suites. Fresh-packed replay, retry, and cancellation remain NOT TESTED and are
+deferred to #51. Natural refresh remains #33 and a real-account smoke remains promotion-gated.
 
-The supported matrix is enforced by CI. The isolated source and fresh-packed candidate lanes run as
-dedicated Node 24 CI jobs, alongside the exact-artifact lane that derives one rc.1 candidate from
-reviewed source, builds it before installation, and installs those bytes without post-build
+The candidate matrix is enforced by CI. The isolated source and fresh-packed candidate lanes run as
+dedicated Node 24 CI jobs, alongside the exact-artifact lane that downloads the same verified
+workflow artifact, checks its SHA before and after installation, and installs those bytes without
 mutation into a Host whose DSH release-line packages are each pinned to the exact candidate
 version. Because every upstream package declares a caret range and `0.1.1-rc.2` is now public,
 an unpinned install resolves to newer packages; the lane discovers the full release-line package
 set from the seed graph and pins it explicitly through pnpm workspace overrides before verifying
-the topology above. The exact published alpha.1 artifact remains untested on rc.1 until the
-compatibility release exists (#50).
+the topology above. The future compatibility-release matrix remains the gate for published bytes
+on rc.1 (#50).
 
-The production runtime guard intentionally rejects candidate DSH before registration. A future
-alpha may update peers only after this decision and the complete exact-artifact matrix pass; the
-exact-artifact lane supplies the installability half of that matrix, and the compatibility-release
-lane (#50) completes it with the published bytes themselves.
+The production runtime guard accepts only the exact candidate DSH/Cordis/pi-ai values. The
+candidate remains unpublished and is not public support until this decision and the complete
+exact-artifact matrix pass; the exact-artifact lane supplies the installability half of that matrix,
+and the compatibility-release lane (#50) completes it with the published bytes themselves.
 
 ## Consequences and exit criteria
 
-With this decision accepted, work on an rc.1-compatible candidate may begin, but nothing may be
-published or moved into supported compatibility metadata until every exit criterion below passes,
-including the exact published-artifact matrix on rc.1.
+With this decision accepted, work on an rc.1-compatible candidate may continue, but nothing may be
+published or described as public support until every exit criterion below passes, including the
+exact published-artifact matrix on rc.1.
 
 Promotion to a reviewed alpha requires all of the following:
 
-1. supported rc.7 full checks and six-cell packed-install matrix remain green;
+1. historical rc.7 full checks and six-cell packed-install matrix remain available as prior Alpha evidence;
 2. isolated rc.1 probes pass on the same Node matrix where practical (the current gate is Node 24);
 3. peer dependencies and machine-readable compatibility move together only after review;
-4. ephemeral-overlay packed rc.1 installation proves one route, duplicate-route safety,
-   signed-out `CODEX_AUTH_REQUIRED`, zero provider network attempts, CLI diagnostics, and
-   credential preservation/removal behavior; the exact published artifact on rc.1 remains
-   explicitly out of scope for this evidence;
+4. fresh-packed installation of the exact workflow artifact proves one route, duplicate-route
+   safety, signed-out `CODEX_AUTH_REQUIRED`, zero provider network attempts, CLI diagnostics, and
+   credential preservation/removal behavior; fresh-packed replay, retry, and cancellation remain
+   explicitly deferred to #51;
 5. a maintainer-controlled real-account smoke covers login, model request, natural refresh,
    restart, and logout on the exact artifact;
 6. upstream Web login-start remains absent only while this package remains responsible for the
@@ -164,10 +173,10 @@ without publishing an unverified combination.
 
 Every deferred or untested item is classified and tracked here:
 
-- DEFERRED (#51) — Broaden fresh packed rc.1 evidence to attachment, replay, retry, and
-  cancellation; the source-level rc.1 lane already covers attachment/image-budget behavior, while
-  replay, retry, and cancellation are proven only by the supported rc.7 suites. The ownership
-  decision does not depend on repeating these behaviors on a fresh install.
+- DEFERRED (#51) — Broaden fresh packed rc.1 evidence to replay, retry, and cancellation; the
+  source-level rc.1 contract suites already pass attachment/image-budget, replay, retry, and
+  cancellation behavior. The ownership decision does not depend on repeating these behaviors on a
+  fresh install.
 - NOT TESTED (#50) — Prove the exact published artifact on DSH rc.1 only in a future
   compatibility-release lane with its own full matrix; do not use peer overrides or duplicate
   installs as substitute evidence. This is a promotion gate, not an ownership prerequisite.

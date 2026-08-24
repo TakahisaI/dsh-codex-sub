@@ -14,6 +14,7 @@ import type {
 } from '@deepseek-ai/dsh-llm'
 import { PiAiAdapter } from '@deepseek-ai/dsh-llm-pi-ai'
 import type {
+  PiAiAdapterOptions,
   ResolvedPiAiProviderProfile,
 } from '@deepseek-ai/dsh-llm-pi-ai'
 
@@ -36,15 +37,12 @@ import { createFailClosedPiAiAuthInjection } from '../piai/auth-injection.js'
 export const CODEX_STREAM_IDLE_TIMEOUT_MS = 300_000
 export const CODEX_MAX_REQUEST_IMAGE_BYTES = 20 * 1024 * 1024
 
-interface CandidatePiAiAuthInjection {
-  readonly credentials: unknown
-  readonly authContext: unknown
-}
+type PiAiAuthInjection = PiAiAdapterOptions['auth']
 
 export interface CodexDshAdapterOptions {
   readonly authService: CodexAuthService
-  /** Candidate-lane seam for observing the production fail-closed injection. */
-  readonly authInjection?: CandidatePiAiAuthInjection
+  /** Test seam for observing the production fail-closed injection. */
+  readonly authInjection?: PiAiAuthInjection
   readonly profile?: ResolvedPiAiProviderProfile
   readonly resolveAttachments?: () => AttachmentStore | undefined
   readonly onReplayDegrade?: (detail: {
@@ -80,15 +78,6 @@ function toDshError(error: unknown): never {
   throw error
 }
 
-/**
- * DSH 0.1.1-rc.1 makes this field required while the supported rc.7 declaration
- * omits it. Candidate-only construction is therefore applied through a
- * version-tolerant object extension and verified by the isolated candidate lane.
- */
-function createCandidateAdapterOptions(): Record<string, unknown> {
-  return { auth: createFailClosedPiAiAuthInjection() }
-}
-
 export function withRequestSignal(
   store: AttachmentStore,
   requestSignal: AbortSignal | undefined,
@@ -115,7 +104,7 @@ export function withRequestSignal(
 
 export class CodexDshAdapter extends LlmAdapter {
   readonly #authService: CodexAuthService
-  readonly #authInjection: CandidatePiAiAuthInjection | undefined
+  readonly #authInjection: PiAiAuthInjection
   readonly #catalogAdapter: PiAiAdapter
   readonly #onReplayDegrade: CodexDshAdapterOptions['onReplayDegrade']
   readonly #profile: ResolvedPiAiProviderProfile
@@ -125,7 +114,7 @@ export class CodexDshAdapter extends LlmAdapter {
   constructor(options: CodexDshAdapterOptions) {
     super()
     this.#authService = options.authService
-    this.#authInjection = options.authInjection
+    this.#authInjection = options.authInjection ?? createFailClosedPiAiAuthInjection()
     this.#resolveAttachments = options.resolveAttachments
     this.#onReplayDegrade = options.onReplayDegrade
     const profile = requireCodexProfile(options.profile ?? createProductionProfile())
@@ -148,9 +137,7 @@ export class CodexDshAdapter extends LlmAdapter {
     return new PiAiAdapter({
       profiles: () => profiles,
       resolveApiKey,
-      ...(this.#authInjection === undefined
-        ? createCandidateAdapterOptions()
-        : { auth: this.#authInjection }),
+      auth: this.#authInjection,
       ...(this.#resolveAttachments === undefined
         ? {}
         : {

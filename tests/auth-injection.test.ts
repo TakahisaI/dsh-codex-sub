@@ -14,13 +14,10 @@ describe('fail-closed DSH pi-ai auth injection', () => {
     await expect(credentials.list()).resolves.toEqual([])
   })
 
-  it('refuses a provider identity it does not own', async () => {
+  it('reports no native credential for every provider identity', async () => {
     const { credentials } = createFailClosedPiAiAuthInjection()
 
-    await expect(credentials.read('other-provider')).rejects.toMatchObject({
-      code: 'CODEX_UPSTREAM_PROTOCOL',
-      safeDetails: { reason: 'provider' },
-    })
+    await expect(credentials.read('other-provider')).resolves.toBeUndefined()
   })
 
   it('rejects every native write and logout operation', async () => {
@@ -51,16 +48,9 @@ describe('fail-closed DSH pi-ai auth injection', () => {
       expect(await authContext.env('OPENAI_API_KEY')).toBeUndefined()
       expect(await authContext.fileExists(pathSentinel)).toBe(false)
 
-      const unauthorizedProvider = `PROVIDER_SENTINEL_${randomUUID()}`
-      const failure = await credentials.read(unauthorizedProvider).catch((caught: unknown) => caught)
-      expect(isCodexError(failure)).toBe(true)
-      const rendered = [
-        failure instanceof Error ? failure.message : String(failure),
-        isCodexError(failure) ? JSON.stringify(failure.safeDetails ?? {}) : '',
-      ].join(' ')
-      expect(rendered).not.toContain(accessSentinel)
-      expect(rendered).not.toContain(pathSentinel)
-      expect(rendered).not.toContain(unauthorizedProvider)
+      await expect(credentials.read(`PROVIDER_SENTINEL_${randomUUID()}`)).resolves.toBeUndefined()
+      expect(await authContext.env(accessSentinel)).toBeUndefined()
+      expect(await authContext.fileExists(accessSentinel)).toBe(false)
     } finally {
       if (previousValue === undefined) {
         delete process.env['OPENAI_API_KEY']
