@@ -30,6 +30,7 @@ import {
   assertHostDshPackages,
   enumerateHostDshPackages,
 } from './dsh-release-family-lock.mjs'
+import { parseProbeScope } from './probe-scope.mjs'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const candidateVersion = RC1_CANDIDATE_VERSION
@@ -39,6 +40,7 @@ const pluginRowId = 'llm-codex-sub'
 const probeDirectory = join(repositoryRoot, 'tests', 'fixtures', 'packed-install-probe')
 const maxCaptureBytes = 4 * 1024 * 1024
 const bootTimeoutMs = 60_000
+const resumeBootTimeoutMs = 120_000
 const shutdownTimeoutMs = 5_000
 
 function invariant(condition, message) {
@@ -54,12 +56,15 @@ function parseJson(text, label) {
 }
 
 function packageTarballArguments() {
+  const arguments_ = process.argv[2] === '--' ? process.argv.slice(3) : process.argv.slice(2)
+  const probeScope = parseProbeScope(arguments_)
   const { values } = parseArgs({
-    args: process.argv[2] === '--' ? process.argv.slice(3) : process.argv.slice(2),
+    args: arguments_,
     allowPositionals: false,
     options: {
       'expected-sha256': { type: 'string' },
       'package-tarball': { type: 'string' },
+      'probe-scope': { type: 'string' },
     },
     strict: true,
   })
@@ -73,7 +78,8 @@ function packageTarballArguments() {
     expectedSha256 !== undefined && /^[0-9a-f]{64}$/u.test(expectedSha256),
     '--expected-sha256 (or DSH_WORKFLOW_ARTIFACT_SHA256) must be a lowercase SHA-256 digest.',
   )
-  return { expectedSha256, packageTarball: resolve(packageTarball) }
+  invariant(values['probe-scope'] === probeScope, '--probe-scope parser disagreement.')
+  return { expectedSha256, packageTarball: resolve(packageTarball), probeScope }
 }
 
 function redact(value, secrets = []) {
@@ -284,8 +290,8 @@ function hasExited(child) {
   return child.exitCode !== null || child.signalCode !== null
 }
 
-async function waitForProbe(child, resultPath) {
-  const deadline = Date.now() + bootTimeoutMs
+async function waitForProbe(child, resultPath, timeoutMs = bootTimeoutMs) {
+  const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {
     try {
       return await readFile(resultPath, 'utf8')
@@ -315,7 +321,7 @@ function assertNoSentinel(value, label) {
   }
 }
 
-async function bootProbe(environment, resultPath) {
+async function bootProbe(environment, resultPath, timeoutMs = bootTimeoutMs) {
   const bootOutput = {
     stderr: { bytes: 0, truncated: false, value: '' },
     stdout: { bytes: 0, truncated: false, value: '' },
@@ -339,7 +345,7 @@ async function bootProbe(environment, resultPath) {
   let probeText
   let failure
   try {
-    probeText = await waitForProbe(child, resultPath)
+    probeText = await waitForProbe(child, resultPath, timeoutMs)
   } catch (caught) {
     failure = caught
   } finally {
@@ -388,7 +394,7 @@ const allSentinels = [
 invariant(new Set(allSentinels).size === allSentinels.length, 'Generated credential sentinels collided.')
 
 try {
-  const { expectedSha256, packageTarball } = packageTarballArguments()
+  const { expectedSha256, packageTarball, probeScope } = packageTarballArguments()
   const inputArtifact = await validatePackageTarball(packageTarball)
   assertWorkflowArtifactSha256(inputArtifact.sha256, expectedSha256)
   const packedManifest = parseJson(run('tar', [
@@ -502,6 +508,7 @@ try {
   run(dshExecutable, [
     'plugin', '--profile', 'web', 'add', probePack.filename, '--save-exact',
   ], { cwd: hostRoot, env: baseEnvironment, label: 'install probe fixture' })
+  let resumeArtifact = afterInstallArtifact
 
   const installedConfig = run(dshExecutable, ['--profile', 'web', '--dump-config'], {
     cwd: hostRoot,
@@ -635,6 +642,110 @@ try {
   await assertAbsent(authFile, 'Candidate logout did not remove package-owned auth.json.')
   invariant(await readFile(siblingFile, 'utf8') === `${siblingSentinel}\n`, 'Candidate logout disturbed an adjacent file.')
 
+  let requests
+  let resumeRequests
+  let requestsSeedProbe
+  let requestsResumeProbe
+  if (probeScope === 'request-contracts') {
+    // Requests boots (#51) reuse the one installed artifact and one DSH_HOME.
+    // Seed and resume are separate Host processes so replay evidence crosses a
+    // real persistence boundary. The scripted transport is installed by the
+    // fixture at module load and keeps every non-pinned destination fail closed.
+    const requestsAuthDirectory = join(dshHome, packageName)
+  await mkdir(requestsAuthDirectory, { mode: 0o700, recursive: true })
+  const requestsAuthFile = join(requestsAuthDirectory, 'auth.json')
+  // pi-ai's Codex client reads the account claim out of the access token and
+  // refuses to stream without it, so the signed-in boot needs a shape-only
+  // three-part token. The payload carries no real data: the account value is
+  // a fixed probe constant, the signature part is a literal, and nothing
+  // leaves the process (the scripted transport answers every request).
+  const stubAccessToken = [
+    Buffer.from('{"alg":"none","typ":"JWT"}').toString('base64'),
+    Buffer.from(JSON.stringify({
+      'https://api.openai.com/auth': { chatgpt_account_id: 'packed-probe-account' },
+      exp: Math.floor(Date.now() / 1000) + 86_400,
+    })).toString('base64'),
+    'stub-signature',
+  ].join('.')
+  const requestsCredentialBytes = `${JSON.stringify({
+    schemaVersion: 1,
+    provider: 'openai-codex',
+    credential: {
+      accessToken: stubAccessToken,
+      refreshToken: `REFRESH_SENTINEL_${packageSentinels.refresh}`,
+      expiresAt: Date.now() + 86_400_000,
+      providerData: { accountId: packageSentinels.account },
+    },
+  })}\n`
+  await writeFile(requestsAuthFile, requestsCredentialBytes, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  const requestSessionId = `packed-rc1-replay-${randomUUID()}`
+  const requestsSeedResultPath = join(temporaryRoot, 'probe-requests-seed-result.json')
+  requestsSeedProbe = await bootProbe({
+    ...probeEnvironment,
+    DSH_CODEX_SUB_CANDIDATE_PROBE_PHASE: 'requests-seed',
+    DSH_CODEX_SUB_REQUEST_SESSION_ID: requestSessionId,
+    DSH_CODEX_SUB_PROBE_RESULT: requestsSeedResultPath,
+    NODE_OPTIONS: [],
+  }, requestsSeedResultPath)
+  requests = requestsSeedProbe.requests
+  invariant(requests !== undefined, 'The requests-seed probe result was absent.')
+  invariant(requests.handoff?.sessionId === requestSessionId, 'Seed handoff session id drifted.')
+  invariant(requests.handoff?.seedReady === true, 'Seed handoff was not marked ready.')
+  invariant(typeof requests.handoff?.modelId === 'string', 'Seed handoff model id was absent.')
+  invariant(requests.replay.responseId === 'resp_packed_replay_seed', 'Seed replay response identity drifted.')
+  invariant(requests.replay.assistantMessages >= 1 && requests.replay.requestHeaders >= 1, 'Seed replay/request events were not durable.')
+  invariant(requests.retry.providerAttempts === 3, `Retry provider attempts drifted: ${requests.retry.providerAttempts}`)
+  invariant(requests.retry.executionCount === 1 && requests.retry.retryCount === 1 && requests.retry.retryStartedCount === 1, 'Retry policy/event counts drifted.')
+  invariant(requests.retry.toolCallCount === 1 && requests.retry.toolResultCount === 1 && requests.retry.assistantMessageCount === 2, 'Tool/assistant event counts drifted.')
+  invariant(requests.retry.attempts.length === 3, 'Retry transport attempt trace was not exactly three.')
+  invariant(requests.retry.finishKind === 'completed' && requests.retry.finalAssistantText === 'packed retry final response' && requests.retry.finalResponseId === 'resp_packed_retry_final' && requests.retry.failedCallAdopted === false, 'Retry final durable surface drifted.')
+  invariant(requests.cancellation.directPreAborted.fetchCount === 0 && requests.cancellation.directPreAborted.wsCount === 0, 'Direct pre-aborted stream reached a provider transport.')
+  invariant(requests.cancellation.preDispatch.fetchCount === 0 && requests.cancellation.preDispatch.wsCount === 0, 'Pre-dispatch cancellation reached a provider transport.')
+  invariant(requests.cancellation.midStream.fetchCountAtLatch === 1 && requests.cancellation.midStream.fetchCountAfterAbort === 1 && requests.cancellation.midStream.fetchCountAfterAbortDelta === 0 && requests.cancellation.midStream.wsCountAtLatch === 1 && requests.cancellation.midStream.wsCountAfterAbort === 1 && requests.cancellation.midStream.wsCountAfterAbortDelta === 0, 'Mid-stream cancellation transport count drifted.')
+  invariant(requests.cancellation.midStream.retryCount === 0 && requests.cancellation.midStream.assistantMessageCount === 0 && requests.cancellation.midStream.toolCallCount === 0 && requests.cancellation.midStream.toolResultCount === 0, 'Mid-stream cancellation admitted derived output or retry.')
+  invariant(requests.images.offloadedTextCount === 2 && requests.images.imageWire?.survivorCount === 4, 'Attachment image budget wire survivors drifted.')
+  invariant(requests.images.durableReferenceCount === 6 && requests.images.durableReferenceOrderUnchanged === true && requests.images.durableReferenceShapeUnchanged === true, 'Durable attachment references drifted.')
+  invariant(requests.totals.fetchRequests.length === 6 && requests.totals.wsUrls.length === 4 && requests.totals.externalHosts.length === 0 && requests.totals.loopbackUrls.length === 0 && requests.totals.stickyError === undefined && requests.totals.wsSendCount === 0, 'Requests seed left the transport boundary.')
+
+  const requestsResumeResultPath = join(temporaryRoot, 'probe-requests-resume-result.json')
+  requestsResumeProbe = await bootProbe({
+    ...probeEnvironment,
+    DSH_CODEX_SUB_CANDIDATE_PROBE_PHASE: 'requests-resume',
+    DSH_CODEX_SUB_REQUEST_SESSION_ID: requestSessionId,
+    DSH_CODEX_SUB_PROBE_RESULT: requestsResumeResultPath,
+    NODE_OPTIONS: [],
+  }, requestsResumeResultPath, resumeBootTimeoutMs)
+  resumeRequests = requestsResumeProbe.requests
+  invariant(resumeRequests !== undefined, 'The requests-resume probe result was absent.')
+  invariant(resumeRequests.handoff?.sessionId === requestSessionId && resumeRequests.handoff?.seedReady === true, 'Resume handoff drifted.')
+  invariant(resumeRequests.replay.responseId === 'resp_packed_replay_continue', 'Resume replay response identity drifted.')
+  invariant(resumeRequests.replay.firstLiveSeq > 0 && resumeRequests.replay.titleSource === 'user', 'Resume did not restore firstLiveSeq/user title.')
+  invariant(resumeRequests.replay.continuationObserved === true, 'Resume continuation wire was not observed.')
+  invariant(resumeRequests.replay.durableHistoryHasSeed === true && resumeRequests.replay.durableHistoryHasContinuation === true, 'Resume durable history lost a response.')
+  invariant(resumeRequests.totals.providerAttempts === 1 && resumeRequests.totals.fetchRequests.length === 1 && resumeRequests.totals.wsUrls.length === 1 && resumeRequests.totals.externalHosts.length === 0 && resumeRequests.totals.loopbackUrls.length === 0 && resumeRequests.totals.stickyError === undefined && resumeRequests.totals.wsSendCount === 0, 'Resume left the transport boundary.')
+  resumeArtifact = await validatePackageTarball(inputArtifact.canonicalPath)
+  assertWorkflowArtifactSha256(resumeArtifact.sha256, expectedSha256)
+
+  // Restore the signed-out state the credential-lifecycle phases expect: the
+  // requests boots created the package credential, so remove it again and
+  // prove nothing else about the install drifted.
+    await rm(requestsAuthFile, { force: true })
+    const signedOutAgain = run(dshExecutable, [
+    'plugin', '--profile', 'web', 'exec', packageName, 'status', '--json',
+  ], {
+    cwd: hostRoot,
+    accepted: [1],
+    env: baseEnvironment,
+    label: 'exact-artifact signed-out status after requests boots',
+    secrets: allSentinels,
+  })
+    const signedOutAgainReport = parseJson(signedOutAgain.stdout, 'signed-out status after requests boot')
+    invariant(
+      signedOutAgainReport.status?.state === 'signed-out',
+      'Candidate CLI did not report signed out after the requests boot cleanup.',
+    )
+  }
+
   const postLogoutResultPath = join(temporaryRoot, 'probe-post-logout-result.json')
   const postLogoutProbe = await bootProbe({
     ...probeEnvironment,
@@ -669,6 +780,8 @@ try {
   )
   invariant(confirmDeletedProbe.authFailureCode === 'CODEX_AUTH_REQUIRED', 'Post-delete request did not fail safely.')
   invariant(confirmDeletedProbe.networkAttempts === 0, 'Post-delete candidate request reached the network boundary.')
+  const finalArtifact = await validatePackageTarball(inputArtifact.canonicalPath)
+  assertWorkflowArtifactSha256(finalArtifact.sha256, expectedSha256)
 
   assertNoSentinel(JSON.stringify({
     confirmDeletedProbe,
@@ -676,6 +789,8 @@ try {
     logout,
     postLogoutProbe,
     probe,
+    requestsSeedProbe,
+    requestsResumeProbe,
     signedInReport,
     signedOutReport,
     topology,
@@ -684,6 +799,17 @@ try {
 
   process.stdout.write(`${JSON.stringify({
     installedArtifactSha256: afterInstallArtifact.sha256,
+    resumedArtifactSha256: resumeArtifact.sha256,
+    finalArtifactSha256: finalArtifact.sha256,
+    artifactSha256Checkpoints: {
+      input: inputArtifact.sha256,
+      beforeInstall: beforeInstallArtifact.sha256,
+      afterInstall: afterInstallArtifact.sha256,
+      afterResume: resumeArtifact.sha256,
+      final: finalArtifact.sha256,
+    },
+    packageArtifactFilename: basename(inputArtifact.canonicalPath),
+    packageVersion: candidateSource.manifest.version,
     candidateVersion,
     catalogModelCount: probe.modelCount,
     doctorOverall: doctorReport.overall,
@@ -694,6 +820,31 @@ try {
     networkAttemptsAfterDelete: confirmDeletedProbe.networkAttempts,
     networkAttemptsAfterLogout: postLogoutProbe.networkAttempts,
     networkAttemptsAfterRestart: verifyProbe.networkAttempts,
+    ...(requests === undefined ? {} : {
+      requestContracts: {
+        attachmentImageOnWire: requests.images.imageWire?.survivorCount === 4,
+        replaySeedResponseId: requests.replay.responseId,
+        replayResumeResponseId: resumeRequests?.replay.responseId,
+        replayContinuationObserved: resumeRequests?.replay.continuationObserved,
+        attachmentDurableReferenceOrderUnchanged: requests.images.durableReferenceOrderUnchanged,
+        attachmentDurableReferenceShapeUnchanged: requests.images.durableReferenceShapeUnchanged,
+        retryProviderAttempts: requests.retry.providerAttempts,
+        retryExecutionCount: requests.retry.executionCount,
+        cancellationPreDispatchFetch: requests.cancellation.preDispatch.fetchCount,
+        cancellationMidStreamFetchAtLatch: requests.cancellation.midStream.fetchCountAtLatch,
+        cancellationMidStreamFetchAfterAbort: requests.cancellation.midStream.fetchCountAfterAbort,
+        cancellationMidStreamFetchAfterAbortDelta: requests.cancellation.midStream.fetchCountAfterAbortDelta,
+        cancellationMidStreamWsAtLatch: requests.cancellation.midStream.wsCountAtLatch,
+        cancellationMidStreamWsAfterAbort: requests.cancellation.midStream.wsCountAfterAbort,
+        cancellationMidStreamWsAfterAbortDelta: requests.cancellation.midStream.wsCountAfterAbortDelta,
+        cancelledPartialChunkCount: requests.cancellation.midStream.partialChunkCount,
+        externalHosts: [...new Set([...requests.totals.externalHosts, ...(resumeRequests?.totals.externalHosts ?? [])])],
+      },
+    }),
+    bootPhases: probeScope === 'request-contracts'
+      ? ['save', 'verify', 'requests-seed', 'requests-resume', 'post-logout', 'confirm-deleted']
+      : ['save', 'verify', 'post-logout', 'confirm-deleted'],
+    probeScope,
     siblingFilePreserved: true,
     topology,
     upstreamCommit,

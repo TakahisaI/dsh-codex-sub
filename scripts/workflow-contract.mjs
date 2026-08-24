@@ -206,6 +206,18 @@ function count(text, pattern) {
   return text.split(pattern).length - 1
 }
 
+function assertProbeScopeInvocation(job, expected, label) {
+  const other = expected === 'credential-topology' ? 'request-contracts' : 'credential-topology'
+  invariant(
+    count(job, `--probe-scope ${expected}`) === 1,
+    `${label} must pass --probe-scope ${expected} exactly once.`,
+  )
+  invariant(
+    count(job, `--probe-scope ${other}`) === 0,
+    `${label} must not pass --probe-scope ${other}.`,
+  )
+}
+
 function assertPinnedActions(workflow, label) {
   const pins = Object.values(PINNED_ACTIONS)
   invariant(
@@ -323,6 +335,7 @@ function assertPackedCandidateLaneJob(job, label) {
     count(job, 'pnpm run test:packed-candidate-lane') === 1,
     `${label} packed-candidate-lane job must execute the reviewed fresh-install probe exactly once.`,
   )
+  assertProbeScopeInvocation(job, 'credential-topology', `${label} packed-candidate-lane`)
   invariant(
     count(job, PINNED_ACTIONS.downloadArtifact) === 1,
     `${label} packed-candidate-lane job must download the candidate artifact exactly once.`,
@@ -381,6 +394,7 @@ function assertExactArtifactLaneJob(job, label) {
     count(job, 'pnpm run test:exact-artifact-lane') === 1,
     `${label} exact-artifact-lane job must execute the reviewed probe exactly once.`,
   )
+  assertProbeScopeInvocation(job, 'request-contracts', `${label} exact-artifact-lane`)
   invariant(
     count(job, '--package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"') === 1,
     `${label} exact-artifact-lane job must install the verified tarball.`,
@@ -710,6 +724,14 @@ export function validateWorkflowContracts({
   assertNoCheckoutOverrides(releaseWorkflow, 'Release workflow')
   assertNoRegistryCredentials(releaseWorkflow)
   assertSerializedReleaseWorkflow(releaseWorkflow)
+  invariant(
+    count(ciWorkflow, '--probe-scope request-contracts') === 1,
+    'CI workflow must invoke the request-contracts scope exactly once.',
+  )
+  invariant(
+    count(ciWorkflow, '--probe-scope credential-topology') === 1,
+    'CI workflow must invoke the credential-topology scope exactly once.',
+  )
   assertExactJobSet(
     ciWorkflow,
     [
