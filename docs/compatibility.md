@@ -25,6 +25,14 @@ containment. The separate packed credential-topology lane remains a four-boot au
 and is not used as #51 request evidence; CI remains an external gate. See
 [`docs/compatibility-reports/rc1-request-contracts.md`](compatibility-reports/rc1-request-contracts.md).
 
+Issue #50 adds the publication-bound artifact gate. Its reviewed Host fixture lists all 188 DSH
+release-family names at exact `0.1.1-rc.1`, sets `autoInstallPeers: false`, and contains no pnpm
+`overrides` or `resolutions`. The lane copies that fixture, validates it, performs one frozen
+install, installs the candidate once through `dsh plugin add`, and runs the same six request boots.
+The CI and release workflows consume one producer tarball across Ubuntu/macOS and Node 22.19/24/26;
+they do not publish or repack it. See
+[`compatibility-reports/rc1-release-artifact.md`](compatibility-reports/rc1-release-artifact.md).
+
 ## 2. Exact verification, not optimistic ranges
 
 DSH is in developer preview and may make compatibility-breaking changes. The plugin therefore

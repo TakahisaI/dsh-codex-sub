@@ -218,6 +218,18 @@ function assertProbeScopeInvocation(job, expected, label) {
   )
 }
 
+function assertHostGraphModeInvocation(job, expected, label) {
+  const other = expected === 'override-pinned' ? 'locked-no-overrides' : 'override-pinned'
+  invariant(
+    count(job, `--host-graph-mode ${expected}`) === 1,
+    `${label} must pass --host-graph-mode ${expected} exactly once.`,
+  )
+  invariant(
+    count(job, `--host-graph-mode ${other}`) === 0,
+    `${label} must not pass --host-graph-mode ${other}.`,
+  )
+}
+
 function assertPinnedActions(workflow, label) {
   const pins = Object.values(PINNED_ACTIONS)
   invariant(
@@ -336,6 +348,7 @@ function assertPackedCandidateLaneJob(job, label) {
     `${label} packed-candidate-lane job must execute the reviewed fresh-install probe exactly once.`,
   )
   assertProbeScopeInvocation(job, 'credential-topology', `${label} packed-candidate-lane`)
+  assertHostGraphModeInvocation(job, 'override-pinned', `${label} packed-candidate-lane`)
   invariant(
     count(job, PINNED_ACTIONS.downloadArtifact) === 1,
     `${label} packed-candidate-lane job must download the candidate artifact exactly once.`,
@@ -361,15 +374,16 @@ function assertPackedCandidateLaneJob(job, label) {
 
 // The exact-artifact lane consumes the same immutable workflow artifact as the
 // packed-candidate lane and installs it into a fresh exact DSH Host.
-function assertExactArtifactLaneJob(job, label) {
+function assertExactArtifactLaneJob(job, expected, label) {
   invariant(
-    count(job, 'runs-on: ubuntu-latest') === 1,
-    `${label} exact-artifact-lane job must use the reviewed Linux runner exactly once.`,
+    count(job, 'runs-on: ${{ matrix.os }}') === 1,
+    `${label} exact-artifact-lane job must use the reviewed matrix runner exactly once.`,
   )
   invariant(
-    count(job, 'node-version: 24') === 1,
-    `${label} exact-artifact-lane job must pin Node 24 exactly once.`,
+    count(job, 'node-version: ${{ matrix.node }}') === 1,
+    `${label} exact-artifact-lane job must use the reviewed Node matrix exactly once.`,
   )
+  assertMatrix(job, expected, `${label} exact-artifact-lane`)
   invariant(
     count(job, 'pnpm install --frozen-lockfile') === 1,
     `${label} exact-artifact-lane job must install the locked graph exactly once.`,
@@ -395,6 +409,7 @@ function assertExactArtifactLaneJob(job, label) {
     `${label} exact-artifact-lane job must execute the reviewed probe exactly once.`,
   )
   assertProbeScopeInvocation(job, 'request-contracts', `${label} exact-artifact-lane`)
+  assertHostGraphModeInvocation(job, 'locked-no-overrides', `${label} exact-artifact-lane`)
   invariant(
     count(job, '--package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"') === 1,
     `${label} exact-artifact-lane job must install the verified tarball.`,
@@ -402,6 +417,50 @@ function assertExactArtifactLaneJob(job, label) {
   invariant(
     count(job, '--expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"') === 1,
     `${label} exact-artifact-lane job must pass the verified SHA-256 to the runner.`,
+  )
+  assertNoArtifactMutation(job, label)
+}
+
+function assertCompatibilityReleaseJob(job, expected, label) {
+  invariant(
+    count(job, 'runs-on: ${{ matrix.os }}') === 1,
+    `${label} compatibility-release job must use the reviewed matrix runner exactly once.`,
+  )
+  invariant(
+    count(job, 'node-version: ${{ matrix.node }}') === 1,
+    `${label} compatibility-release job must use the reviewed Node matrix exactly once.`,
+  )
+  assertMatrix(job, expected, `${label} compatibility-release`)
+  invariant(/^    needs: candidate$/mu.test(job), `${label} compatibility-release must depend on candidate.`)
+  invariant(
+    count(job, 'pnpm install --frozen-lockfile') === 1,
+    `${label} compatibility-release job must install the locked graph exactly once per cell.`,
+  )
+  invariant(
+    count(job, PINNED_ACTIONS.downloadArtifact) === 1,
+    `${label} compatibility-release job must download the shared artifact exactly once per cell.`,
+  )
+  invariant(
+    count(job, `name: ${RELEASE_ARTIFACT_NAME}`) === 1,
+    `${label} compatibility-release job must download the canonical workflow artifact.`,
+  )
+  invariant(
+    count(job, 'node scripts/release-artifact.mjs verify') === 1,
+    `${label} compatibility-release job must verify the downloaded candidate exactly once per cell.`,
+  )
+  invariant(
+    count(job, 'pnpm run test:exact-artifact-lane') === 1,
+    `${label} compatibility-release job must execute the exact probe exactly once per cell.`,
+  )
+  assertProbeScopeInvocation(job, 'request-contracts', `${label} compatibility-release`)
+  assertHostGraphModeInvocation(job, 'locked-no-overrides', `${label} compatibility-release`)
+  invariant(
+    count(job, '--package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"') === 1,
+    `${label} compatibility-release job must pass the verified tarball.`,
+  )
+  invariant(
+    count(job, '--expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"') === 1,
+    `${label} compatibility-release job must pass the verified SHA-256.`,
   )
   assertNoArtifactMutation(job, label)
 }
@@ -426,7 +485,10 @@ function assertArtifactConsumer(job, expected, label) {
 }
 
 function assertArtifactFinalizer(job, label) {
-  invariant(/^    needs: candidate-install$/mu.test(job), `${label} must depend on candidate-install.`)
+  invariant(
+    job.includes('    needs:\n      - candidate-install\n      - compatibility-release\n'),
+    `${label} must depend on candidate-install and compatibility-release.`,
+  )
   invariant(
     count(job, PINNED_ACTIONS.downloadArtifact) === 1,
     `${label} must download the candidate artifact exactly once.`,
@@ -509,6 +571,7 @@ function assertReleaseGateChain(workflow, releaseMode) {
     ['source-checks', 'Release source-checks job'],
     ['candidate', 'Release candidate job'],
     ['candidate-install', 'Release candidate-install job'],
+    ['compatibility-release', 'Release compatibility-release job'],
     ['candidate-ready', 'Release candidate-ready job'],
   ]
   if (releaseMode === 'staged') {
@@ -747,8 +810,15 @@ export function validateWorkflowContracts({
   )
   assertCandidateLaneJob(jobBody(ciWorkflow, 'candidate-lane'), 'CI')
   assertPackedCandidateLaneJob(jobBody(ciWorkflow, 'packed-candidate-lane'), 'CI')
-  assertExactArtifactLaneJob(jobBody(ciWorkflow, 'exact-artifact-lane'), 'CI')
-  const releaseJobs = ['candidate', 'candidate-install', 'candidate-ready', 'release-ref', 'source-checks']
+  assertExactArtifactLaneJob(jobBody(ciWorkflow, 'exact-artifact-lane'), expected, 'CI')
+  const releaseJobs = [
+    'candidate',
+    'candidate-install',
+    'candidate-ready',
+    'compatibility-release',
+    'release-ref',
+    'source-checks',
+  ]
   if (releaseMode === 'staged') {
     releaseJobs.push('stage-publish')
   } else {
@@ -766,6 +836,11 @@ export function validateWorkflowContracts({
   assertArtifactProducer(releaseCandidate, 'Release candidate job')
   assertArtifactConsumer(
     jobBody(releaseWorkflow, 'candidate-install'),
+    expected,
+    'Release workflow',
+  )
+  assertCompatibilityReleaseJob(
+    jobBody(releaseWorkflow, 'compatibility-release'),
     expected,
     'Release workflow',
   )

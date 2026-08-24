@@ -236,6 +236,27 @@ Acceptance:
 - ordinary use in another DSH repository may supply additional behavioral confidence but does not
   replace the exact-artifact release proof.
 
+## Milestone 9 — Publication-bound rc.1 artifact matrix (#50)
+
+Status: implementation complete; formal CI/release matrix is the remaining merge gate. The package
+remains the unpublished `0.1.0-alpha.2` candidate and no registry metadata is changed here.
+
+Deliverables:
+
+- override-free Host fixture with 188 exact DSH rc.1 identities and `autoInstallPeers: false`;
+- one frozen fixture install followed by one ordinary candidate plugin install;
+- required `locked-no-overrides` and `override-pinned` Host graph modes with fail-closed parsing;
+- shared producer artifact across Ubuntu/macOS and Node 22.19/24/26 in CI and release workflows;
+- compatibility report that separates local Darwin evidence from the formal matrix and any later
+  registry identity check.
+
+Acceptance:
+
+- every exact-artifact cell verifies the same producer SHA and runs the request-contracts scope;
+- candidate-ready depends on both the ordinary packed-install and compatibility-release matrices;
+- no workflow rebuilds, repacks, publishes, tag changes, or release creation occur in this gate;
+- native refresh remains outside the serving path and natural package refresh remains #33.
+
 ## Post-Alpha reliability gate — DSH retry safety
 
 Status: complete in the retry-safety implementation branch. This gate changes tests and documented

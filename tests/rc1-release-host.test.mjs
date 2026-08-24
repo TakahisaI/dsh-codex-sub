@@ -4,7 +4,6 @@ import { describe, expect, it } from 'vitest'
 
 import {
   assertDshReleaseFamilyLock,
-  collectDshLockIdentities,
   parseStructuredYaml,
   DSH_RELEASE_FAMILY_VERSION,
 } from '../scripts/dsh-release-family-lock.mjs'

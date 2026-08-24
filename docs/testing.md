@@ -295,6 +295,13 @@ All six packed-install cells download, checksum, validate, and install those sam
 package build or repack. The release-state check derives the exact six-cell matrix from
 `compatibility.json` and rejects drift in either active CI or the enabled release workflow.
 
+The exact-artifact release gate uses the same six-cell matrix with the `locked-no-overrides` Host
+fixture. Its lock contract requires 188 unique DSH names, all exact rc.1, a single frozen install,
+`autoInstallPeers: false`, and zero override/resolution metadata; the legacy Node 24 packed lane
+uses `override-pinned` explicitly. CI and the release workflow each verify the producer checksum in
+every consumer, and `candidate-ready` cannot pass until both candidate-install and
+compatibility-release complete.
+
 Unit tests reject relative or symbolic-link tarballs, oversized compressed files, allowlist drift,
 duplicate archive paths, extra artifact entries, checksum or filename mismatch, stdout or stderr
 capture overflow, missing or extra matrix cells in block or flow style, and rebuilds or direct

@@ -67,6 +67,13 @@ repacking. This keeps the cross-platform artifact handoff executable before and 
 workflow activation. The release-state check rejects a missing matrix cell or a consumer that
 builds or packs.
 
+The exact-artifact cells use the override-free rc.1 Host fixture and run the request-contracts
+probe. The ordinary packed candidate lane retains its explicit override-pinned regression mode.
+The manually dispatched release workflow repeats the exact six-cell gate as `compatibility-release`
+and makes `candidate-ready` depend on both matrices. This proves one publication-bound candidate
+without publishing it; registry tarball identity, dist-tags, and release creation remain later
+maintainer-controlled gates.
+
 The repository contains the manually dispatched `.github/workflows/release.yml`. Its source checks,
 one clean tarball construction, SHA-256 generation, and Linux/macOS verification all run before
 registry access. The workflow builds the candidate once; every packed-install job downloads,
