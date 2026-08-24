@@ -5,6 +5,7 @@ import {
   chmod,
   mkdir,
   mkdtemp,
+  readdir,
   readFile,
   realpath,
   rm,
@@ -33,6 +34,10 @@ const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const dshExecutable = join(repositoryRoot, 'node_modules', '.bin', 'dsh')
 const probeDirectory = join(repositoryRoot, 'tests', 'fixtures', 'packed-install-probe')
 const blockerPath = join(probeDirectory, 'block-network.mjs')
+// Topology-report mode records the observed pi-ai identity instead of enforcing the
+// supported combination. Compatibility spikes use it to document a candidate the
+// supported line does not declare yet; supported-line runs keep every assertion.
+const topologyReportMode = process.env.PACKED_INSTALL_TOPOLOGY_REPORT === '1'
 
 function invariant(condition, message) {
   if (!condition) {
@@ -210,9 +215,112 @@ async function inspectDependencyTopology(dshHome, compatibility) {
     '@earendil-works/pi-ai',
     join(plugin.directory, 'package.json'),
   )
+  // The Host adapter declares a regular dependency on pi-ai, so it resolves its own copy;
+  // the two checks above cannot stand in for what the adapter actually loads.
+  const hostAdapterPiAi = await readPackageRoot(
+    '@earendil-works/pi-ai',
+    join((await readPackageRoot('@deepseek-ai/dsh-llm-pi-ai', hostParent)).directory, 'package.json'),
+  )
   invariant(hostPiAi.manifest.version === compatibility.piAi.version, 'Host pi-ai version drifted.')
   invariant(pluginPiAi.manifest.version === compatibility.piAi.version, 'Plugin pi-ai version drifted.')
-  invariant(hostPiAi.directory !== pluginPiAi.directory, 'Packed install did not exercise two pi-ai copies.')
+  if (!topologyReportMode) {
+    invariant(
+      hostAdapterPiAi.manifest.version === compatibility.piAi.version,
+      `Host adapter pi-ai resolved at ${hostAdapterPiAi.manifest.version}, expected ${compatibility.piAi.version}.`,
+    )
+  }
+  const distinctPiAiDirectories = [
+    ...new Set([hostPiAi.directory, pluginPiAi.directory, hostAdapterPiAi.directory]),
+  ]
+  if (!topologyReportMode) {
+    invariant(
+      distinctPiAiDirectories.length === 2,
+      `Expected exactly two physical pi-ai copies (host root, plugin); observed ${distinctPiAiDirectories.length}: ${distinctPiAiDirectories.join(', ')}.`,
+    )
+  }
+
+  const probeManifestPath = join(probeDirectory, 'package.json')
+  const probeManifest = parseJson(await readFile(probeManifestPath, 'utf8'), 'probe package.json')
+  const profileManifest = parseJson(await readFile(profileParent, 'utf8'), 'profile package.json')
+  for (const [label, manifest] of [['Probe', probeManifest], ['profile', profileManifest]]) {
+    for (const field of ['overrides', 'resolutions']) {
+      const table = manifest[field]
+      if (table !== undefined && Object.keys(table).some((name) => name.includes('pi-ai'))) {
+        throw new Error(`${label} ${field} mutates pi-ai: ${JSON.stringify(table)}.`)
+      }
+    }
+  }
+
+  // Census of every physical pi-ai identity visible to the installed profile, so an
+  // extra copy cannot hide behind the three resolution points above.
+  const virtualStoreDirectories = [
+    join(profilesDirectory, 'node_modules', '.pnpm'),
+    join(profileDirectory, 'node_modules', '.pnpm'),
+    // The Host runtime executes from the repository checkout during this probe, so
+    // resolutions can physically live in the repository's own virtual store.
+    join(repositoryRoot, 'node_modules', '.pnpm'),
+  ]
+  const directPackageRoots = [
+    join(profilesDirectory, 'node_modules', '@earendil-works', 'pi-ai'),
+    join(profileDirectory, 'node_modules', '@earendil-works', 'pi-ai'),
+    join(repositoryRoot, 'node_modules', '@earendil-works', 'pi-ai'),
+  ]
+  const censusEntries = []
+  for (const virtualStoreDirectory of virtualStoreDirectories) {
+    let storeEntries = []
+    try {
+      storeEntries = await readdir(virtualStoreDirectory)
+    } catch {
+      // Store not present in this layout.
+      continue
+    }
+    for (const entry of storeEntries) {
+      if (!entry.startsWith('@earendil-works+pi-ai@')) continue
+      const storePackageRoot = join(virtualStoreDirectory, entry, 'node_modules', '@earendil-works', 'pi-ai')
+      try {
+        const storeManifest = parseJson(await readFile(join(storePackageRoot, 'package.json'), 'utf8'), entry)
+        censusEntries.push({ directory: await realpath(storePackageRoot), version: storeManifest.version })
+      } catch {
+        // Directory layout differs; skip non-package entries.
+      }
+    }
+  }
+  for (const directRoot of directPackageRoots) {
+    try {
+      const directManifest = parseJson(await readFile(join(directRoot, 'package.json'), 'utf8'), directRoot)
+      censusEntries.push({ directory: await realpath(directRoot), version: directManifest.version })
+    } catch {
+      // No direct copy in this layout.
+    }
+  }
+  const observedCopies = new Map(censusEntries.map((copy) => [`${copy.version} ${copy.directory}`, copy]))
+  // Every physical copy serving a consumer must be visible to the census.
+  for (const directory of distinctPiAiDirectories) {
+    if (![...observedCopies.values()].some((copy) => copy.directory === directory)) {
+      throw new Error(`Resolved pi-ai copy is missing from the virtual-store census: ${directory}.`)
+    }
+  }
+  // Exactly two physical copies serve the three consumers (Host root, Host adapter, plugin);
+  // additional unrelated store identities are reported below instead of failing the probe,
+  // because the development checkout can legitimately hold several versions side by side.
+  const servingCopies = new Map(
+    distinctPiAiDirectories.map((directory) => [
+      directory,
+      [...observedCopies.values()].find((copy) => copy.directory === directory),
+    ]),
+  )
+  for (const [directory, copy] of servingCopies) {
+    invariant(copy !== undefined, `Resolved pi-ai copy disappeared from the census: ${directory}.`)
+    if (!topologyReportMode) {
+      invariant(
+        copy.version === compatibility.piAi.version,
+        `Physical pi-ai copy at ${directory} resolved at ${copy.version}, expected ${compatibility.piAi.version}.`,
+      )
+    }
+  }
+  const additionalStoreIdentities = [...observedCopies.values()]
+    .filter((copy) => !distinctPiAiDirectories.includes(copy.directory))
+    .map((copy) => `${copy.version} ${copy.directory}`)
 
   const hostPiAiAdapter = await readPackageRoot('@deepseek-ai/dsh-llm-pi-ai', hostParent)
   for (const [packageName, supported] of Object.entries(hostPiAiAdapter.manifest.peerDependencies)) {
@@ -223,8 +331,14 @@ async function inspectDependencyTopology(dshHome, compatibility) {
 
   return {
     dshPeersSharedWithHost: Object.keys(plugin.manifest.peerDependencies).length,
-    piAiCopies: 2,
+    piAiCopies: distinctPiAiDirectories.length,
     transitiveHostPeersResolved: Object.keys(hostPiAiAdapter.manifest.peerDependencies).length,
+    piAiResolutions: {
+      hostRoot: `${hostPiAi.manifest.version} ${hostPiAi.directory}`,
+      hostAdapter: `${hostAdapterPiAi.manifest.version} ${hostAdapterPiAi.directory}`,
+      plugin: `${pluginPiAi.manifest.version} ${pluginPiAi.directory}`,
+    },
+    additionalPiAiStoreIdentities: additionalStoreIdentities,
   }
 }
 
