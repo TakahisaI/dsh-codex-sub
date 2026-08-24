@@ -291,6 +291,30 @@ describe('workflow release evidence', () => {
     expect(() => validateWorkflowContracts(inputs)).not.toThrow()
   })
 
+  it('requires one explicit scope per packed lane and rejects missing, swapped, or duplicate flags', async () => {
+    const inputs = await repositoryInputs()
+    const missing = inputs.ciWorkflow.replace('          --probe-scope credential-topology\n', '')
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: missing })).toThrow(
+      'CI workflow must invoke the credential-topology scope exactly once.',
+    )
+
+    const swapped = inputs.ciWorkflow.replace(
+      '          --probe-scope credential-topology\n',
+      '          --probe-scope request-contracts\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: swapped })).toThrow(
+      'CI workflow must invoke the request-contracts scope exactly once.',
+    )
+
+    const duplicate = inputs.ciWorkflow.replace(
+      '          --probe-scope request-contracts\n',
+      '          --probe-scope request-contracts\n          --probe-scope request-contracts\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: duplicate })).toThrow(
+      'CI workflow must invoke the request-contracts scope exactly once.',
+    )
+  })
+
   it('serializes releases without cancelling a candidate already in progress', async () => {
     const inputs = await repositoryInputs()
     const canonical = 'concurrency:\n  group: dsh-codex-sub-release\n  cancel-in-progress: false'

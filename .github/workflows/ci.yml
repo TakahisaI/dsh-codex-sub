@@ -82,6 +82,7 @@ jobs:
           --github-output
       - run: >-
           pnpm run test:packed-candidate-lane --
+          --probe-scope credential-topology
           --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
           --expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"
 
@@ -107,6 +108,7 @@ jobs:
           --github-output
       - run: >-
           pnpm run test:exact-artifact-lane --
+          --probe-scope request-contracts
           --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
           --expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"
 

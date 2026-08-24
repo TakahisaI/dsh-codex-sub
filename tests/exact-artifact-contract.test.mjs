@@ -8,6 +8,7 @@ import {
   assertWorkflowArtifactSourceIdentity,
 } from '../scripts/exact-artifact-contract.mjs'
 import { calculateSha256 } from '../scripts/package-tarball.mjs'
+import { parseProbeScope } from '../scripts/probe-scope.mjs'
 
 async function repositoryInputs() {
   const [manifestText, compatibilityText] = await Promise.all([
@@ -21,6 +22,14 @@ async function repositoryInputs() {
 }
 
 describe('exact workflow artifact contract', () => {
+  it('requires one reviewed probe scope and rejects swaps or duplicates', () => {
+    expect(() => parseProbeScope([])).toThrow('--probe-scope is required')
+    expect(() => parseProbeScope(['--probe-scope', 'unknown'])).toThrow('Unknown --probe-scope')
+    expect(parseProbeScope(['--probe-scope', 'credential-topology'])).toBe('credential-topology')
+    expect(parseProbeScope(['--probe-scope=request-contracts'])).toBe('request-contracts')
+    expect(() => parseProbeScope(['--probe-scope', 'request-contracts', '--probe-scope', 'request-contracts'])).toThrow('exactly once')
+  })
+
   it('rejects malformed and mismatched workflow SHA values', () => {
     expect(() => assertWorkflowArtifactSha256('not-a-sha', '0'.repeat(64))).toThrow('lowercase digest')
     expect(() => assertWorkflowArtifactSha256('0'.repeat(64), '1'.repeat(64))).toThrow('SHA-256 mismatch')

@@ -25,18 +25,23 @@ const CONTINUE_MARKER = 'PACKED_REPLAY_CONTINUE_RC1'
 const RETRY_MARKER = 'PACKED_RETRY_TOOL_RC1'
 const CANCEL_PRE_MARKER = 'PACKED_CANCEL_PRE_RC1'
 const CANCEL_MID_MARKER = 'PACKED_CANCEL_MID_RC1'
+const CANCEL_MID_ARGUMENT_DELTA = '{"partial":"cancel-mid"}'
 const ATTACH_MARKER = 'PACKED_IMAGE_BUDGET_RC1'
 const SEED_TEXT = 'packed replay seed response'
 const CONTINUE_TEXT = 'packed replay continuation response'
 const RETRY_TEXT = 'packed retry final response'
+const DERIVED_RETRY_CALL_ID = 'call_retry_once|fc_retry_once'
 const ATTACH_TEXT = 'packed image budget response'
 const TITLE_PIN = 'packed rc1 user title pin'
 const ONE_PX_PNG_BASE64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg=='
 
 const transport = {
   providerAttempts: 0,
+  fetchRequests: [],
   wsUrls: [],
+  wsDials: [],
   wsSendCount: 0,
+  loopbackUrls: [],
   externalHosts: new Set(),
   stickyError: undefined,
   retryAttempts: [],
@@ -45,6 +50,7 @@ const transport = {
   retryAcceptedFunctionOutput: false,
   retryFailureFramesComplete: false,
   retryFailureCompletedSeen: false,
+  retryFinalResponseId: undefined,
   expectedImages: undefined,
   imageWire: undefined,
   cancellationStreams: 0,
@@ -229,6 +235,26 @@ function responseFunctionCallFrames(completed) {
   return frames
 }
 
+function responseCancellationToolFrames() {
+  const item = {
+    type: 'function_call',
+    id: 'fc_cancel_partial',
+    call_id: 'call_cancel_partial',
+    name: 'record_side_effect',
+    arguments: '',
+  }
+  return [
+    sseFrame({ type: 'response.created', response: { id: 'resp_packed_cancel_partial' } }),
+    sseFrame({ type: 'response.output_item.added', output_index: 0, item }),
+    sseFrame({
+      type: 'response.function_call_arguments.delta',
+      item_id: item.id,
+      output_index: 0,
+      delta: CANCEL_MID_ARGUMENT_DELTA,
+    }),
+  ]
+}
+
 function genericTransportError() {
   return new Error('Packed probe transport rejected request.')
 }
@@ -239,7 +265,7 @@ function violation(message) {
 }
 
 function assertExactProvider(urlText, init) {
-  if (urlText !== CODEX_URL || String(init?.method ?? 'GET').toUpperCase() !== 'POST') return violation('provider endpoint or method mismatch')
+  if (urlText !== CODEX_URL || String(init?.method ?? 'GET') !== 'POST') return violation('provider endpoint or method mismatch')
   let parsed
   try { parsed = new URL(urlText) } catch { return violation('provider URL parse failure') }
   if (parsed.protocol !== 'https:' || parsed.hostname !== 'chatgpt.com' || parsed.pathname !== '/backend-api/codex/responses' || parsed.search !== '' || parsed.hash !== '' || parsed.username !== '' || parsed.password !== '' || parsed.port !== '') return violation('provider URL shape mismatch')
@@ -255,8 +281,8 @@ function requestImages(body) {
   return inputItems(body).filter((entry) => entry?.role === 'user' && Array.isArray(entry.content)).flatMap((entry) => entry.content).filter((part) => part?.type === 'input_image').map((part) => part.image_url)
 }
 
-function scriptedBody(body, init) {
-  assertExactProvider(CODEX_URL, init)
+function scriptedBody(body, init, urlText = CODEX_URL) {
+  assertExactProvider(urlText, init)
   if (transport.stickyError !== undefined) throw genericTransportError()
   transport.providerAttempts += 1
   const retryCalls = functionCallItems(body)
@@ -284,6 +310,7 @@ function scriptedBody(body, init) {
       if (accepted.length !== 1 || outputs.length !== 1 || retryCalls.length !== 1 || retryOutputs.length !== 1) violation('accepted function call/output envelope mismatch')
       transport.retryAcceptedFunctionCall = true
       transport.retryAcceptedFunctionOutput = true
+      transport.retryFinalResponseId = 'resp_packed_retry_final'
       return { kind: 'text', responseId: 'resp_packed_retry_final', itemId: 'msg_retry_final', text: RETRY_TEXT }
     }
     return violation('unexpected retry fetch after provider attempt three')
@@ -303,14 +330,14 @@ function scriptedBody(body, init) {
   return violation('unknown provider request marker')
 }
 
-function requestResponse(body, init) {
-  const scripted = scriptedBody(body, init)
+function requestResponse(body, init, urlText = CODEX_URL) {
+  const scripted = scriptedBody(body, init, urlText)
   const frames = scripted.kind === 'retry-failure'
     ? responseFunctionCallFrames(false)
     : scripted.kind === 'function-call'
       ? responseFunctionCallFrames(true)
       : scripted.kind === 'cancel-mid'
-        ? responseFunctionCallFrames(false).slice(0, 4)
+        ? responseCancellationToolFrames()
         : scripted.kind === 'cancel-pre'
           ? []
           : responseTextFrames(scripted.responseId, scripted.itemId, scripted.text)
@@ -365,7 +392,21 @@ class GuardWebSocket {
     this.binaryType = 'blob'
     this.listeners = new Map()
     transport.wsUrls.push(this.url)
-    if (this.url !== CODEX_WS_URL) transport.stickyError ??= 'unexpected websocket URL'
+    this.dial = {
+      url: this.url,
+      listeners: {
+        open: { add: 0, remove: 0 },
+        error: { add: 0, remove: 0 },
+        close: { add: 0, remove: 0 },
+      },
+    }
+    transport.wsDials.push(this.dial)
+    if (this.url !== CODEX_WS_URL) {
+      let parsed
+      try { parsed = new URL(this.url) } catch { return violation('websocket URL parse failure') }
+      if (parsed.protocol !== 'wss:' || parsed.hostname !== 'chatgpt.com' || parsed.pathname !== '/backend-api/codex/responses' || parsed.search !== '' || parsed.hash !== '' || parsed.username !== '' || parsed.password !== '' || parsed.port !== '') return violation('websocket URL shape mismatch')
+      return violation('unexpected websocket URL')
+    }
     queueMicrotask(() => {
       this.readyState = GuardWebSocket.CLOSED
       this.dispatch('error', new Event('error'))
@@ -374,12 +415,14 @@ class GuardWebSocket {
   }
 
   addEventListener(type, listener) {
+    if (this.dial.listeners[type] !== undefined) this.dial.listeners[type].add += 1
     const set = this.listeners.get(type) ?? new Set()
     set.add(listener)
     this.listeners.set(type, set)
   }
 
   removeEventListener(type, listener) {
+    if (this.dial.listeners[type] !== undefined) this.dial.listeners[type].remove += 1
     this.listeners.get(type)?.delete(listener)
   }
 
@@ -399,26 +442,32 @@ class GuardWebSocket {
   }
 }
 
-function installRequestTransport(realFetch) {
+function installRequestTransport() {
   globalThis.fetch = async function packedProbeFetch(url, init = {}) {
     const urlText = String(url)
-    if (urlText === CODEX_URL) {
-      let body
-      try { body = decodeRequestBody(init) } catch { return violation('request body decode failure') }
-      return requestResponse(body, init)
+    const method = String(init?.method ?? 'GET')
+    transport.fetchRequests.push({ url: urlText, method })
+    if (transport.stickyError !== undefined) throw genericTransportError()
+    if (urlText !== CODEX_URL || method !== 'POST') {
+      if (loopback(urlText)) {
+        transport.loopbackUrls.push(urlText)
+        return violation('unexpected loopback endpoint')
+      }
+      let host = urlText
+      try { host = new URL(urlText).hostname } catch { /* opaque text only */ }
+      transport.externalHosts.add(host)
+      return violation('unexpected external host')
     }
-    if (loopback(urlText)) return realFetch(url, init)
-    let host = urlText
-    try { host = new URL(urlText).hostname } catch { /* opaque text only */ }
-    transport.externalHosts.add(host)
-    return violation('unexpected external host')
+    let body
+    try { body = decodeRequestBody(init) } catch { return violation('request body decode failure') }
+    return requestResponse(body, init, urlText)
   }
   Object.defineProperty(globalThis, 'fetch', { configurable: true, writable: true, value: globalThis.fetch })
   Object.defineProperty(globalThis, 'WebSocket', { configurable: true, writable: true, value: GuardWebSocket })
 }
 
 const phase = process.env[PHASE_VARIABLE]
-if (phase === 'requests-seed' || phase === 'requests-resume') installRequestTransport(globalThis.fetch.bind(globalThis))
+if (phase === 'requests-seed' || phase === 'requests-resume') installRequestTransport()
 
 export const name = 'dsh-codex-sub-packed-install-probe'
 export const inject = ['llm', 'credentials', 'attachments', 'agents', 'sessions', 'sessionPersistence', 'tools', 'sessionTitle']
@@ -451,6 +500,71 @@ async function flushAndInspect(ctx, session) {
   return { raw, inspected }
 }
 
+function persistedEvents(raw) {
+  return raw.content
+    .split(/\r?\n/u)
+    .filter((line) => line.length > 0)
+    .map((line) => JSON.parse(line))
+    .filter((event) => typeof event?.type === 'string')
+}
+
+function orderedEvents(events) {
+  return [...events].sort((left, right) => {
+    const seqDelta = Number(left.seq ?? 0) - Number(right.seq ?? 0)
+    return seqDelta !== 0 ? seqDelta : Number(left.time ?? 0) - Number(right.time ?? 0)
+  })
+}
+
+function messageText(message) {
+  return message?.content?.find((part) => part?.type === 'text')?.text
+}
+
+function exactUserText(message, text) {
+  return message?.role === 'user'
+    && message?.source?.kind === 'user'
+    && Array.isArray(message.content)
+    && message.content.length === 1
+    && message.content[0]?.type === 'text'
+    && message.content[0]?.text === text
+}
+
+function exactRetryAssistantCall(message) {
+  const block = message?.content?.[0]
+  return message?.role === 'assistant'
+    && message?.source?.kind === 'model'
+    && Array.isArray(message.content)
+    && message.content.length === 1
+    && block?.type === 'tool-call'
+    && block.id === DERIVED_RETRY_CALL_ID
+    && block.name === 'record_side_effect'
+    && block.arguments === '{"value":"once"}'
+}
+
+function exactRetryToolResult(message) {
+  const block = message?.content?.[0]
+  return message?.role === 'user'
+    && message?.source?.kind === 'tool'
+    && message.source.callId === DERIVED_RETRY_CALL_ID
+    && Array.isArray(message.content)
+    && message.content.length === 1
+    && block?.type === 'tool-result'
+    && block.toolCallId === DERIVED_RETRY_CALL_ID
+    && block.isError !== true
+    && Array.isArray(block.content)
+    && block.content.length === 1
+    && block.content[0]?.type === 'text'
+    && block.content[0]?.text === 'once'
+}
+
+function exactRetryFinalAssistant(message) {
+  return message?.role === 'assistant'
+    && message?.source?.kind === 'model'
+    && Array.isArray(message.content)
+    && message.content.length === 1
+    && message.content[0]?.type === 'text'
+    && message.content[0]?.text === RETRY_TEXT
+}
+
 function assertPinnedTitle(ctx, session) {
   const title = ctx.sessionTitle.get(session)
   if (title?.title !== TITLE_PIN || title.source.kind !== 'user') throw new Error('Packed probe user title was not pinned.')
@@ -470,6 +584,8 @@ async function replaySeed(ctx, modelId, sessionId) {
   const handle = await ctx.agents.create({ sessionId: id, meta: { cwd: process.cwd() }, agentOptions: { provider: PROVIDER_ID, model: modelId } })
   ctx.sessionTitle.rename(handle.agent.session, TITLE_PIN)
   assertPinnedTitle(ctx, handle.agent.session)
+  const beforeHttp = transport.providerAttempts
+  const beforeWs = transport.wsUrls.length
   handle.agent.followup(textRequest(SEED_MARKER))
   await handle.agent.whenIdle()
   const messages = handle.agent.session.deriveMessages()
@@ -479,7 +595,7 @@ async function replaySeed(ctx, modelId, sessionId) {
   if (eventTypes(handle.agent.session, 'assistant/message').length !== 1) throw new Error('Seed assistant event count drifted.')
   if (eventTypes(handle.agent.session, 'request/header').length < 1) throw new Error('Seed request header was not durable.')
   await handle.dispose()
-  return { sessionId: String(id), firstLiveSeq: handle.agent.session.firstLiveSeq, assistantMessages: 1, requestHeaders: eventTypes(handle.agent.session, 'request/header').length, persistedBytes: persisted.raw.content.length, eventCount: events.length, responseId: 'resp_packed_replay_seed' }
+  return { sessionId: String(id), firstLiveSeq: handle.agent.session.firstLiveSeq, assistantMessages: 1, requestHeaders: eventTypes(handle.agent.session, 'request/header').length, persistedBytes: persisted.raw.content.length, eventCount: events.length, responseId: 'resp_packed_replay_seed', httpCount: transport.providerAttempts - beforeHttp, wsCount: transport.wsUrls.length - beforeWs }
 }
 
 async function replayResume(ctx, modelId, sessionId) {
@@ -487,6 +603,8 @@ async function replayResume(ctx, modelId, sessionId) {
   const handle = await ctx.agents.resume({ resumeSessionId: id, agentOptions: { provider: PROVIDER_ID, model: modelId } })
   const title = assertPinnedTitle(ctx, handle.agent.session)
   if (handle.agent.session.firstLiveSeq <= 0) throw new Error('Resume did not expose firstLiveSeq > 0.')
+  const beforeHttp = transport.providerAttempts
+  const beforeWs = transport.wsUrls.length
   const before = handle.agent.session.deriveMessages()
   if (!jsonHasAssistantText(before, SEED_TEXT)) throw new Error('Resume derived history lost seed assistant.')
   handle.agent.followup(textRequest(CONTINUE_MARKER))
@@ -497,7 +615,7 @@ async function replayResume(ctx, modelId, sessionId) {
   const requestEvents = eventTypes(handle.agent.session, 'request/header')
   const assistantEvents = eventTypes(handle.agent.session, 'assistant/message')
   await handle.dispose()
-  return { sessionId: String(id), firstLiveSeq: handle.agent.session.firstLiveSeq, titleSource: title.source.kind, responseId: 'resp_packed_replay_continue', continuationObserved: transport.replayContinuationObserved, assistantMessages: assistantEvents.length, requestHeaders: requestEvents.length, persistedBytes: persisted.raw.content.length, durableHistoryHasSeed: jsonHasAssistantText(after, SEED_TEXT), durableHistoryHasContinuation: jsonHasAssistantText(after, CONTINUE_TEXT) }
+  return { sessionId: String(id), firstLiveSeq: handle.agent.session.firstLiveSeq, titleSource: title.source.kind, responseId: 'resp_packed_replay_continue', continuationObserved: transport.replayContinuationObserved, assistantMessages: assistantEvents.length, requestHeaders: requestEvents.length, persistedBytes: persisted.raw.content.length, durableHistoryHasSeed: jsonHasAssistantText(after, SEED_TEXT), durableHistoryHasContinuation: jsonHasAssistantText(after, CONTINUE_TEXT), httpCount: transport.providerAttempts - beforeHttp, wsCount: transport.wsUrls.length - beforeWs }
 }
 
 async function retryScenario(ctx, modelId) {
@@ -512,19 +630,75 @@ async function retryScenario(ctx, modelId) {
     }))
   })
   const start = transport.providerAttempts
+  const startWs = transport.wsUrls.length
   handle.agent.followup(textRequest(RETRY_MARKER))
   await handle.agent.whenIdle()
-  const events = handle.agent.session.events
-  const retryEvents = eventTypes(handle.agent.session, 'llm/retry')
-  const retryStartedEvents = eventTypes(handle.agent.session, 'llm/retry-started')
-  const toolCalls = eventTypes(handle.agent.session, 'tool/call')
-  const toolResults = eventTypes(handle.agent.session, 'tool/result')
-  const assistantMessages = eventTypes(handle.agent.session, 'assistant/message')
+  const events = orderedEvents(handle.agent.session.events)
+  const retryEvents = events.filter((event) => event.type === 'llm/retry')
+  const retryStartedEvents = events.filter((event) => event.type === 'llm/retry-started')
+  const toolCalls = events.filter((event) => event.type === 'tool/call')
+  const toolResults = events.filter((event) => event.type === 'tool/result')
+  const assistantMessages = events.filter((event) => event.type === 'assistant/message')
   const persisted = await flushAndInspect(ctx, handle.agent.session)
-  const durable = JSON.stringify({ events, messages: handle.agent.session.deriveMessages(), raw: persisted.raw.content })
-  if (executions !== 1 || retryEvents.length !== 1 || retryStartedEvents.length !== 1 || toolCalls.length !== 1 || toolResults.length !== 1 || assistantMessages.length !== 2 || transport.retryFailureFramesComplete !== true || transport.retryFailureCompletedSeen !== false || (durable.includes('fc_retry_once') && !transport.retryAcceptedFunctionCall)) throw new Error('Retry/tool exact-once contract failed.')
+  const rawEvents = orderedEvents(persistedEvents(persisted.raw))
+  const retryEvent = retryEvents[0]
+  if (retryEvent === undefined || retryEvents.length !== 1 || retryStartedEvents.length !== 1) throw new Error('Retry lifecycle event count drifted.')
+  const retrySeq = Number(retryEvent.seq)
+  const preRetry = events.filter((event) => Number(event.seq) < retrySeq)
+  for (const type of ['assistant/message', 'tool/call', 'tool/result']) {
+    if (preRetry.filter((event) => event.type === type).length !== 0) throw new Error(`Retry admitted ${type} before llm/retry.`)
+  }
+  const preRetryRaw = rawEvents.filter((event) => Number(event.seq) < retrySeq)
+  for (const type of ['assistant/message', 'tool/call', 'tool/result']) {
+    if (preRetryRaw.filter((event) => event.type === type).length !== 0) throw new Error(`Persisted retry admitted ${type} before llm/retry.`)
+  }
+  const derived = handle.agent.session.deriveMessages()
+  const logicalDerived = derived.filter((message) => message?.source?.kind !== 'plugin')
+  if (derived.filter((message) => message?.source?.kind === 'plugin').length !== 1
+    || logicalDerived.length !== 4
+    || !exactUserText(logicalDerived[0], RETRY_MARKER)
+    || !exactRetryAssistantCall(logicalDerived[1])
+    || !exactRetryToolResult(logicalDerived[2])
+    || !exactRetryFinalAssistant(logicalDerived[3])) throw new Error(`Retry derived message sequence drifted: ${JSON.stringify(derived)}`)
+  const acceptedAssistantCalls = assistantMessages.filter((event) => exactRetryAssistantCall(event.data?.message))
+  const acceptedToolCalls = toolCalls.filter((event) => event.data?.callId === DERIVED_RETRY_CALL_ID && event.data?.name === 'record_side_effect' && event.data?.arguments === '{"value":"once"}')
+  const acceptedToolResults = toolResults.filter((event) => event.data?.message?.source?.callId === DERIVED_RETRY_CALL_ID)
+  const rawAssistantMessages = rawEvents.filter((event) => event.type === 'assistant/message')
+  const rawToolCalls = rawEvents.filter((event) => event.type === 'tool/call')
+  const rawToolResults = rawEvents.filter((event) => event.type === 'tool/result')
+  const rawAcceptedAssistantCalls = rawAssistantMessages.filter((event) => exactRetryAssistantCall(event.data?.message))
+  const rawAcceptedToolCalls = rawToolCalls.filter((event) => event.data?.callId === DERIVED_RETRY_CALL_ID && event.data?.name === 'record_side_effect' && event.data?.arguments === '{"value":"once"}')
+  const rawAcceptedToolResults = rawToolResults.filter((event) => event.data?.message?.source?.callId === DERIVED_RETRY_CALL_ID)
+  const duplicateFailedCalls = assistantMessages.filter((event) => event.data?.message?.content?.some((part) => part?.type === 'tool-call' && (part.id === 'call_retry_once' || part.id === DERIVED_RETRY_CALL_ID))).length - acceptedAssistantCalls.length
+  const failedCallAdopted = preRetry.some((event) => event.type === 'assistant/message' || event.type === 'tool/call' || event.type === 'tool/result')
+    || preRetryRaw.some((event) => event.type === 'assistant/message' || event.type === 'tool/call' || event.type === 'tool/result')
+  const finalAssistant = assistantMessages.findLast((event) => exactRetryFinalAssistant(event.data?.message))
+  const turnEnd = events.findLast((event) => event.type === 'turn/end')
+  const finishKind = turnEnd?.data?.reason?.kind
+  const finalAssistantText = messageText(finalAssistant?.data?.message)
+  const finalResponseId = transport.retryFinalResponseId
+  if (executions !== 1
+    || acceptedAssistantCalls.length !== 1
+    || acceptedToolCalls.length !== 1
+    || acceptedToolResults.length !== 1
+    || rawAcceptedAssistantCalls.length !== 1
+    || rawAcceptedToolCalls.length !== 1
+    || rawAcceptedToolResults.length !== 1
+    || rawAssistantMessages.length !== 2
+    || rawToolCalls.length !== 1
+    || rawToolResults.length !== 1
+    || duplicateFailedCalls !== 0
+    || failedCallAdopted
+    || assistantMessages.length !== 2
+    || toolCalls.length !== 1
+    || toolResults.length !== 1
+    || transport.retryFailureFramesComplete !== true
+    || transport.retryFailureCompletedSeen !== false
+    || finishKind !== 'completed'
+    || finalAssistantText !== RETRY_TEXT
+    || finalResponseId !== 'resp_packed_retry_final') throw new Error('Retry/tool exact-once contract failed.')
   await handle.dispose()
-  return { finishKind: 'completed', providerAttempts: transport.providerAttempts - start, executionCount: executions, retryCount: retryEvents.length, retryStartedCount: retryStartedEvents.length, toolCallCount: toolCalls.length, toolResultCount: toolResults.length, assistantMessageCount: assistantMessages.length, attempts: transport.retryAttempts, failedCallAdopted: false, failedAttemptCompleteFunctionCall: transport.retryFailureFramesComplete, failedAttemptResponseCompleted: transport.retryFailureCompletedSeen, durableBytes: persisted.raw.content.length }
+  return { finishKind, providerAttempts: transport.providerAttempts - start, httpCount: transport.providerAttempts - start, wsCount: transport.wsUrls.length - startWs, executionCount: executions, retryCount: retryEvents.length, retryStartedCount: retryStartedEvents.length, toolCallCount: toolCalls.length, toolResultCount: toolResults.length, assistantMessageCount: assistantMessages.length, attempts: transport.retryAttempts, failedCallAdopted, failedAttemptCompleteFunctionCall: transport.retryFailureFramesComplete, failedAttemptResponseCompleted: transport.retryFailureCompletedSeen, finalAssistantText, finalResponseId, derivedMessageCount: derived.length, logicalDerivedMessageCount: logicalDerived.length, rawAssistantMessageCount: rawAssistantMessages.length, rawToolCallCount: rawToolCalls.length, rawToolResultCount: rawToolResults.length, durableBytes: persisted.raw.content.length }
 }
 
 async function directPreAborted(ctx, modelId) {
@@ -561,11 +735,17 @@ async function midStreamCancel(ctx, modelId) {
   const handle = await createFreshAgent(ctx, modelId, 'cancel-mid')
   const seen = []
   let markChunk
+  let partialChunkEvent
   const chunkSeen = new Promise((resolve) => { markChunk = resolve })
   ctx.on('session/event', (session, event) => {
     if (session.id !== handle.agent.session.id) return
     seen.push(event)
-    if (event.type === 'assistant/chunk') markChunk()
+    if (event.type === 'assistant/chunk'
+      && event.data?.chunk?.type === 'tool-call-delta'
+      && event.data.chunk.argumentsDelta === CANCEL_MID_ARGUMENT_DELTA) {
+      partialChunkEvent = event
+      markChunk()
+    }
   })
   const beforeFetch = transport.providerAttempts
   const beforeWs = transport.wsUrls.length
@@ -574,11 +754,17 @@ async function midStreamCancel(ctx, modelId) {
   handle.agent.cancel({ kind: 'user' })
   await handle.agent.whenIdle()
   const persisted = await flushAndInspect(ctx, handle.agent.session)
-  const sessionEvents = handle.agent.session.events
+  const sessionEvents = orderedEvents(handle.agent.session.events)
+  const rawEvents = orderedEvents(persistedEvents(persisted.raw))
   const turnEnd = sessionEvents.findLast((event) => event.type === 'turn/end')
-  const result = { fetchCount: transport.providerAttempts - beforeFetch, afterAbortFetchCount: transport.providerAttempts - beforeFetch, wsCount: transport.wsUrls.length - beforeWs, afterAbortWsCount: transport.wsUrls.length - beforeWs, retryCount: eventTypes(handle.agent.session, 'llm/retry').length, partialChunkCount: eventTypes(handle.agent.session, 'assistant/chunk').length, assistantMessageCount: eventTypes(handle.agent.session, 'assistant/message').length, toolCallCount: eventTypes(handle.agent.session, 'tool/call').length, toolResultCount: eventTypes(handle.agent.session, 'tool/result').length, turnEndReason: turnEnd?.data?.reason?.kind ?? null, durableUserOnly: handle.agent.session.deriveMessages().every((message) => message.role === 'user'), rawContainsPartialChunk: persisted.raw.content.includes('assistant/chunk') || persisted.raw.content.includes('tool-call-chunks'), seenEventTypes: [...new Set(seen.map((event) => event.type))].sort() }
+  const derived = handle.agent.session.deriveMessages()
+  const logicalDerived = derived.filter((message) => message?.source?.kind !== 'plugin')
+  const expectedUser = logicalDerived[0]
+  const persistedCounts = Object.fromEntries(['assistant/message', 'tool/call', 'tool/result'].map((type) => [type, rawEvents.filter((event) => event.type === type).length]))
+  const rawTurnEnds = rawEvents.filter((event) => event.type === 'turn/end')
+  const result = { fetchCount: transport.providerAttempts - beforeFetch, afterAbortFetchCount: transport.providerAttempts - beforeFetch, wsCount: transport.wsUrls.length - beforeWs, afterAbortWsCount: transport.wsUrls.length - beforeWs, retryCount: eventTypes(handle.agent.session, 'llm/retry').length, partialChunkCount: eventTypes(handle.agent.session, 'assistant/chunk').length, assistantMessageCount: eventTypes(handle.agent.session, 'assistant/message').length, toolCallCount: eventTypes(handle.agent.session, 'tool/call').length, toolResultCount: eventTypes(handle.agent.session, 'tool/result').length, turnEndReason: turnEnd?.data?.reason?.kind ?? null, persistedTurnEndCount: rawTurnEnds.length, persistedTurnEndReason: rawTurnEnds.at(-1)?.data?.reason?.kind ?? null, derivedMessageCount: derived.length, logicalDerivedMessageCount: logicalDerived.length, derivedUserContentExact: logicalDerived.length === 1 && exactUserText(expectedUser, CANCEL_MID_MARKER), rawContainsPartialChunk: rawEvents.some((event) => event.type === 'assistant/chunk' && event.data?.chunk?.type === 'tool-call-delta' && event.data.chunk.argumentsDelta === CANCEL_MID_ARGUMENT_DELTA), rawPartialArgumentDelta: rawEvents.some((event) => event.type === 'assistant/chunk' && event.data?.chunk?.type === 'tool-call-delta' && event.data.chunk.argumentsDelta === CANCEL_MID_ARGUMENT_DELTA), persistedCounts, seenEventTypes: [...new Set(seen.map((event) => event.type))].sort(), partialChunkEventSeq: partialChunkEvent?.seq ?? null }
   await handle.dispose()
-  if (result.fetchCount !== 1 || result.afterAbortFetchCount !== 1 || result.wsCount < 1 || result.afterAbortWsCount !== result.wsCount || result.retryCount !== 0 || result.partialChunkCount < 1 || result.assistantMessageCount !== 0 || result.toolCallCount !== 0 || result.toolResultCount !== 0 || result.turnEndReason !== 'aborted' || result.durableUserOnly !== true || result.rawContainsPartialChunk !== true) throw new Error('Mid-stream cancellation durable contract failed.')
+  if (result.fetchCount !== 1 || result.afterAbortFetchCount !== 1 || result.wsCount !== 1 || result.afterAbortWsCount !== result.wsCount || result.retryCount !== 0 || result.partialChunkCount < 1 || result.assistantMessageCount !== 0 || result.toolCallCount !== 0 || result.toolResultCount !== 0 || result.turnEndReason !== 'aborted' || result.persistedTurnEndCount !== 1 || result.persistedTurnEndReason !== 'aborted' || result.logicalDerivedMessageCount !== 1 || result.derivedUserContentExact !== true || result.rawContainsPartialChunk !== true || result.rawPartialArgumentDelta !== true || result.persistedCounts['assistant/message'] !== 0 || result.persistedCounts['tool/call'] !== 0 || result.persistedCounts['tool/result'] !== 0 || result.partialChunkEventSeq === null) throw new Error('Mid-stream cancellation durable contract failed.')
   return result
 }
 
@@ -594,15 +780,17 @@ async function attachmentScenario(ctx, modelId) {
   for (let index = 0; index < largeBytes.length; index += 1) refs.push((await ctx.attachments.saveImages([{ data: largeBytes[index], mediaType: 'image/png', name: `large${index}.png` }]))[0])
   transport.expectedImages = { large: encoded }
   const handle = await createFreshAgent(ctx, modelId, 'images')
+  const beforeHttp = transport.providerAttempts
+  const beforeWs = transport.wsUrls.length
   handle.agent.followup(imageRequest(ATTACH_MARKER, refs))
   await handle.agent.whenIdle()
   const persisted = await flushAndInspect(ctx, handle.agent.session)
   const userEvents = eventTypes(handle.agent.session, 'user/message')
   const durableMessage = userEvents.findLast((event) => Array.isArray(event.data?.content) && event.data.content.some((part) => part.type === 'image'))?.data?.content
   const durableRefs = Array.isArray(durableMessage) ? durableMessage.filter((part) => part.type === 'image').map((part) => part.attachment?.attachmentId) : []
-  const result = { imageWire: { survivorCount: transport.imageWire?.survivors?.length ?? 0, offloaded: transport.imageWire?.offloaded ?? 0 }, durableReferenceCount: durableRefs.length, durableReferenceOrderUnchanged: durableRefs.length === refs.length && durableRefs.every((id, index) => id === refs[index].attachmentId), offloadedTextCount: transport.imageWire?.offloaded ?? 0, rawBytes: persisted.raw.content.length, encodedBytes: encoded.map((value) => value.length) }
+  const result = { imageWire: { survivorCount: transport.imageWire?.survivors?.length ?? 0, offloaded: transport.imageWire?.offloaded ?? 0 }, durableReferenceCount: durableRefs.length, durableReferenceOrderUnchanged: durableRefs.length === refs.length && durableRefs.every((id, index) => id === refs[index].attachmentId), offloadedTextCount: transport.imageWire?.offloaded ?? 0, httpCount: transport.providerAttempts - beforeHttp, wsCount: transport.wsUrls.length - beforeWs, rawBytes: persisted.raw.content.length, encodedBytes: encoded.map((value) => value.length) }
   await handle.dispose()
-  if (result.durableReferenceCount !== 6 || result.durableReferenceOrderUnchanged !== true || result.offloadedTextCount !== 2 || result.imageWire?.survivorCount !== 4) throw new Error('Attachment image-budget contract failed.')
+  if (result.durableReferenceCount !== 6 || result.durableReferenceOrderUnchanged !== true || result.offloadedTextCount !== 2 || result.imageWire?.survivorCount !== 4 || result.httpCount !== 1 || result.wsCount !== 1) throw new Error('Attachment image-budget contract failed.')
   return result
 }
 
@@ -617,13 +805,23 @@ async function runRequestsPhase(ctx, modelId) {
     const midStreamCancellation = await midStreamCancel(ctx, modelId)
     const images = await attachmentScenario(ctx, modelId)
     if (transport.retryAttempts.length !== 3) throw new Error(`Retry provider HTTP attempts drifted: ${transport.retryAttempts.length}`)
-    return { handoff: { sessionId, modelId, seedReady: true }, replay, retry, cancellation: { directPreAborted: directCancellation, preDispatch: preDispatchCancellation, midStream: midStreamCancellation }, images, totals: { providerAttempts: transport.providerAttempts, retryScenarioFetchCount: retry.providerAttempts, wsUrls: transport.wsUrls, wsSendCount: transport.wsSendCount, externalHosts: [...transport.externalHosts].sort() } }
+    if (replay.httpCount !== 1 || replay.wsCount !== 1 || retry.httpCount !== 3 || retry.wsCount !== 1 || directCancellation.fetchCount !== 0 || directCancellation.wsCount !== 0 || preDispatchCancellation.fetchCount !== 0 || preDispatchCancellation.wsCount !== 0 || midStreamCancellation.fetchCount !== 1 || midStreamCancellation.wsCount !== 1 || images.httpCount !== 1 || images.wsCount !== 1) throw new Error('Request scenario transport counts drifted.')
+    if (transport.stickyError !== undefined || transport.wsSendCount !== 0 || transport.externalHosts.size !== 0 || transport.loopbackUrls.length !== 0) throw new Error('Request transport sticky state drifted.')
+    if (transport.fetchRequests.some((request) => request.url !== CODEX_URL || request.method !== 'POST')) throw new Error('Request fetch endpoint/method drifted.')
+    if (transport.wsUrls.some((url) => url !== CODEX_WS_URL)) throw new Error('Request WebSocket endpoint drifted.')
+    if (transport.wsDials.some((dial) => dial.listeners.open.add !== 1 || dial.listeners.open.remove !== 1 || dial.listeners.error.add !== 1 || dial.listeners.error.remove !== 1 || dial.listeners.close.add !== 1 || dial.listeners.close.remove !== 1)) throw new Error('WebSocket listener lifecycle drifted.')
+    return { handoff: { sessionId, modelId, seedReady: true }, replay, retry, cancellation: { directPreAborted: directCancellation, preDispatch: preDispatchCancellation, midStream: midStreamCancellation }, images, totals: { providerAttempts: transport.providerAttempts, retryScenarioFetchCount: retry.providerAttempts, fetchRequests: transport.fetchRequests, wsUrls: transport.wsUrls, wsDials: transport.wsDials, wsSendCount: transport.wsSendCount, externalHosts: [...transport.externalHosts].sort(), loopbackUrls: transport.loopbackUrls, stickyError: transport.stickyError } }
   }
   const sessionId = process.env[SESSION_VARIABLE]
   if (sessionId === undefined || sessionId.length === 0) throw new Error(`${SESSION_VARIABLE} is required for resume.`)
   const replay = await replayResume(ctx, modelId, sessionId)
   if (transport.providerAttempts !== 1) throw new Error(`Resume provider attempt count drifted: ${transport.providerAttempts}`)
-  return { handoff: { sessionId, modelId, seedReady: true }, replay, totals: { providerAttempts: transport.providerAttempts, wsUrls: transport.wsUrls, wsSendCount: transport.wsSendCount, externalHosts: [...transport.externalHosts].sort() } }
+  if (replay.httpCount !== 1 || replay.wsCount !== 1) throw new Error('Resume replay transport counts drifted.')
+  if (transport.stickyError !== undefined || transport.wsSendCount !== 0 || transport.externalHosts.size !== 0 || transport.loopbackUrls.length !== 0) throw new Error('Resume transport sticky state drifted.')
+  if (transport.fetchRequests.some((request) => request.url !== CODEX_URL || request.method !== 'POST')) throw new Error('Resume fetch endpoint/method drifted.')
+  if (transport.wsUrls.some((url) => url !== CODEX_WS_URL)) throw new Error('Resume WebSocket endpoint drifted.')
+  if (transport.wsDials.some((dial) => dial.listeners.open.add !== 1 || dial.listeners.open.remove !== 1 || dial.listeners.error.add !== 1 || dial.listeners.error.remove !== 1 || dial.listeners.close.add !== 1 || dial.listeners.close.remove !== 1)) throw new Error('Resume WebSocket listener lifecycle drifted.')
+  return { handoff: { sessionId, modelId, seedReady: true }, replay, totals: { providerAttempts: transport.providerAttempts, fetchRequests: transport.fetchRequests, wsUrls: transport.wsUrls, wsDials: transport.wsDials, wsSendCount: transport.wsSendCount, externalHosts: [...transport.externalHosts].sort(), loopbackUrls: transport.loopbackUrls, stickyError: transport.stickyError } }
 }
 
 export async function apply(ctx) {
