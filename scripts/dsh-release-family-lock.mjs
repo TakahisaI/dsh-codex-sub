@@ -110,6 +110,13 @@ function collectOverrides(root, label) {
   return new Map(Object.entries(source).map(([name, value]) => [name, resolutionVersion(value)]))
 }
 
+function collectResolutions(root, label) {
+  const source = root?.resolutions
+  if (source === undefined) return new Map()
+  invariant(isRecord(source), `${label} resolutions must be a mapping.`)
+  return new Map(Object.entries(source).map(([name, value]) => [name, resolutionVersion(value)]))
+}
+
 export function collectWorkspaceDshOverrides(workspaceText) {
   return collectOverrides(parseStructuredYaml(workspaceText, 'pnpm-workspace.yaml'), 'Workspace')
 }
@@ -174,7 +181,14 @@ export function assertDshReleaseFamilyLock({
   lockText,
   workspaceText,
   version = DSH_RELEASE_FAMILY_VERSION,
+  overridePolicy = 'required',
+  expectedNames,
+  requireAutoInstallPeers = false,
 }) {
+  invariant(
+    overridePolicy === 'required' || overridePolicy === 'forbidden',
+    `Unknown DSH release-family override policy: ${String(overridePolicy)}.`,
+  )
   const identities = collectDshLockIdentities(lockText)
   invariant(identities.packages.length > 0, 'The lockfile selected no DSH package identities.')
   assertExactEntries(identities.packages, 'packages', version)
@@ -200,17 +214,47 @@ export function assertDshReleaseFamilyLock({
 
   const workspaceOverrides = collectWorkspaceDshOverrides(workspaceText)
   const lockOverrides = collectLockDshOverrides(lockText)
-  assertOverrideMap(workspaceOverrides, names, 'Workspace overrides', version)
-  assertOverrideMap(lockOverrides, names, 'Lock overrides', version)
-  invariant(
-    [...workspaceOverrides].every(([name, value]) => lockOverrides.get(name) === value),
-    'Workspace and lock override mappings differ.',
-  )
+  const workspaceDocument = parseStructuredYaml(workspaceText, 'pnpm-workspace.yaml')
+  const lockDocument = parseStructuredYaml(lockText, 'pnpm-lock.yaml')
+  const workspaceResolutions = collectResolutions(workspaceDocument, 'Workspace')
+  const lockResolutions = collectResolutions(lockDocument, 'Lock')
+  if (overridePolicy === 'required') {
+    assertOverrideMap(workspaceOverrides, names, 'Workspace overrides', version)
+    assertOverrideMap(lockOverrides, names, 'Lock overrides', version)
+    invariant(
+      [...workspaceOverrides].every(([name, value]) => lockOverrides.get(name) === value),
+      'Workspace and lock override mappings differ.',
+    )
+  } else {
+    invariant(workspaceOverrides.size === 0, 'Fixture workspace must not define overrides.')
+    invariant(lockOverrides.size === 0, 'Fixture lockfile must not define overrides.')
+  }
+  invariant(workspaceResolutions.size === 0, 'Workspace must not define resolutions.')
+  invariant(lockResolutions.size === 0, 'Lockfile must not define resolutions.')
+  if (requireAutoInstallPeers) {
+    invariant(
+      workspaceDocument.autoInstallPeers === false,
+      'Fixture workspace must set autoInstallPeers: false.',
+    )
+    invariant(
+      lockDocument.settings?.autoInstallPeers === false,
+      'Fixture lockfile must set settings.autoInstallPeers: false.',
+    )
+  }
+  if (expectedNames !== undefined) {
+    const expected = new Set(expectedNames)
+    invariant(
+      expected.size === names.size && [...expected].every(name => names.has(name)),
+      `DSH release-family names did not match the expected fixture graph (${String(expected.size)}).`,
+    )
+  }
   return Object.freeze({
     names: Object.freeze([...names].sort()),
     packageIdentities: Object.freeze(identities.packages),
     snapshotIdentities: Object.freeze(identities.snapshots),
     importerEntries: collectImporterDshEntries(lockText),
+    overridePolicy,
+    autoInstallPeers: lockDocument.settings?.autoInstallPeers,
   })
 }
 
@@ -248,9 +292,20 @@ export async function enumerateHostDshPackages(hostRoot) {
   ))
 }
 
-export function assertHostDshPackages(packages, seedNames, version = DSH_RELEASE_FAMILY_VERSION) {
+export function assertHostDshPackages(
+  packages,
+  seedNames,
+  version = DSH_RELEASE_FAMILY_VERSION,
+  { requireUniqueNames = false } = {},
+) {
   invariant(packages.length > 0, 'The Host graph resolved without any DSH packages.')
   const observedNames = new Set(packages.map(package_ => package_.name))
+  if (requireUniqueNames) {
+    invariant(
+      packages.length === observedNames.size,
+      'The Host graph contained duplicate physical DSH package names.',
+    )
+  }
   for (const name of seedNames) {
     invariant(observedNames.has(name), `${name} was absent from the Host graph.`)
   }
@@ -262,4 +317,3 @@ export function assertHostDshPackages(packages, seedNames, version = DSH_RELEASE
   }
   return Object.freeze({ names: Object.freeze([...observedNames].sort()), copies: packages.length })
 }
-
