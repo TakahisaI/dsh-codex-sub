@@ -18,9 +18,9 @@ The pi-ai `0.83.0` compatibility spike is retained as evidence only; its conclus
 in [`docs/compatibility-reports/pi-ai-0.83.0.md`](compatibility-reports/pi-ai-0.83.0.md). The
 formal candidate remains on pi-ai `0.82.1`.
 
-The fresh packed `0.1.1-rc.1` install also proves the deferred request-behavior contracts —
-attachment resolution onto the wire, replay continuation, the single-attempt retry boundary,
-and cancellation — through a scripted in-memory transport; see
+The measured fresh packed `0.1.1-rc.1` lane also proves the deferred Issue #51 request
+contracts—attachment budgeting, replay across a process boundary, retry/tool exact-once
+behavior, cancellation, and transport containment—on one Darwin arm64 Node 24 run; see
 [`docs/compatibility-reports/rc1-request-contracts.md`](compatibility-reports/rc1-request-contracts.md).
 
 ## 2. Exact verification, not optimistic ranges

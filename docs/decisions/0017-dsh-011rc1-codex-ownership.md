@@ -109,7 +109,7 @@ CI runs this lane once on Node 24; broader runtime expansion remains an exit cri
 | Historical published rc.7 packed install | PASS locally | prior Alpha evidence; not the current candidate claim |
 | Candidate rc.1 isolated lane | PASS locally | production adapter stream, fail-closed injection, duplicate route, native record seam |
 | Candidate rc.1 source/contract replay, retry, cancellation | PASS locally | source-level contract suites exercise the DSH-owned conversion and lifecycle boundaries on exact `0.1.1-rc.1` |
-| Fresh-packed rc.1 replay, retry, cancellation | PASS (see [`compatibility-reports/rc1-request-contracts.md`](../compatibility-reports/rc1-request-contracts.md)) | requests-phase boot proves attachment resolution onto the wire, replay continuation, the single-attempt retry boundary, and aborted-finish cancellation with zero external hosts |
+| Fresh-packed rc.1 replay, retry, cancellation | PASS (see [`compatibility-reports/rc1-request-contracts.md`](../compatibility-reports/rc1-request-contracts.md)) | six-boot exact-artifact lane proves process-boundary replay, exact-once retry/tool, split cancellation, image budgeting, and fail-closed transport on Darwin arm64 / Node 24 |
 | Fresh-packed rc.1 workflow artifact | PASS locally | one immutable workflow artifact installed without mutation into an exact-pinned fresh `0.1.1-rc.1` Host: unique route with seven-model catalog, duplicate adapter/directory rejection, signed-out `CODEX_AUTH_REQUIRED` with zero provider network attempts across save/restart/post-logout/confirm-deleted boots, CLI status/doctor compatible, package-owned credential preserved then removed by logout without disturbing an adjacent file, independent native record deleted across process boundaries |
 
 The fresh-packed probe consumes the single verified unpublished workflow artifact produced by the
@@ -125,8 +125,8 @@ and package-owned stores receive distinct generated sentinel triplets, and the n
 required to match only its own triplet. Generated sentinels bound subprocess captures through
 stdio close, are redacted from failures, and are checked against printable output.
 Attachment/image-budget behavior plus replay, retry, and cancellation are PASS in the source-level
-rc.1 contract suites, and a requests-phase boot now proves them on the fresh packed install as
-well (see [`compatibility-reports/rc1-request-contracts.md`](../compatibility-reports/rc1-request-contracts.md)).
+rc.1 contract suites, and the measured six-boot fresh-packed lane now proves them on one Darwin
+arm64 / Node 24 environment as well (see [`compatibility-reports/rc1-request-contracts.md`](../compatibility-reports/rc1-request-contracts.md)).
 Natural refresh remains #33 and a real-account smoke remains promotion-gated.
 
 The candidate matrix is enforced by CI. The isolated source and fresh-packed candidate lanes run as
@@ -157,8 +157,8 @@ Promotion to a reviewed alpha requires all of the following:
 3. peer dependencies and machine-readable compatibility move together only after review;
 4. fresh-packed installation of the exact workflow artifact proves one route, duplicate-route
    safety, signed-out `CODEX_AUTH_REQUIRED`, zero provider network attempts, CLI diagnostics,
-   credential preservation/removal behavior, and — since #51 — fresh-packed attachment
-   resolution, replay continuation, the single-attempt retry boundary, and cancellation;
+   credential preservation/removal behavior, plus the measured fresh-packed replay, retry/tool,
+   cancellation, image-budget, and transport contracts recorded for #51;
 5. a maintainer-controlled real-account smoke covers login, model request, natural refresh,
    restart, and logout on the exact artifact;
 6. upstream Web login-start remains absent only while this package remains responsible for the
@@ -174,10 +174,11 @@ without publishing an unverified combination.
 
 Every deferred or untested item is classified and tracked here:
 
-- RESOLVED (#51) — Fresh packed rc.1 evidence now covers attachment resolution, replay
-  continuation, the single-attempt retry boundary, and cancellation; see
+- RESOLVED (#51) — Fresh packed rc.1 evidence covers attachment budgeting, process-boundary
+  replay, exact-once retry/tool, split cancellation, and fail-closed transport; see
   [`compatibility-reports/rc1-request-contracts.md`](../compatibility-reports/rc1-request-contracts.md)
-  and the updated packed-topology status above.
+  and the updated packed-topology status above. The result is limited to the observed Darwin
+  arm64 / Node 24 run; no unobserved matrix is implied.
 - NOT TESTED (#50) — Prove the exact published artifact on DSH rc.1 only in a future
   compatibility-release lane with its own full matrix; do not use peer overrides or duplicate
   installs as substitute evidence. This is a promotion gate, not an ownership prerequisite.

@@ -1,78 +1,59 @@
-# Fresh packed rc.1 request-behavior contracts (#51)
+# Fresh packed rc.1 request contracts (#51)
 
 ## Scope
 
-This report records the secret-free evidence for issue #51: attachment budget offload,
-replay metadata survival, the retry boundary, and cancellation proven on one fresh isolated
-DSH `0.1.1-rc.1` Host installation of the exact packed candidate artifact — closing the
-"NOT TESTED" row in ADR 0017's packed-topology status table.
+This report records the secret-free evidence for Issue #51 on one fresh, exact-pinned
+DSH `0.1.1-rc.1` Host installation. The lane covers attachment budgeting, process-boundary
+replay, retry/tool exact-once behavior, cancellation, and transport containment.
 
-No compatibility metadata, peer range, release metadata, or package version changed as part
-of this work.
+No compatibility metadata, peer range, release metadata, package version, or workflow was
+changed as part of this evidence.
 
-## Candidate identity
+## Candidate and environment
 
-- Package under test: `dsh-codex-sub@0.1.0-alpha.2` packed tarball,
-  SHA-256 `296bacf8c3b7e5f9550b0d99b402e25ff80c97a2193ac72fd36fe333d87261ae`.
-- Host: fresh `0.1.1-rc.1` release-line graph (439 physical DSH package copies), exact-pinned,
-  verified by the existing whole-graph candidate-version checks.
-- Topology after install: 6 direct DSH peers shared with the Host, 2 pi-ai copies
-  (Host + plugin-owned `0.82.1`), 9 adapter-transitive Host peers resolved.
+- Candidate artifact SHA-256: `f277bdccb31232f597b93b07b4b0e990a05c53ef38f8e86538671e2341f47269`.
+- Host graph: exact-pinned `0.1.1-rc.1`, 439 physical DSH package copies.
+- Topology: 6 direct DSH peers shared with Host, 2 pi-ai `0.82.1` copies, and 9 adapter
+  transitive Host peers.
+- Host OS: Darwin 24.6.0, arm64 (`Macmini`).
+- Node: `v24.19.0`; pnpm: `11.7.0`.
 - Upstream inspected commit: `528c682e061696f5a160f363f236ecbf53cbd006`.
+- Measured lane elapsed: `42.50s` (`real`, one run).
 
-## Method
+## Method and boot matrix
 
-The exact-artifact lane (`scripts/spike-exact-artifact-lane.mjs`) gained a fifth probe boot,
-phase `requests`. The boot signs the packed route in through the package-owned vault and
-streams through the real pi-ai Codex client (`openai-codex-responses`). A scripted in-memory
-transport replaces `globalThis.fetch` at plugin-module load and answers only the pinned Codex
-responses endpoint; it keeps every other destination fail-closed and records any external
-attempt. A rejecting WebSocket constructor exercises pi-ai's documented fall-back to SSE.
-The access token is a shape-only three-part stand-in whose payload carries no real data; its
-account claim is a fixed probe constant and nothing leaves the process.
+`scripts/spike-exact-artifact-lane.mjs` installs the candidate once, then runs six isolated
+Host boots over one `DSH_HOME`: `save`, `verify`, `requests-seed`, `requests-resume`,
+`post-logout`, and `confirm-deleted`. The seed and resume boots share one SessionId and stop
+through the outer `bootProbe`; resume has the 120-second bound while ordinary boots use 60
+seconds. The artifact SHA is checked before install, after install, after resume, and at the
+final gate; all four values above matched.
 
-The four behaviors are then driven through the public `ctx.llm.stream` boundary on the
-packed adapter:
+The packed fixture uses only public root imports and injects the public `llm`, `credentials`,
+`attachments`, `agents`, `sessions`, `sessionPersistence`, `tools`, and `sessionTitle` services.
+It installs a fail-closed in-memory SSE transport that accepts only
+`POST https://chatgpt.com/backend-api/codex/responses`, records all fetch and WebSocket URLs,
+and rejects unknown URL, method, body, or marker with a sticky secret-free error. The allowed
+WebSocket dial sends zero frames before SSE fallback.
 
-1. **Attachment/image-budget** — a genuine 1×1 PNG is admitted through the deployment's real
-   `LocalAttachmentStore` (`saveImages`: validation, content-addressed storage, durable
-   reference) and referenced by the request. The transport asserts the store-resolved bytes
-   arrived inside the provider payload as an `input_image` data URL.
-2. **Replay survival** — the assembled assistant message is fed back as durable history with
-   its replay envelope; the continuation request must carry the restored native assistant
-   item, and both terminal envelopes must keep the scripted response identity.
-3. **Retry boundary** — one pre-response transport failure (`ECONNRESET`) is injected for a
-   marked request; the observed failure must classify `TRANSPORT` at the public DSH boundary.
-   The packed profile ships no retry executor (`llm-retry` is a separate optional plugin and
-   the production profile does not bundle it), so exactly one provider attempt is expected;
-   the failure surfaces to the caller unmodified instead of being retried or masked.
-4. **Cancellation** — abort mid-stream before any output byte; the stream must end in an
-   `aborted` finish (not a raw `AbortError`), admit no partial output deltas, and make no
-   further provider attempt.
+## Observed results
 
-## Results
+| Contract | Observed result |
+| --- | --- |
+| Replay seed/resume | Seed response `resp_packed_replay_seed` persisted with native item `msg_pi_1`; separate resume process reported `firstLiveSeq > 0`, user-sourced pinned title, exact assistant envelope on continuation, response `resp_packed_replay_continue`, and durable seed+continuation history. |
+| Retry/tool exact-once | HTTP provider attempts exactly 3; attempt 1 emitted complete function-call frames then `ECONNRESET` without `response.completed`; attempt 2 repeated the user-only request and completed the call; attempt 3 carried exactly one accepted `function_call` and one `function_call_output`; tool execution=1, `llm/retry`=1, `llm/retry-started`=1, `tool/call`=1, `tool/result`=1, `assistant/message`=2. Any fourth fetch is sticky-rejected. |
+| Direct pre-aborted stream | Fetch=0, WebSocket=0, terminal outcome aborted. |
+| Agent pre-dispatch cancellation | Fetch=0, WebSocket=0, no retry/assistant message, user-aborted turn end. |
+| Agent mid-stream cancellation | Fetch=1 and remains 1 after abort, partial tool-only `assistant/chunk` durable, no assistant/message or tool call/result, no retry, derived and durable logical surface user-only, aborted turn end. |
+| Image budget | Five distinct 1070×1070 RGB PNGs (zlib level 0, CRC32) plus a small PNG were stored through `saveImages`; wire retained large1..large4, replaced small+large0 with exactly two `OFFLOADED_IMAGE_TEXT` blocks, and durable six-reference order/metadata remained unchanged. |
+| Transport containment | All provider URLs were exact; WebSocket URLs were exact; allowed WS send count=0; external host set remained empty. |
+| Credential/topology gates | Existing save/verify/post-logout/confirm-deleted gates remained passing, signed-out requests stayed `CODEX_AUTH_REQUIRED` with zero network attempts, and package logout preserved the adjacent sentinel file. |
 
-| Behavior | Result | Observed |
-| --- | --- | --- |
-| Attachment resolution onto the wire | PASS | admitted reference resolved via the deployment store; PNG bytes present as `input_image` data URL; exactly 1 provider attempt |
-| Replay metadata survival | PASS | continuation request carried the native assistant item; response identity matched across both streams |
-| Retry boundary | PASS | scripted transport failure classified `TRANSPORT`; exactly 1 provider attempt (no hidden retry); failure surfaced unmodified |
-| Cancellation | PASS | terminal `aborted` finish; zero partial output deltas; no further provider attempt |
-| Network containment (whole boot) | PASS | zero external hosts; every dial answered by the scripted transport |
-
-Signed-in streaming also re-proved on this same fresh install: clean stop, assembled text,
-usage, and a replay envelope whose response identity matches the scripted response. All four
-credential-lifecycle boots (save/restart/post-logout/confirm-deleted) still pass unchanged
-after the requests boot, including signed-out `CODEX_AUTH_REQUIRED` with zero network
-attempts, confirming the requests phase left no residue (the re-created credential is removed
-and signed-out state re-verified by CLI before those boots).
-
-Generated sentinels remain absent from all captures; the lane summary carries only public
-version, topology, and pass/fail data.
+The generated credential sentinels were absent from all subprocess captures and result summaries.
 
 ## Classification update
 
-ADR 0017's "Fresh-packed rc.1 replay, retry, cancellation" row moves from NOT TESTED to PASS
-with this evidence; exit criterion 2's deferred clause ("fresh-packed replay, retry, and
-cancellation remain explicitly deferred to #51") is satisfied. The remaining promotion gates
-(#50 published-artifact matrix, #33 natural refresh observation) are unchanged.
+The measured six-boot lane resolves the fresh-packed replay, retry/tool, cancellation, and image
+budget evidence deferred to Issue #51. ADR 0017 and `docs/compatibility.md` now reflect PASS /
+RESOLVED based only on this observed OS/Node run. The separate published-artifact matrix (#50)
+and natural-refresh smoke (#33) remain promotion gates.
