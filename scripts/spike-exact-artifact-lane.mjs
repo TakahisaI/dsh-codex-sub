@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from 'node:child_process'
 import {
+  cp,
   mkdir,
   mkdtemp,
   readdir,
@@ -8,7 +9,7 @@ import {
   rm,
   writeFile,
 } from 'node:fs/promises'
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { parseArgs } from 'node:util'
 import { tmpdir } from 'node:os'
 import { basename, dirname, isAbsolute, join, resolve } from 'node:path'
@@ -31,6 +32,7 @@ import {
   enumerateHostDshPackages,
 } from './dsh-release-family-lock.mjs'
 import { parseProbeScope } from './probe-scope.mjs'
+import { parseHostGraphMode } from './host-graph-mode.mjs'
 
 const repositoryRoot = fileURLToPath(new URL('..', import.meta.url))
 const candidateVersion = RC1_CANDIDATE_VERSION
@@ -38,6 +40,7 @@ const upstreamCommit = RC1_UPSTREAM_COMMIT
 const packageName = 'dsh-codex-sub'
 const pluginRowId = 'llm-codex-sub'
 const probeDirectory = join(repositoryRoot, 'tests', 'fixtures', 'packed-install-probe')
+const releaseHostFixtureDirectory = join(repositoryRoot, 'tests', 'fixtures', 'rc1-release-host')
 const maxCaptureBytes = 4 * 1024 * 1024
 const bootTimeoutMs = 60_000
 const resumeBootTimeoutMs = 120_000
@@ -58,6 +61,7 @@ function parseJson(text, label) {
 function packageTarballArguments() {
   const arguments_ = process.argv[2] === '--' ? process.argv.slice(3) : process.argv.slice(2)
   const probeScope = parseProbeScope(arguments_)
+  const hostGraphMode = parseHostGraphMode(arguments_)
   const { values } = parseArgs({
     args: arguments_,
     allowPositionals: false,
@@ -65,6 +69,7 @@ function packageTarballArguments() {
       'expected-sha256': { type: 'string' },
       'package-tarball': { type: 'string' },
       'probe-scope': { type: 'string' },
+      'host-graph-mode': { type: 'string' },
     },
     strict: true,
   })
@@ -79,7 +84,13 @@ function packageTarballArguments() {
     '--expected-sha256 (or DSH_WORKFLOW_ARTIFACT_SHA256) must be a lowercase SHA-256 digest.',
   )
   invariant(values['probe-scope'] === probeScope, '--probe-scope parser disagreement.')
-  return { expectedSha256, packageTarball: resolve(packageTarball), probeScope }
+  invariant(values['host-graph-mode'] === hostGraphMode, '--host-graph-mode parser disagreement.')
+  return {
+    expectedSha256,
+    hostGraphMode,
+    packageTarball: resolve(packageTarball),
+    probeScope,
+  }
 }
 
 function redact(value, secrets = []) {
@@ -231,7 +242,7 @@ function countExactLine(text, line) {
  *    points at another release. Unreferenced directories left on disk by an
  *    earlier install are garbage, not part of the graph.
  */
-async function assertWholeGraphIsCandidateVersion(seedNames) {
+async function assertWholeGraphIsCandidateVersion(seedNames, hostGraphMode, expectedNames) {
   // The pnpm lockfile is the authoritative resolution: every DSH release-line
   // entry it references must be the exact candidate version.
   const lockText = await readFile(join(hostRoot, 'pnpm-lock.yaml'), 'utf8')
@@ -240,6 +251,9 @@ async function assertWholeGraphIsCandidateVersion(seedNames) {
     lockText,
     workspaceText,
     version: candidateVersion,
+    overridePolicy: hostGraphMode === 'locked-no-overrides' ? 'forbidden' : 'required',
+    expectedNames,
+    requireAutoInstallPeers: hostGraphMode === 'locked-no-overrides',
   })
   const referencedPairs = new Set([
     ...lockReport.packageIdentities,
@@ -253,7 +267,9 @@ async function assertWholeGraphIsCandidateVersion(seedNames) {
   const physical = await enumerateHostDshPackages(hostRoot)
   invariant(physical.length > 0, 'The Host graph resolved without any DSH packages.')
   const selectedPhysical = physical.filter(pkg => referencedPairs.has(`${pkg.name}@${pkg.version}`))
-  assertHostDshPackages(selectedPhysical, seedNames, candidateVersion)
+  assertHostDshPackages(selectedPhysical, seedNames, candidateVersion, {
+    requireUniqueNames: hostGraphMode === 'locked-no-overrides',
+  })
 
   // Live links must resolve into candidate-version copies too.
   const liveRoots = [
@@ -284,6 +300,13 @@ async function assertWholeGraphIsCandidateVersion(seedNames) {
     }
   }
   return { physicalCopies: physical.length, liveLinksChecked }
+}
+
+async function sha256File(path) {
+  const bytes = await readFile(path)
+  const hash = createHash('sha256')
+  hash.update(bytes)
+  return hash.digest('hex')
 }
 
 function hasExited(child) {
@@ -394,7 +417,7 @@ const allSentinels = [
 invariant(new Set(allSentinels).size === allSentinels.length, 'Generated credential sentinels collided.')
 
 try {
-  const { expectedSha256, packageTarball, probeScope } = packageTarballArguments()
+  const { expectedSha256, hostGraphMode, packageTarball, probeScope } = packageTarballArguments()
   const inputArtifact = await validatePackageTarball(packageTarball)
   assertWorkflowArtifactSha256(inputArtifact.sha256, expectedSha256)
   const packedManifest = parseJson(run('tar', [
@@ -416,65 +439,110 @@ try {
   const candidateSource = { manifest: packedManifest, compatibility: packedCompatibility }
   await mkdir(artifactDirectory, { recursive: true })
 
-  // Phase 1 — compose a fresh isolated Host graph pinned to exact rc.1
-  // packages. Every DSH release-line package declares a caret range, so an
-  // unpinned install now resolves to the newer rc.2 release; the overrides
-  // keep every shared peer at the inspected candidate version. The plugin is
-  // still installed afterwards through DSH's own `plugin add` path.
+  // Phase 1 — compose a fresh isolated Host graph. The historical
+  // override-pinned lane builds the graph dynamically for regression. The
+  // #50 lane copies a reviewed fixture and performs one frozen install with
+  // no override or resolution metadata before using the ordinary plugin path.
   await mkdir(hostRoot, { recursive: true })
   const seedPackages = Object.keys(candidateSource.compatibility.dsh.packages)
     .filter(name => name !== '@deepseek-ai/cordis')
     // The Host CLI package is not a plugin peer and has no compatibility row,
     // but the exact-artifact claim covers it too.
     .concat('@deepseek-ai/dsh')
-  const hostManifest = {
-    name: 'dsh-codex-sub-exact-artifact-host',
-    private: true,
-    type: 'module',
-    dependencies: {
-      '@deepseek-ai/cordis': candidateSource.manifest.peerDependencies['@deepseek-ai/cordis'],
-      '@deepseek-ai/schemastery': '^3.18.1',
-      '@earendil-works/pi-ai': candidateSource.compatibility.piAi.version,
-    },
-    devDependencies: Object.fromEntries(seedPackages.map(name => [name, candidateVersion])),
-  }
-  await writeFile(join(hostRoot, 'package.json'), `${JSON.stringify(hostManifest, null, 2)}\n`)
   await writeFile(
     join(hostRoot, 'compatibility.json'),
     `${JSON.stringify(candidateSource.compatibility, null, 2)}\n`,
   )
-  // pnpm 11 no longer reads the package.json "pnpm" field; overrides live in
-  // pnpm-workspace.yaml.
-  const workspacePath = join(hostRoot, 'pnpm-workspace.yaml')
-  await writeFile(workspacePath, 'packages:\n  - .\noverrides: {}\n')
-  run('pnpm', ['install', '--ignore-scripts'], {
-    cwd: hostRoot,
-    label: 'install seed rc.1 Host graph',
-  })
-
-  // Every DSH package declares a caret range and a newer rc.2 line already
-  // exists, so transitive peers drift unless each discovered release-line
-  // package is pinned explicitly. Reinstall once with the complete override
-  // set, then verify the whole graph below.
-  const discovered = await enumerateHostDshPackages(hostRoot)
-  const seedNameSet = new Set(seedPackages)
-  const discoveredNames = new Set(discovered.map(pkg => pkg.name))
-  for (const seed of seedPackages) {
-    invariant(discoveredNames.has(seed), `${seed} was absent from the seed rc.1 Host graph.`)
+  let fixtureDshNames
+  let seedNameSet
+  let expectedHostNames
+  if (hostGraphMode === 'locked-no-overrides') {
+    const fixtureFiles = ['package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml']
+    const fixtureBytes = new Map()
+    for (const filename of fixtureFiles) {
+      const source = join(releaseHostFixtureDirectory, filename)
+      fixtureBytes.set(filename, await sha256File(source))
+      await cp(source, join(hostRoot, filename))
+    }
+    const fixtureManifest = parseJson(
+      await readFile(join(hostRoot, 'package.json'), 'utf8'),
+      'rc.1 release Host fixture package.json',
+    )
+    fixtureDshNames = Object.keys(fixtureManifest.dependencies ?? {})
+      .filter(name => name.startsWith('@deepseek-ai/dsh'))
+      .sort()
+    invariant(fixtureDshNames.length === 188, 'The rc.1 release Host fixture must contain 188 DSH identities.')
+    for (const name of fixtureDshNames) {
+      invariant(
+        fixtureManifest.dependencies[name] === candidateVersion,
+        `${name} fixture dependency drifted from ${candidateVersion}.`,
+      )
+    }
+    const fixtureLockText = await readFile(join(hostRoot, 'pnpm-lock.yaml'), 'utf8')
+    const fixtureWorkspaceText = await readFile(join(hostRoot, 'pnpm-workspace.yaml'), 'utf8')
+    assertDshReleaseFamilyLock({
+      lockText: fixtureLockText,
+      workspaceText: fixtureWorkspaceText,
+      version: candidateVersion,
+      overridePolicy: 'forbidden',
+      expectedNames: fixtureDshNames,
+      requireAutoInstallPeers: true,
+    })
+    run('pnpm', ['install', '--frozen-lockfile', '--ignore-scripts'], {
+      cwd: hostRoot,
+      label: 'install locked-no-overrides rc.1 Host fixture',
+    })
+    for (const filename of fixtureFiles) {
+      invariant(
+        await sha256File(join(hostRoot, filename)) === fixtureBytes.get(filename),
+        `${filename} changed during the frozen fixture install.`,
+      )
+    }
+    seedNameSet = new Set(fixtureDshNames)
+    expectedHostNames = fixtureDshNames
+  } else {
+    const hostManifest = {
+      name: 'dsh-codex-sub-exact-artifact-host',
+      private: true,
+      type: 'module',
+      dependencies: {
+        '@deepseek-ai/cordis': candidateSource.manifest.peerDependencies['@deepseek-ai/cordis'],
+        '@deepseek-ai/schemastery': '^3.18.1',
+        '@earendil-works/pi-ai': candidateSource.compatibility.piAi.version,
+      },
+      devDependencies: Object.fromEntries(seedPackages.map(name => [name, candidateVersion])),
+    }
+    await writeFile(join(hostRoot, 'package.json'), `${JSON.stringify(hostManifest, null, 2)}\n`)
+    const workspacePath = join(hostRoot, 'pnpm-workspace.yaml')
+    await writeFile(workspacePath, 'packages:\n  - .\noverrides: {}\n')
+    run('pnpm', ['install', '--ignore-scripts'], {
+      cwd: hostRoot,
+      label: 'install seed rc.1 Host graph',
+    })
+    const discovered = await enumerateHostDshPackages(hostRoot)
+    seedNameSet = new Set(seedPackages)
+    const discoveredNames = new Set(discovered.map(pkg => pkg.name))
+    for (const seed of seedPackages) {
+      invariant(discoveredNames.has(seed), `${seed} was absent from the seed rc.1 Host graph.`)
+    }
+    await writeFile(
+      workspacePath,
+      `packages:\n  - .\noverrides:\n${[...discoveredNames].map(name => `  '${name}': ${candidateVersion}`).join('\n')}\n`,
+    )
+    run('pnpm', ['install', '--ignore-scripts', '--no-frozen-lockfile'], {
+      cwd: hostRoot,
+      label: 'reinstall exact-pinned rc.1 Host graph',
+    })
   }
-  await writeFile(
-    workspacePath,
-    `packages:\n  - .\noverrides:\n${[...discoveredNames].map(name => `  '${name}': ${candidateVersion}`).join('\n')}\n`,
-  )
-  run('pnpm', ['install', '--ignore-scripts', '--no-frozen-lockfile'], {
-    cwd: hostRoot,
-    label: 'reinstall exact-pinned rc.1 Host graph',
-  })
   dshExecutable = join(hostRoot, 'node_modules', '.bin', 'dsh')
 
   // The whole release-line graph must now sit at the candidate version: every
   // physical store copy, every live link, and every seed package exactly once.
-  const { physicalCopies } = await assertWholeGraphIsCandidateVersion(seedNameSet)
+  const { physicalCopies } = await assertWholeGraphIsCandidateVersion(
+    seedNameSet,
+    hostGraphMode,
+    expectedHostNames,
+  )
 
   const baseEnvironment = {
     ...process.env,
@@ -484,7 +552,7 @@ try {
     FORCE_COLOR: '0',
     NO_COLOR: '1',
     npm_config_auto_install_peers: 'false',
-    npm_config_strict_peer_dependencies: 'false',
+    ...(hostGraphMode === 'override-pinned' ? { npm_config_strict_peer_dependencies: 'false' } : {}),
   }
   run(dshExecutable, ['--profile', 'web', '--dump-config'], {
     cwd: hostRoot,
@@ -523,7 +591,11 @@ try {
   })
   // Plugin installation must not have reintroduced any non-candidate DSH
   // package or disturbed the pinned graph.
-  const { physicalCopies: finalPhysicalCopies } = await assertWholeGraphIsCandidateVersion(seedNameSet)
+  const { physicalCopies: finalPhysicalCopies } = await assertWholeGraphIsCandidateVersion(
+    seedNameSet,
+    hostGraphMode,
+    expectedHostNames,
+  )
   invariant(
     finalPhysicalCopies === physicalCopies,
     'Plugin installation changed the number of physical DSH packages.',

@@ -111,6 +111,7 @@ CI runs this lane once on Node 24; broader runtime expansion remains an exit cri
 | Candidate rc.1 source/contract replay, retry, cancellation | PASS locally | source-level contract suites exercise the DSH-owned conversion and lifecycle boundaries on exact `0.1.1-rc.1` |
 | Fresh-packed rc.1 replay, retry, cancellation | PASS (see [`compatibility-reports/rc1-request-contracts.md`](../compatibility-reports/rc1-request-contracts.md)) | six-boot exact-artifact request-contracts lane proves process-boundary replay, exact-once retry/tool, split cancellation, image budgeting, and fail-closed transport on Darwin arm64 / Node 24; the separate four-boot credential-topology lane is not request evidence |
 | Fresh-packed rc.1 workflow artifact | PASS locally | one immutable workflow artifact installed without mutation into an exact-pinned fresh `0.1.1-rc.1` Host: unique route with seven-model catalog, duplicate adapter/directory rejection, signed-out `CODEX_AUTH_REQUIRED` with zero provider network attempts across save/restart/post-logout/confirm-deleted boots, CLI status/doctor compatible, package-owned credential preserved then removed by logout without disturbing an adjacent file, independent native record deleted across process boundaries |
+| Override-free rc.1 release Host graph (#50) | IMPLEMENTED; formal matrix pending | fixture contains 188 direct DSH names at exact rc.1, `autoInstallPeers: false`, no overrides/resolutions, one frozen install, and one ordinary candidate install; local Darwin Node 24 six-boot request lane passes with the same artifact SHA |
 
 The fresh-packed probe consumes the single verified unpublished workflow artifact produced by the
 candidate job and installs those bytes directly into an isolated Host. It does not rewrite a
@@ -134,16 +135,16 @@ The candidate matrix is enforced by CI. The isolated source and fresh-packed can
 dedicated Node 24 CI jobs, alongside the exact-artifact lane that downloads the same verified
 workflow artifact, checks its SHA before and after installation, and installs those bytes without
 mutation into a Host whose DSH release-line packages are each pinned to the exact candidate
-version. Because every upstream package declares a caret range and `0.1.1-rc.2` is now public,
-an unpinned install resolves to newer packages; the lane discovers the full release-line package
-set from the seed graph and pins it explicitly through pnpm workspace overrides before verifying
-the topology above. The future compatibility-release matrix remains the gate for published bytes
-on rc.1 (#50).
+version. The #50 release fixture lists all 188 DSH names directly at rc.1, sets
+`autoInstallPeers: false`, and forbids both pnpm overrides and resolutions; it is installed once
+with `--frozen-lockfile` before the normal plugin install. The six-cell compatibility-release
+matrix repeats this proof on Ubuntu/macOS and Node 22.19/24/26. No publication, tag change, or
+registry identity is implied by this evidence.
 
 The production runtime guard accepts only the exact candidate DSH/Cordis/pi-ai values. The
 candidate remains unpublished and is not public support until this decision and the complete
-exact-artifact matrix pass; the exact-artifact lane supplies the installability half of that matrix,
-and the compatibility-release lane (#50) completes it with the published bytes themselves.
+exact-artifact matrix pass. The exact-artifact and compatibility-release lanes consume the same
+publication-bound producer bytes; registry identity is intentionally a later publication gate.
 
 ## Consequences and exit criteria
 
@@ -180,9 +181,10 @@ Every deferred or untested item is classified and tracked here:
   [`compatibility-reports/rc1-request-contracts.md`](../compatibility-reports/rc1-request-contracts.md)
   and the updated packed-topology status above. The result is limited to the observed Darwin
   arm64 / Node 24 run; no unobserved matrix is implied.
-- NOT TESTED (#50) — Prove the exact published artifact on DSH rc.1 only in a future
-  compatibility-release lane with its own full matrix; do not use peer overrides or duplicate
-  installs as substitute evidence. This is a promotion gate, not an ownership prerequisite.
+- RESOLVED (#50 release-artifact evidence) — The override-free Host fixture and full six-cell
+  compatibility-release lane are implemented and locally exercised on Darwin Node 24. The formal
+  GitHub matrix must be green before the candidate may be staged or described as public support;
+  this evidence does not claim published registry bytes.
 - DEFERRED (#52) — Decide whether to broaden the candidate lane beyond Node 24 after upstream
   compatibility stabilizes.
 - DEFERRED (maintainer-controlled, #33) — Track natural OAuth refresh through normal use until a

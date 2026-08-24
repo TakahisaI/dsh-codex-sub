@@ -291,6 +291,47 @@ describe('workflow release evidence', () => {
     expect(() => validateWorkflowContracts(inputs)).not.toThrow()
   })
 
+  it('requires the exact-artifact and compatibility-release six-cell matrix with explicit modes', async () => {
+    const inputs = await repositoryInputs()
+    const exactCells = [
+      '          - os: ubuntu-latest\n            node: 22.19.0',
+      '          - os: ubuntu-latest\n            node: 24',
+      '          - os: ubuntu-latest\n            node: 26',
+      '          - os: macos-latest\n            node: 22.19.0',
+      '          - os: macos-latest\n            node: 24',
+      '          - os: macos-latest\n            node: 26',
+    ]
+    expect(inputs.ciWorkflow.match(/--host-graph-mode locked-no-overrides/gu)).toHaveLength(1)
+    expect(inputs.ciWorkflow.match(/--host-graph-mode override-pinned/gu)).toHaveLength(1)
+    expect(inputs.releaseWorkflow.match(/--host-graph-mode locked-no-overrides/gu)).toHaveLength(1)
+    expect(inputs.releaseWorkflow).toContain('  compatibility-release:')
+    expect(inputs.releaseWorkflow).toContain(
+      '      - candidate-install\n      - compatibility-release\n',
+    )
+    for (const cell of exactCells) {
+      expect(inputs.ciWorkflow).toContain(cell)
+      expect(inputs.releaseWorkflow).toContain(cell)
+    }
+  })
+
+  it('rejects a missing exact-artifact cell or a mode omission', async () => {
+    const inputs = await repositoryInputs()
+    const missingCell = inputs.ciWorkflow.replace(
+      '          - os: macos-latest\n            node: 26\n',
+      '',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: missingCell })).toThrow(
+      'CI exact-artifact-lane packed-install matrix did not match compatibility.json.',
+    )
+    const missingMode = inputs.ciWorkflow.replace(
+      '          --host-graph-mode locked-no-overrides\n',
+      '',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: missingMode })).toThrow(
+      'CI exact-artifact-lane must pass --host-graph-mode locked-no-overrides exactly once.',
+    )
+  })
+
   it('requires one explicit scope per packed lane and rejects missing, swapped, or duplicate flags', async () => {
     const inputs = await repositoryInputs()
     const missing = inputs.ciWorkflow.replace('          --probe-scope credential-topology\n', '')
