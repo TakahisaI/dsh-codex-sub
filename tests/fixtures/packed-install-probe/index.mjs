@@ -306,7 +306,8 @@ function scriptedBody(body, init, urlText = CODEX_URL) {
     }
     if (attempt === 3) {
       const accepted = retryCalls.filter((item) => item.id === 'fc_retry_once' && item.call_id === 'call_retry_once' && item.name === 'record_side_effect' && item.arguments === '{"value":"once"}')
-      const outputs = retryOutputs.filter((item) => item.call_id === 'call_retry_once')
+      const expectedOutput = { type: 'function_call_output', call_id: 'call_retry_once', output: 'once' }
+      const outputs = retryOutputs.filter((item) => isDeepStrictEqual(item, expectedOutput))
       if (accepted.length !== 1 || outputs.length !== 1 || retryCalls.length !== 1 || retryOutputs.length !== 1) violation('accepted function call/output envelope mismatch')
       transport.retryAcceptedFunctionCall = true
       transport.retryAcceptedFunctionOutput = true
@@ -517,6 +518,18 @@ function orderedEvents(events) {
 
 function messageText(message) {
   return message?.content?.find((part) => part?.type === 'text')?.text
+}
+
+function publicAttachmentRef(ref) {
+  const normalized = {
+    attachmentId: ref?.attachmentId,
+    mediaType: ref?.mediaType,
+    bytes: ref?.bytes,
+    width: ref?.width,
+    height: ref?.height,
+  }
+  if (ref?.name !== undefined) normalized.name = ref.name
+  return normalized
 }
 
 function exactUserText(message, text) {
@@ -751,8 +764,12 @@ async function midStreamCancel(ctx, modelId) {
   const beforeWs = transport.wsUrls.length
   handle.agent.followup(textRequest(CANCEL_MID_MARKER))
   await chunkSeen
+  const fetchAtLatch = transport.providerAttempts
+  const wsAtLatch = transport.wsUrls.length
   handle.agent.cancel({ kind: 'user' })
   await handle.agent.whenIdle()
+  const fetchAfterAbort = transport.providerAttempts
+  const wsAfterAbort = transport.wsUrls.length
   const persisted = await flushAndInspect(ctx, handle.agent.session)
   const sessionEvents = orderedEvents(handle.agent.session.events)
   const rawEvents = orderedEvents(persistedEvents(persisted.raw))
@@ -762,9 +779,9 @@ async function midStreamCancel(ctx, modelId) {
   const expectedUser = logicalDerived[0]
   const persistedCounts = Object.fromEntries(['assistant/message', 'tool/call', 'tool/result'].map((type) => [type, rawEvents.filter((event) => event.type === type).length]))
   const rawTurnEnds = rawEvents.filter((event) => event.type === 'turn/end')
-  const result = { fetchCount: transport.providerAttempts - beforeFetch, afterAbortFetchCount: transport.providerAttempts - beforeFetch, wsCount: transport.wsUrls.length - beforeWs, afterAbortWsCount: transport.wsUrls.length - beforeWs, retryCount: eventTypes(handle.agent.session, 'llm/retry').length, partialChunkCount: eventTypes(handle.agent.session, 'assistant/chunk').length, assistantMessageCount: eventTypes(handle.agent.session, 'assistant/message').length, toolCallCount: eventTypes(handle.agent.session, 'tool/call').length, toolResultCount: eventTypes(handle.agent.session, 'tool/result').length, turnEndReason: turnEnd?.data?.reason?.kind ?? null, persistedTurnEndCount: rawTurnEnds.length, persistedTurnEndReason: rawTurnEnds.at(-1)?.data?.reason?.kind ?? null, derivedMessageCount: derived.length, logicalDerivedMessageCount: logicalDerived.length, derivedUserContentExact: logicalDerived.length === 1 && exactUserText(expectedUser, CANCEL_MID_MARKER), rawContainsPartialChunk: rawEvents.some((event) => event.type === 'assistant/chunk' && event.data?.chunk?.type === 'tool-call-delta' && event.data.chunk.argumentsDelta === CANCEL_MID_ARGUMENT_DELTA), rawPartialArgumentDelta: rawEvents.some((event) => event.type === 'assistant/chunk' && event.data?.chunk?.type === 'tool-call-delta' && event.data.chunk.argumentsDelta === CANCEL_MID_ARGUMENT_DELTA), persistedCounts, seenEventTypes: [...new Set(seen.map((event) => event.type))].sort(), partialChunkEventSeq: partialChunkEvent?.seq ?? null }
+  const result = { fetchCountAtLatch: fetchAtLatch - beforeFetch, fetchCountAfterAbort: fetchAfterAbort - beforeFetch, fetchCountAfterAbortDelta: fetchAfterAbort - fetchAtLatch, wsCountAtLatch: wsAtLatch - beforeWs, wsCountAfterAbort: wsAfterAbort - beforeWs, wsCountAfterAbortDelta: wsAfterAbort - wsAtLatch, retryCount: eventTypes(handle.agent.session, 'llm/retry').length, partialChunkCount: eventTypes(handle.agent.session, 'assistant/chunk').length, assistantMessageCount: eventTypes(handle.agent.session, 'assistant/message').length, toolCallCount: eventTypes(handle.agent.session, 'tool/call').length, toolResultCount: eventTypes(handle.agent.session, 'tool/result').length, turnEndReason: turnEnd?.data?.reason?.kind ?? null, persistedTurnEndCount: rawTurnEnds.length, persistedTurnEndReason: rawTurnEnds.at(-1)?.data?.reason?.kind ?? null, derivedMessageCount: derived.length, logicalDerivedMessageCount: logicalDerived.length, derivedUserContentExact: logicalDerived.length === 1 && exactUserText(expectedUser, CANCEL_MID_MARKER), rawContainsPartialChunk: rawEvents.some((event) => event.type === 'assistant/chunk' && event.data?.chunk?.type === 'tool-call-delta' && event.data.chunk.argumentsDelta === CANCEL_MID_ARGUMENT_DELTA), rawPartialArgumentDelta: rawEvents.some((event) => event.type === 'assistant/chunk' && event.data?.chunk?.type === 'tool-call-delta' && event.data.chunk.argumentsDelta === CANCEL_MID_ARGUMENT_DELTA), persistedCounts, seenEventTypes: [...new Set(seen.map((event) => event.type))].sort(), partialChunkEventSeq: partialChunkEvent?.seq ?? null }
   await handle.dispose()
-  if (result.fetchCount !== 1 || result.afterAbortFetchCount !== 1 || result.wsCount !== 1 || result.afterAbortWsCount !== result.wsCount || result.retryCount !== 0 || result.partialChunkCount < 1 || result.assistantMessageCount !== 0 || result.toolCallCount !== 0 || result.toolResultCount !== 0 || result.turnEndReason !== 'aborted' || result.persistedTurnEndCount !== 1 || result.persistedTurnEndReason !== 'aborted' || result.logicalDerivedMessageCount !== 1 || result.derivedUserContentExact !== true || result.rawContainsPartialChunk !== true || result.rawPartialArgumentDelta !== true || result.persistedCounts['assistant/message'] !== 0 || result.persistedCounts['tool/call'] !== 0 || result.persistedCounts['tool/result'] !== 0 || result.partialChunkEventSeq === null) throw new Error('Mid-stream cancellation durable contract failed.')
+  if (result.fetchCountAtLatch !== 1 || result.fetchCountAfterAbort !== 1 || result.fetchCountAfterAbortDelta !== 0 || result.wsCountAtLatch !== 1 || result.wsCountAfterAbort !== 1 || result.wsCountAfterAbortDelta !== 0 || result.retryCount !== 0 || result.partialChunkCount < 1 || result.assistantMessageCount !== 0 || result.toolCallCount !== 0 || result.toolResultCount !== 0 || result.turnEndReason !== 'aborted' || result.persistedTurnEndCount !== 1 || result.persistedTurnEndReason !== 'aborted' || result.logicalDerivedMessageCount !== 1 || result.derivedUserContentExact !== true || result.rawContainsPartialChunk !== true || result.rawPartialArgumentDelta !== true || result.persistedCounts['assistant/message'] !== 0 || result.persistedCounts['tool/call'] !== 0 || result.persistedCounts['tool/result'] !== 0 || result.partialChunkEventSeq === null) throw new Error('Mid-stream cancellation durable contract failed.')
   return result
 }
 
@@ -787,10 +804,16 @@ async function attachmentScenario(ctx, modelId) {
   const persisted = await flushAndInspect(ctx, handle.agent.session)
   const userEvents = eventTypes(handle.agent.session, 'user/message')
   const durableMessage = userEvents.findLast((event) => Array.isArray(event.data?.content) && event.data.content.some((part) => part.type === 'image'))?.data?.content
-  const durableRefs = Array.isArray(durableMessage) ? durableMessage.filter((part) => part.type === 'image').map((part) => part.attachment?.attachmentId) : []
-  const result = { imageWire: { survivorCount: transport.imageWire?.survivors?.length ?? 0, offloaded: transport.imageWire?.offloaded ?? 0 }, durableReferenceCount: durableRefs.length, durableReferenceOrderUnchanged: durableRefs.length === refs.length && durableRefs.every((id, index) => id === refs[index].attachmentId), offloadedTextCount: transport.imageWire?.offloaded ?? 0, httpCount: transport.providerAttempts - beforeHttp, wsCount: transport.wsUrls.length - beforeWs, rawBytes: persisted.raw.content.length, encodedBytes: encoded.map((value) => value.length) }
+  const durableRefs = Array.isArray(durableMessage)
+    ? durableMessage.filter((part) => part.type === 'image').map((part) => publicAttachmentRef(part.attachment))
+    : []
+  const expectedRefs = refs.map(publicAttachmentRef)
+  const durableReferenceOrderUnchanged = durableRefs.length === expectedRefs.length
+    && durableRefs.every((ref, index) => ref.attachmentId === expectedRefs[index]?.attachmentId)
+  const durableReferenceShapeUnchanged = isDeepStrictEqual(durableRefs, expectedRefs)
+  const result = { imageWire: { survivorCount: transport.imageWire?.survivors?.length ?? 0, offloaded: transport.imageWire?.offloaded ?? 0 }, durableReferenceCount: durableRefs.length, durableReferenceOrderUnchanged, durableReferenceShapeUnchanged, offloadedTextCount: transport.imageWire?.offloaded ?? 0, httpCount: transport.providerAttempts - beforeHttp, wsCount: transport.wsUrls.length - beforeWs, rawBytes: persisted.raw.content.length, encodedBytes: encoded.map((value) => value.length) }
   await handle.dispose()
-  if (result.durableReferenceCount !== 6 || result.durableReferenceOrderUnchanged !== true || result.offloadedTextCount !== 2 || result.imageWire?.survivorCount !== 4 || result.httpCount !== 1 || result.wsCount !== 1) throw new Error('Attachment image-budget contract failed.')
+  if (result.durableReferenceCount !== 6 || result.durableReferenceOrderUnchanged !== true || result.durableReferenceShapeUnchanged !== true || result.offloadedTextCount !== 2 || result.imageWire?.survivorCount !== 4 || result.httpCount !== 1 || result.wsCount !== 1) throw new Error('Attachment image-budget contract failed.')
   return result
 }
 
@@ -805,7 +828,7 @@ async function runRequestsPhase(ctx, modelId) {
     const midStreamCancellation = await midStreamCancel(ctx, modelId)
     const images = await attachmentScenario(ctx, modelId)
     if (transport.retryAttempts.length !== 3) throw new Error(`Retry provider HTTP attempts drifted: ${transport.retryAttempts.length}`)
-    if (replay.httpCount !== 1 || replay.wsCount !== 1 || retry.httpCount !== 3 || retry.wsCount !== 1 || directCancellation.fetchCount !== 0 || directCancellation.wsCount !== 0 || preDispatchCancellation.fetchCount !== 0 || preDispatchCancellation.wsCount !== 0 || midStreamCancellation.fetchCount !== 1 || midStreamCancellation.wsCount !== 1 || images.httpCount !== 1 || images.wsCount !== 1) throw new Error('Request scenario transport counts drifted.')
+    if (replay.httpCount !== 1 || replay.wsCount !== 1 || retry.httpCount !== 3 || retry.wsCount !== 1 || directCancellation.fetchCount !== 0 || directCancellation.wsCount !== 0 || preDispatchCancellation.fetchCount !== 0 || preDispatchCancellation.wsCount !== 0 || midStreamCancellation.fetchCountAtLatch !== 1 || midStreamCancellation.fetchCountAfterAbort !== 1 || midStreamCancellation.fetchCountAfterAbortDelta !== 0 || midStreamCancellation.wsCountAtLatch !== 1 || midStreamCancellation.wsCountAfterAbort !== 1 || midStreamCancellation.wsCountAfterAbortDelta !== 0 || images.httpCount !== 1 || images.wsCount !== 1) throw new Error('Request scenario transport counts drifted.')
     if (transport.stickyError !== undefined || transport.wsSendCount !== 0 || transport.externalHosts.size !== 0 || transport.loopbackUrls.length !== 0) throw new Error('Request transport sticky state drifted.')
     if (transport.fetchRequests.some((request) => request.url !== CODEX_URL || request.method !== 'POST')) throw new Error('Request fetch endpoint/method drifted.')
     if (transport.wsUrls.some((url) => url !== CODEX_WS_URL)) throw new Error('Request WebSocket endpoint drifted.')

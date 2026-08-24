@@ -701,11 +701,10 @@ try {
   invariant(requests.retry.finishKind === 'completed' && requests.retry.finalAssistantText === 'packed retry final response' && requests.retry.finalResponseId === 'resp_packed_retry_final' && requests.retry.failedCallAdopted === false, 'Retry final durable surface drifted.')
   invariant(requests.cancellation.directPreAborted.fetchCount === 0 && requests.cancellation.directPreAborted.wsCount === 0, 'Direct pre-aborted stream reached a provider transport.')
   invariant(requests.cancellation.preDispatch.fetchCount === 0 && requests.cancellation.preDispatch.wsCount === 0, 'Pre-dispatch cancellation reached a provider transport.')
-  invariant(requests.cancellation.midStream.fetchCount === 1 && requests.cancellation.midStream.afterAbortFetchCount === 1 && requests.cancellation.midStream.wsCount === 1, 'Mid-stream cancellation transport count drifted.')
-  invariant(requests.cancellation.midStream.afterAbortWsCount === requests.cancellation.midStream.wsCount, 'Mid-stream cancellation opened an additional WebSocket after abort.')
+  invariant(requests.cancellation.midStream.fetchCountAtLatch === 1 && requests.cancellation.midStream.fetchCountAfterAbort === 1 && requests.cancellation.midStream.fetchCountAfterAbortDelta === 0 && requests.cancellation.midStream.wsCountAtLatch === 1 && requests.cancellation.midStream.wsCountAfterAbort === 1 && requests.cancellation.midStream.wsCountAfterAbortDelta === 0, 'Mid-stream cancellation transport count drifted.')
   invariant(requests.cancellation.midStream.retryCount === 0 && requests.cancellation.midStream.assistantMessageCount === 0 && requests.cancellation.midStream.toolCallCount === 0 && requests.cancellation.midStream.toolResultCount === 0, 'Mid-stream cancellation admitted derived output or retry.')
   invariant(requests.images.offloadedTextCount === 2 && requests.images.imageWire?.survivorCount === 4, 'Attachment image budget wire survivors drifted.')
-  invariant(requests.images.durableReferenceCount === 6 && requests.images.durableReferenceOrderUnchanged === true, 'Durable attachment references drifted.')
+  invariant(requests.images.durableReferenceCount === 6 && requests.images.durableReferenceOrderUnchanged === true && requests.images.durableReferenceShapeUnchanged === true, 'Durable attachment references drifted.')
   invariant(requests.totals.fetchRequests.length === 6 && requests.totals.wsUrls.length === 4 && requests.totals.externalHosts.length === 0 && requests.totals.loopbackUrls.length === 0 && requests.totals.stickyError === undefined && requests.totals.wsSendCount === 0, 'Requests seed left the transport boundary.')
 
   const requestsResumeResultPath = join(temporaryRoot, 'probe-requests-resume-result.json')
@@ -827,10 +826,17 @@ try {
         replaySeedResponseId: requests.replay.responseId,
         replayResumeResponseId: resumeRequests?.replay.responseId,
         replayContinuationObserved: resumeRequests?.replay.continuationObserved,
+        attachmentDurableReferenceOrderUnchanged: requests.images.durableReferenceOrderUnchanged,
+        attachmentDurableReferenceShapeUnchanged: requests.images.durableReferenceShapeUnchanged,
         retryProviderAttempts: requests.retry.providerAttempts,
         retryExecutionCount: requests.retry.executionCount,
         cancellationPreDispatchFetch: requests.cancellation.preDispatch.fetchCount,
-        cancellationMidStreamFetch: requests.cancellation.midStream.fetchCount,
+        cancellationMidStreamFetchAtLatch: requests.cancellation.midStream.fetchCountAtLatch,
+        cancellationMidStreamFetchAfterAbort: requests.cancellation.midStream.fetchCountAfterAbort,
+        cancellationMidStreamFetchAfterAbortDelta: requests.cancellation.midStream.fetchCountAfterAbortDelta,
+        cancellationMidStreamWsAtLatch: requests.cancellation.midStream.wsCountAtLatch,
+        cancellationMidStreamWsAfterAbort: requests.cancellation.midStream.wsCountAfterAbort,
+        cancellationMidStreamWsAfterAbortDelta: requests.cancellation.midStream.wsCountAfterAbortDelta,
         cancelledPartialChunkCount: requests.cancellation.midStream.partialChunkCount,
         externalHosts: [...new Set([...requests.totals.externalHosts, ...(resumeRequests?.totals.externalHosts ?? [])])],
       },
