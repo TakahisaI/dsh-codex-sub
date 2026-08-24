@@ -38,7 +38,7 @@ const packageName = 'dsh-codex-sub'
 const pluginRowId = 'llm-codex-sub'
 const probeDirectory = join(repositoryRoot, 'tests', 'fixtures', 'packed-install-probe')
 const maxCaptureBytes = 4 * 1024 * 1024
-const bootTimeoutMs = 60_000
+const bootTimeoutMs = 120_000
 const shutdownTimeoutMs = 5_000
 
 function invariant(condition, message) {
@@ -635,6 +635,104 @@ try {
   await assertAbsent(authFile, 'Candidate logout did not remove package-owned auth.json.')
   invariant(await readFile(siblingFile, 'utf8') === `${siblingSentinel}\n`, 'Candidate logout disturbed an adjacent file.')
 
+  // Requests boot (#51): re-install the exact artifact, sign the packed route
+  // back in with fresh package sentinels, and prove attachment, replay, retry,
+  // and cancellation request contracts on this same fresh rc.1 install. The
+  // probe fixture installs its own scripted transport at module load for this
+  // phase (the signed-in preamble stream must already hit it), so the
+  // loader-order blocker is deliberately not layered on top; the stub keeps
+  // every non-pinned destination fail-closed and counts external attempts.
+  run(dshExecutable, [
+    'plugin', '--profile', 'web', 'add', inputArtifact.canonicalPath,
+    '--save-exact', '--allow-build=@google/genai', '--allow-build=protobufjs',
+  ], {
+    cwd: hostRoot,
+    env: baseEnvironment,
+    label: 'exact-artifact reinstall for request-contract boot',
+  })
+  const requestsAuthDirectory = join(dshHome, packageName)
+  await mkdir(requestsAuthDirectory, { mode: 0o700, recursive: true })
+  const requestsAuthFile = join(requestsAuthDirectory, 'auth.json')
+  // pi-ai's Codex client reads the account claim out of the access token and
+  // refuses to stream without it, so the signed-in boot needs a shape-only
+  // three-part token. The payload carries no real data: the account value is
+  // a fixed probe constant, the signature part is a literal, and nothing
+  // leaves the process (the scripted transport answers every request).
+  const stubAccessToken = [
+    Buffer.from('{"alg":"none","typ":"JWT"}').toString('base64'),
+    Buffer.from(JSON.stringify({
+      'https://api.openai.com/auth': { chatgpt_account_id: 'packed-probe-account' },
+      exp: Math.floor(Date.now() / 1000) + 86_400,
+    })).toString('base64'),
+    'stub-signature',
+  ].join('.')
+  const requestsCredentialBytes = `${JSON.stringify({
+    schemaVersion: 1,
+    provider: 'openai-codex',
+    credential: {
+      accessToken: stubAccessToken,
+      refreshToken: `REFRESH_SENTINEL_${packageSentinels.refresh}`,
+      expiresAt: Date.now() + 86_400_000,
+      providerData: { accountId: packageSentinels.account },
+    },
+  })}\n`
+  await writeFile(requestsAuthFile, requestsCredentialBytes, { encoding: 'utf8', flag: 'wx', mode: 0o600 })
+  const requestsResultPath = join(temporaryRoot, 'probe-requests-result.json')
+  const requestsProbe = await bootProbe({
+    ...probeEnvironment,
+    DSH_CODEX_SUB_CANDIDATE_PROBE_PHASE: 'requests',
+    DSH_CODEX_SUB_PROBE_RESULT: requestsResultPath,
+    // The probe fixture installs the scripted transport itself at module load
+    // (the signed-in preamble stream must already hit it), so the loader-order
+    // blocker is not layered on top of this boot.
+    NODE_OPTIONS: [],
+  }, requestsResultPath)
+  const requests = requestsProbe.requests
+  invariant(requests !== undefined, 'The requests-phase probe result was absent.')
+  invariant(requests.success.finishKind === 'stop', 'Signed-in packed success stream did not stop cleanly.')
+  invariant(requests.success.textAssembled === true, 'Packed success stream text drifted.')
+  invariant(requests.success.attachmentReads === undefined, 'Requests result schema drifted.')
+  invariant(requests.success.imageOnWire === true, 'The resolved attachment image never reached the provider payload.')
+  invariant(
+    requests.success.providerAttempts === 1 && requests.totals.externalHosts.length === 0,
+    'Packed success stream left the pinned transport boundary.',
+  )
+  invariant(requests.success.replayPresent === true, 'Packed success stream carried no replay envelope.')
+  invariant(requests.success.responseId === 'resp_packed_rc1_probe', 'Packed replay response identity drifted.')
+  invariant(requests.replay.finishKind === 'stop', 'Packed replay continuation did not stop cleanly.')
+  invariant(requests.replay.continuationObserved === true, 'Replay metadata did not survive into a fresh packed request.')
+  invariant(requests.replay.responseIdMatchesFirst === true, 'Replay continuation response identity drifted.')
+  invariant(requests.retry.finishKind === 'error' && requests.retry.failureCode === 'TRANSPORT', 'Packed transport failure did not classify as TRANSPORT at the public boundary.')
+  invariant(requests.retry.providerAttempts === 1, `Retry boundary drift: expected exactly one provider attempt (the packed profile ships no retry executor), saw ${requests.retry.providerAttempts}.`)
+  invariant(requests.cancellation.threwAbort === false, 'Cancellation surfaced as a raw AbortError instead of an aborted finish.')
+  invariant(requests.cancellation.finishKind === 'aborted', 'Mid-stream cancellation did not end in an aborted finish.')
+  invariant(requests.cancellation.partialOutputEmitted === false, 'Cancelled stream admitted partial output deltas before aborting.')
+  invariant(requests.cancellation.partialOutputEmitted === false, 'Cancelled stream admitted partial output deltas before aborting.')
+  invariant(
+    requests.cancellation.providerAttempts <= 1,
+    `Cancellation produced an unexpected additional provider attempt (${requests.cancellation.providerAttempts}).`,
+  )
+  invariant(requests.totals.wsDialRejects >= 1, 'The WebSocket transport never attempted its dial; the SSE fallback was unproven.')
+
+  // Restore the signed-out state the credential-lifecycle phases expect: the
+  // requests boot re-created the package credential, so remove it again and
+  // prove nothing else about the install drifted.
+  await rm(requestsAuthFile, { force: true })
+  const signedOutAgain = run(dshExecutable, [
+    'plugin', '--profile', 'web', 'exec', packageName, 'status', '--json',
+  ], {
+    cwd: hostRoot,
+    accepted: [1],
+    env: baseEnvironment,
+    label: 'exact-artifact signed-out status after requests boot',
+    secrets: allSentinels,
+  })
+  const signedOutAgainReport = parseJson(signedOutAgain.stdout, 'signed-out status after requests boot')
+  invariant(
+    signedOutAgainReport.status?.state === 'signed-out',
+    'Candidate CLI did not report signed out after the requests boot cleanup.',
+  )
+
   const postLogoutResultPath = join(temporaryRoot, 'probe-post-logout-result.json')
   const postLogoutProbe = await bootProbe({
     ...probeEnvironment,
@@ -676,6 +774,7 @@ try {
     logout,
     postLogoutProbe,
     probe,
+    requestsProbe,
     signedInReport,
     signedOutReport,
     topology,
@@ -694,6 +793,14 @@ try {
     networkAttemptsAfterDelete: confirmDeletedProbe.networkAttempts,
     networkAttemptsAfterLogout: postLogoutProbe.networkAttempts,
     networkAttemptsAfterRestart: verifyProbe.networkAttempts,
+    requestContracts: {
+      attachmentImageOnWire: requests.success.imageOnWire,
+      replayContinuationObserved: requests.replay.continuationObserved,
+      retryProviderAttempts: requests.retry.providerAttempts,
+      cancellationFinishKind: requests.cancellation.finishKind,
+      cancelledPartialOutputEmitted: requests.cancellation.partialOutputEmitted,
+      externalHosts: requests.totals.externalHosts,
+    },
     siblingFilePreserved: true,
     topology,
     upstreamCommit,
