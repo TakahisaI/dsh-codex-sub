@@ -175,9 +175,41 @@ export function createSafeBrowserOpener(options: {
 
         try {
           child = spawn(command, argumentsForPlatform(platform, url), { shell: false, stdio: 'ignore' })
+          if (settled) {
+            try {
+              child.kill('SIGTERM')
+            } catch {
+              // Native process details are intentionally not surfaced.
+            }
+            return
+          }
           child.on('error', onError)
+          if (settled) {
+            try {
+              child.kill('SIGTERM')
+            } catch {
+              // Native process details are intentionally not surfaced.
+            }
+            return
+          }
           child.on('exit', onExit)
+          if (settled) {
+            try {
+              child.kill('SIGTERM')
+            } catch {
+              // Native process details are intentionally not surfaced.
+            }
+            return
+          }
           child.on('close', onExit)
+          if (settled) {
+            try {
+              child.kill('SIGTERM')
+            } catch {
+              // Native process details are intentionally not surfaced.
+            }
+            return
+          }
           timer = setTimeout(() => {
             finish(false)
             try {

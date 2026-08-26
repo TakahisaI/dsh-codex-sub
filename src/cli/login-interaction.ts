@@ -141,13 +141,13 @@ async function readSelect(
         return selected.id
       }
     }
-    const matchingIds = options.filter((option) => option.id === answer)
-    if (matchingIds.length === 1) {
-      return matchingIds[0]!.id
-    }
-    const matchingLabels = options.filter((option) => option.label === answer)
-    if (matchingLabels.length === 1) {
-      return matchingLabels[0]!.id
+    const matchingTargetIds = new Set(
+      options
+        .filter((option) => option.id === answer || option.label === answer)
+        .map((option) => option.id),
+    )
+    if (matchingTargetIds.size === 1) {
+      return [...matchingTargetIds][0]!
     }
     io.stdout('Enter one of the listed numbers.\n')
   }

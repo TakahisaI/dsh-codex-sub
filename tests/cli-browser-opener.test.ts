@@ -82,6 +82,50 @@ describe('safe browser opener', () => {
     await expect(pending).resolves.toBe(false)
   })
 
+  it('treats nonzero and signal exits as launch failures', async () => {
+    const nonzero = spawnFixture()
+    const nonzeroPending = createSafeBrowserOpener({ platform: 'linux', spawn: nonzero.spawn })
+      .open('https://auth.example.test/authorize')
+    nonzero.process.emit('exit', 1, null)
+    await expect(nonzeroPending).resolves.toBe(false)
+
+    const signaled = spawnFixture()
+    const signaledPending = createSafeBrowserOpener({ platform: 'linux', spawn: signaled.spawn })
+      .open('https://auth.example.test/authorize')
+    signaled.process.emit('exit', null, 'SIGTERM')
+    await expect(signaledPending).resolves.toBe(false)
+  })
+
+  it('turns a synchronous spawn failure into a safe result and removes abort listeners', async () => {
+    const controller = new AbortController()
+    const spawn = vi.fn<BrowserSpawn>(() => {
+      throw new Error('native spawn sentinel')
+    })
+    const opener = createSafeBrowserOpener({ platform: 'linux', spawn })
+
+    await expect(opener.open('https://auth.example.test/authorize', controller.signal))
+      .resolves.toBe(false)
+    controller.abort()
+    expect(spawn).toHaveBeenCalledOnce()
+  })
+
+  it('wins an abort race that fires synchronously during spawn without leaving a timer', async () => {
+    const controller = new AbortController()
+    const process = new FakeBrowserProcess()
+    const spawn: BrowserSpawn = () => {
+      controller.abort()
+      return process
+    }
+    const opener = createSafeBrowserOpener({ platform: 'linux', spawn })
+
+    await expect(opener.open('https://auth.example.test/authorize', controller.signal))
+      .rejects.toMatchObject({ name: 'AbortError' })
+    expect(process.killCalls).toEqual(['SIGTERM'])
+    expect(process.listenerCount('error')).toBe(0)
+    expect(process.listenerCount('exit')).toBe(0)
+    expect(process.listenerCount('close')).toBe(0)
+  })
+
   it('cancels and kills a pending native process without leaking process details', async () => {
     const fixture = spawnFixture()
     const opener = createSafeBrowserOpener({ platform: 'linux', spawn: fixture.spawn })
@@ -90,6 +134,16 @@ describe('safe browser opener', () => {
 
     controller.abort()
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(fixture.process.killCalls).toEqual(['SIGTERM'])
+    expect(fixture.process.listenerCount('error')).toBe(0)
+    expect(fixture.process.listenerCount('exit')).toBe(0)
+    expect(fixture.process.listenerCount('close')).toBe(0)
+
+    const lateError = (): void => undefined
+    fixture.process.on('error', lateError)
+    fixture.process.emit('error', new Error('late error sentinel'))
+    fixture.process.removeListener('error', lateError)
+    fixture.process.emit('close', 0, null)
     expect(fixture.process.killCalls).toEqual(['SIGTERM'])
   })
 
@@ -103,5 +157,28 @@ describe('safe browser opener', () => {
 
     await expect(opener.open('https://auth.example.test/authorize')).resolves.toBe(false)
     expect(fixture.process.killCalls).toEqual(['SIGTERM'])
+    expect(fixture.process.listenerCount('error')).toBe(0)
+    expect(fixture.process.listenerCount('exit')).toBe(0)
+    expect(fixture.process.listenerCount('close')).toBe(0)
+  })
+
+  it('cleans listeners after a timeout/close race and settles only once', async () => {
+    const fixture = spawnFixture()
+    const opener = createSafeBrowserOpener({
+      platform: 'linux',
+      spawn: fixture.spawn,
+      timeoutMs: 1,
+    })
+    const pending = opener.open('https://auth.example.test/authorize')
+    await expect(pending).resolves.toBe(false)
+
+    fixture.process.emit('close', 0, null)
+    const lateError = (): void => undefined
+    fixture.process.on('error', lateError)
+    fixture.process.emit('error', new Error('late error sentinel'))
+    fixture.process.removeListener('error', lateError)
+    expect(fixture.process.listenerCount('error')).toBe(0)
+    expect(fixture.process.listenerCount('exit')).toBe(0)
+    expect(fixture.process.listenerCount('close')).toBe(0)
   })
 })
