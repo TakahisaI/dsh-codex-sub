@@ -56,7 +56,17 @@ if (mode === 'prompt') {
 // The `_write` callback and the subsequent `error` event are both deferred.
 await nextTurn()
 await nextTurn()
-process.stdout.write(`RESULT ${String(result)}\n`)
-if (uncaught || result === 'TIMEOUT' || result === 'UNEXPECTED_SUCCESS') {
+const lifecycleListeners = [
+  output.listenerCount('error'),
+  output.listenerCount('close'),
+  output.listenerCount('finish'),
+].join(' ')
+process.stdout.write(`RESULT ${String(result)} LISTENERS ${lifecycleListeners}\n`)
+if (
+  uncaught
+  || result === 'TIMEOUT'
+  || result === 'UNEXPECTED_SUCCESS'
+  || lifecycleListeners !== '0 0 0'
+) {
   process.exitCode = 91
 }

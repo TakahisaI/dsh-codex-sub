@@ -2,9 +2,9 @@ import { spawn as nodeSpawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
-import { PassThrough } from 'node:stream'
+import { PassThrough, Writable } from 'node:stream'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { NodePromptReader } from '../src/cli/node-prompt-reader.js'
 
@@ -71,6 +71,58 @@ class ThrowingPromptOutput extends EventEmitter {
       throw new Error('prompt output sentinel')
     }
     return true
+  }
+}
+
+class DeferredWritable extends Writable {
+  readonly callbacks: Array<(error?: Error | null) => void> = []
+  readonly chunks: string[] = []
+
+  override _write(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    this.chunks.push(chunk.toString('utf8'))
+    this.callbacks.push(callback)
+  }
+
+  complete(error?: Error): void {
+    const callback = this.callbacks.shift()
+    if (callback === undefined) {
+      throw new Error('no deferred write callback')
+    }
+    callback(error)
+  }
+
+  lifecycleListeners(): { readonly error: number; readonly close: number; readonly finish: number } {
+    return {
+      error: this.listenerCount('error'),
+      close: this.listenerCount('close'),
+      finish: this.listenerCount('finish'),
+    }
+  }
+}
+
+class DelayedFailureWritable extends Writable {
+  readonly chunks: string[] = []
+
+  override _write(
+    chunk: Buffer,
+    _encoding: BufferEncoding,
+    callback: (error?: Error | null) => void,
+  ): void {
+    this.chunks.push(chunk.toString('utf8'))
+    setTimeout(() => callback(new Error('delayed output failure sentinel')), 5_001)
+  }
+}
+
+class SlowDestroyWritable extends DeferredWritable {
+  destroyCallback: ((error?: Error | null) => void) | undefined
+
+  override _destroy(error: Error | null, callback: (error?: Error | null) => void): void {
+    void error
+    this.destroyCallback = callback
   }
 }
 
@@ -651,17 +703,200 @@ describe('NodePromptReader', () => {
     expect(terminal.input.listenerCount('close')).toBe(0)
   })
 
+  it('drains a write callback error after the old five-second window without timers in the reader', async () => {
+    vi.useFakeTimers()
+    try {
+      const terminal = ttyStreams()
+      const output = new DelayedFailureWritable()
+      const reader = new NodePromptReader(terminal.input, output)
+      const pending = reader.read('Secret: ', { hidden: true })
+      const result = expect(pending).rejects.toMatchObject({
+        code: 'CODEX_AUTH_LOGIN_FAILED',
+        safeDetails: { reason: 'prompt_input' },
+      })
+
+      expect(output.listenerCount('error')).toBe(0)
+      await vi.advanceTimersByTimeAsync(5_001)
+
+      await result
+      expect(output.listenerCount('error')).toBe(0)
+      expect(output.listenerCount('close')).toBe(0)
+      expect(output.listenerCount('finish')).toBe(0)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not attach output lifecycle listeners while a write callback is pending', async () => {
+    const terminal = ttyStreams()
+    const output = new DeferredWritable()
+    const outputErrorListener = (): void => undefined
+    const outputCloseListener = (): void => undefined
+    const outputFinishListener = (): void => undefined
+    output.on('error', outputErrorListener)
+    output.on('close', outputCloseListener)
+    output.on('finish', outputFinishListener)
+    const baseline = output.lifecycleListeners()
+    const reader = new NodePromptReader(terminal.input, output)
+    const pending = reader.read('Secret: ', { hidden: true })
+
+    expect(output.lifecycleListeners()).toEqual(baseline)
+    output.complete()
+    terminal.input.write('answer\n')
+    await expect(pending).resolves.toBe('answer')
+    output.complete()
+    expect(output.lifecycleListeners()).toEqual(baseline)
+    output.removeListener('error', outputErrorListener)
+    output.removeListener('close', outputCloseListener)
+    output.removeListener('finish', outputFinishListener)
+  })
+
+  it('attaches one shared sink for a delayed prompt error and removes it after lifecycle close', async () => {
+    const terminal = ttyStreams()
+    const output = new DeferredWritable()
+    const outputErrorListener = (): void => undefined
+    const outputCloseListener = (): void => undefined
+    const outputFinishListener = (): void => undefined
+    output.on('error', outputErrorListener)
+    output.on('close', outputCloseListener)
+    output.on('finish', outputFinishListener)
+    const baseline = output.lifecycleListeners()
+    const reader = new NodePromptReader(terminal.input, output)
+    const pending = reader.read('Secret: ', { hidden: true })
+
+    output.complete(new Error('prompt delayed failure sentinel'))
+    await expect(pending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'prompt_input' },
+    })
+    expect(output.listenerCount('error')).toBe(baseline.error + 1)
+    expect(output.listenerCount('close')).toBe(baseline.close + 1)
+    expect(output.listenerCount('finish')).toBe(baseline.finish + 1)
+
+    output.destroy()
+    await new Promise<void>((resolve) => output.once('close', resolve))
+    expect(output.lifecycleListeners()).toEqual(baseline)
+    output.removeListener('error', outputErrorListener)
+    output.removeListener('close', outputCloseListener)
+    output.removeListener('finish', outputFinishListener)
+  })
+
+  it('preserves a settled answer when its prompt write reports a later error', async () => {
+    const terminal = ttyStreams()
+    const output = new DeferredWritable()
+    const reader = new NodePromptReader(terminal.input, output)
+    const pending = reader.read('Secret: ', { hidden: true })
+
+    terminal.input.write('answer\n')
+    await expect(pending).resolves.toBe('answer')
+    expect(output.chunks).toEqual(['Secret: '])
+    output.complete(new Error('late prompt failure sentinel'))
+
+    await new Promise<void>((resolve) => output.once('close', resolve))
+    expect(output.listenerCount('error')).toBe(0)
+    expect(output.listenerCount('close')).toBe(0)
+    expect(output.listenerCount('finish')).toBe(0)
+  })
+
+  it('preserves the answer when the final newline write reports an error', async () => {
+    const terminal = ttyStreams()
+    const output = new DeferredWritable()
+    const reader = new NodePromptReader(terminal.input, output)
+    const pending = reader.read('Secret: ', { hidden: true })
+    output.complete()
+    terminal.input.write('answer\n')
+    await expect(pending).resolves.toBe('answer')
+    expect(output.chunks).toEqual(['Secret: ', '\n'])
+
+    output.complete(new Error('late newline failure sentinel'))
+    await new Promise<void>((resolve) => output.once('close', resolve))
+    expect(output.listenerCount('error')).toBe(0)
+    expect(output.listenerCount('close')).toBe(0)
+    expect(output.listenerCount('finish')).toBe(0)
+  })
+
+  it('shares one sink across multiple failing writes and keeps external listeners intact', async () => {
+    const terminal = ttyStreams()
+    const output = new DeferredWritable()
+    const externalError = (): void => undefined
+    output.on('error', externalError)
+    const baseline = output.listenerCount('error')
+    const reader = new NodePromptReader(terminal.input, output)
+    const pending = reader.read('Secret: ', { hidden: true })
+
+    terminal.input.write('answer\n')
+    await expect(pending).resolves.toBe('answer')
+    const closed = new Promise<void>((resolve) => output.once('close', resolve))
+    output.complete(new Error('first shared sink failure sentinel'))
+    expect(output.listenerCount('error')).toBe(baseline + 1)
+    await new Promise<void>((resolve) => setImmediate(resolve))
+
+    await closed
+    expect(output.listenerCount('error')).toBe(baseline)
+    expect(output.listenerCount('close')).toBe(0)
+    expect(output.listenerCount('finish')).toBe(0)
+    output.removeListener('error', externalError)
+  })
+
+  it('keeps the shared sink through a slow destroy and removes only its lifecycle listeners', async () => {
+    const terminal = ttyStreams()
+    const output = new SlowDestroyWritable()
+    const externalError = (): void => undefined
+    const externalClose = (): void => undefined
+    output.on('error', externalError)
+    output.on('close', externalClose)
+    const baseline = output.lifecycleListeners()
+    const reader = new NodePromptReader(terminal.input, output)
+    const pending = reader.read('Secret: ', { hidden: true })
+
+    output.complete(new Error('slow destroy sentinel'))
+    await expect(pending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'prompt_input' },
+    })
+    expect(output.lifecycleListeners()).toEqual({
+      error: baseline.error + 1,
+      close: baseline.close + 1,
+      finish: baseline.finish + 1,
+    })
+    expect(output.destroyCallback).toBeDefined()
+    const destroyCallback = output.destroyCallback
+    destroyCallback?.(new Error('slow destroy completion sentinel'))
+    await new Promise<void>((resolve) => output.once('close', resolve))
+    expect(output.lifecycleListeners()).toEqual(baseline)
+    output.removeListener('error', externalError)
+    output.removeListener('close', externalClose)
+  })
+
+  it('does not end, destroy, or unref a shared output while draining write errors', async () => {
+    const terminal = ttyStreams()
+    const output = new DeferredWritable()
+    const endSpy = vi.spyOn(output, 'end')
+    const unrefSpy = vi.fn()
+    Object.defineProperty(output, 'unref', { value: unrefSpy })
+    const reader = new NodePromptReader(terminal.input, output)
+    const pending = reader.read('Secret: ', { hidden: true })
+    output.complete()
+    terminal.input.write('answer\n')
+    await expect(pending).resolves.toBe('answer')
+    output.complete(new Error('output ownership sentinel'))
+    await new Promise<void>((resolve) => output.once('close', resolve))
+
+    expect(endSpy).not.toHaveBeenCalled()
+    expect(unrefSpy).not.toHaveBeenCalled()
+  })
+
   it('drains asynchronous prompt and final-newline Writable errors in a subprocess', async () => {
     const prompt = await runOutputErrorFixture('prompt')
     expect(prompt.code).toBe(0)
     expect(prompt.signal).toBeNull()
-    expect(prompt.stdout).toContain('RESULT CODEX_AUTH_LOGIN_FAILED prompt_input')
+    expect(prompt.stdout).toContain('RESULT CODEX_AUTH_LOGIN_FAILED prompt_input LISTENERS 0 0 0')
     expect(prompt.stdout).not.toContain('UNCAUGHT')
 
     const newline = await runOutputErrorFixture('newline')
     expect(newline.code).toBe(0)
     expect(newline.signal).toBeNull()
-    expect(newline.stdout).toContain('RESULT SUCCESS answer')
+    expect(newline.stdout).toContain('RESULT SUCCESS answer LISTENERS 0 0 0')
     expect(newline.stdout).not.toContain('UNCAUGHT')
   })
 

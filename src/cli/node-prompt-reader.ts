@@ -12,7 +12,6 @@ import type {
 } from './types.js'
 
 const MAX_PROMPT_INPUT_LENGTH = 16_384
-const OUTPUT_ERROR_DRAIN_MS = 5_000
 
 // These symbols never cross the PromptReader boundary. They let the visible
 // reader distinguish an input EOF/stream failure from a caller cancellation,
@@ -40,68 +39,107 @@ function inputUnavailable(input: TerminalInput): boolean {
   return input.readableEnded === true || input.destroyed === true || input.readable === false
 }
 
-/**
- * Keep an error sink attached across the whole Writable write lifecycle.
- *
- * A Writable may report an `_write` callback error after `write()` returns,
- * and Node can emit the corresponding `error` event after that callback. The
- * bounded drain window covers both deliveries without retaining a listener
- * forever when a non-standard Writable never calls its callback.
- */
-function writeOutputWithErrorDrain(
-  output: Writable,
-  chunk: string,
-  onError: (error: unknown) => void,
-): void {
-  let cleanupTimer: ReturnType<typeof setTimeout> | undefined
+type OutputErrorSinkState = {
+  readonly onError: (error: unknown) => void
+  readonly onClose: () => void
+  readonly onFinish: () => void
+}
+
+// A write callback failure is the first reliable signal that Node will emit a
+// later Writable `error`. Attach one shared sink at that exact point so the
+// error cannot become an uncaught EventEmitter exception. Keeping this state
+// per output avoids adding a listener for every queued write, while the
+// lifecycle listeners remove only the handlers owned by this module.
+const outputErrorSinks = new WeakMap<Writable, OutputErrorSinkState>()
+
+function installOutputErrorSink(output: Writable): void {
+  if (outputErrorSinks.has(output)) {
+    return
+  }
+
   let cleaned = false
+  let state: OutputErrorSinkState
   const cleanup = (): void => {
     if (cleaned) {
       return
     }
     cleaned = true
-    if (cleanupTimer !== undefined) {
-      clearTimeout(cleanupTimer)
-      cleanupTimer = undefined
-    }
     try {
-      output.removeListener('error', drainError)
+      output.removeListener('error', state.onError)
     } catch {
       // Listener cleanup is best effort; never replace the prompt result.
     }
-  }
-  const armCleanup = (): void => {
-    if (cleaned || cleanupTimer !== undefined) {
-      return
+    try {
+      output.removeListener('close', state.onClose)
+    } catch {
+      // Listener cleanup is best effort; never replace the prompt result.
     }
-    cleanupTimer = setTimeout(cleanup, OUTPUT_ERROR_DRAIN_MS)
-    cleanupTimer.unref?.()
-  }
-  const drainError = (error: unknown): void => {
-    onError(error)
-    // Error may be emitted before the write callback. Keep the sink alive for
-    // the callback as well, then remove it at the bounded deadline.
-    armCleanup()
-  }
-  const onWrite = (error?: Error | null): void => {
-    if (error !== undefined && error !== null) {
-      onError(error)
+    try {
+      output.removeListener('finish', state.onFinish)
+    } catch {
+      // Listener cleanup is best effort; never replace the prompt result.
     }
-    // Keep the listener through the post-callback error event. The timer is
-    // unref'ed so a broken output cannot keep the CLI alive by itself.
-    armCleanup()
+    if (outputErrorSinks.get(output) === state) {
+      outputErrorSinks.delete(output)
+    }
+  }
+  state = {
+    onError: (_error: unknown): void => {
+      cleanup()
+    },
+    onClose: (): void => {
+      cleanup()
+    },
+    onFinish: (): void => {
+      cleanup()
+    },
   }
 
-  output.on('error', drainError)
+  outputErrorSinks.set(output, state)
+  try {
+    output.on('error', state.onError)
+    output.once('close', state.onClose)
+    output.once('finish', state.onFinish)
+  } catch {
+    // A non-standard Writable may reject listener registration. Remove any
+    // handlers that were accepted and leave the caller's result authoritative.
+    cleanup()
+  }
+}
+
+function writeOutputWithErrorSink(
+  output: Writable,
+  chunk: string,
+  onError: (error: unknown) => void,
+): void {
+  const onWrite = (error?: Error | null): void => {
+    if (error === undefined || error === null) {
+      return
+    }
+    // Node invokes this callback before emitting the corresponding `error`.
+    // Install the sink before any usage-specific result handling can settle
+    // the prompt and issue another best-effort write.
+    installOutputErrorSink(output)
+    try {
+      onError(error)
+    } catch {
+      // A callback-side policy hook must not interrupt Node's error lifecycle.
+    }
+  }
+
   try {
     output.write(chunk, onWrite)
   } catch (error) {
-    // Synchronous write failures still need the same late-error drain.
-    onError(error)
-    armCleanup()
+    // Synchronous failures do not enter Node's callback/error lifecycle, so
+    // no sink is needed. Preserve the existing stable handling for callers.
+    try {
+      onError(error)
+    } catch {
+      // A callback-side policy hook must not replace the synchronous write
+      // failure that callers already know how to handle.
+    }
     throw error
   }
-  armCleanup()
 }
 
 function failureForSignal(reason: unknown): unknown {
@@ -344,7 +382,7 @@ export class NodePromptReader implements PromptReader {
           } finally {
             if (promptWritten) {
               try {
-                writeOutputWithErrorDrain(this.#output, '\n', () => undefined)
+                writeOutputWithErrorSink(this.#output, '\n', () => undefined)
               } catch {
                 // Newline rendering is best effort and must not replace the
                 // original answer, EOF, or caller-abort result.
@@ -433,7 +471,7 @@ export class NodePromptReader implements PromptReader {
         // Mark the prompt before writing because a custom Writable may write a
         // prefix and then throw. The trailing newline remains best effort.
         promptWritten = true
-        writeOutputWithErrorDrain(this.#output, prompt, (error) => {
+        writeOutputWithErrorSink(this.#output, prompt, (error) => {
           if (!settled) {
             fail(inputFailure('prompt_input'))
           }
