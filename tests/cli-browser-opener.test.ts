@@ -1,8 +1,19 @@
 import { EventEmitter } from 'node:events'
-import { chmodSync, mkdtempSync, renameSync, rmSync, symlinkSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import {
+  accessSync,
+  chmodSync,
+  constants as fsConstants,
+  mkdirSync,
+  mkdtempSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from 'node:fs'
+import { userInfo as nodeUserInfo } from 'node:os'
 import { join } from 'node:path'
-import { spawn as nodeSpawn } from 'node:child_process'
+import { spawn as nodeSpawn, spawnSync as nodeSpawnSync } from 'node:child_process'
 import { createServer } from 'node:net'
 
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -46,6 +57,22 @@ function spawnFixture(): {
     return process
   }
   return { process, spawn, calls }
+}
+
+function repoTemp(prefix: string): string {
+  return mkdtempSync(join(process.cwd(), `.${prefix}`))
+}
+
+function currentUid(): number {
+  const uid = process.getuid?.()
+  if (uid === undefined || process.geteuid?.() !== uid) {
+    throw new Error('test process must have matching real/effective uid')
+  }
+  return uid
+}
+
+function canonicalHome(): string {
+  return realpathSync.native(nodeUserInfo().homedir)
 }
 
 describe('safe browser opener', () => {
@@ -264,6 +291,11 @@ describe('safe browser opener', () => {
       stdio: 'ignore',
       env: {
         PATH: '/usr/bin:/bin',
+        HOME: canonicalHome(),
+        XDG_CONFIG_HOME: join(canonicalHome(), '.config'),
+        XDG_DATA_HOME: join(canonicalHome(), '.local', 'share'),
+        XDG_CONFIG_DIRS: '/etc/xdg',
+        XDG_DATA_DIRS: '/usr/local/share:/usr/share',
         DISPLAY: ':99',
       },
     })
@@ -281,8 +313,43 @@ describe('safe browser opener', () => {
     expect(fixture.calls).toHaveLength(0)
   })
 
+  it('copies only bounded desktop/session values and the KDE version allow-list', async () => {
+    vi.stubEnv('XDG_CURRENT_DESKTOP', 'GNOME:Wayland')
+    vi.stubEnv('XDG_SESSION_DESKTOP', 'gnome.desktop')
+    vi.stubEnv('XDG_SESSION_TYPE', 'wayland')
+    vi.stubEnv('KDE_SESSION_VERSION', '5')
+    const fixture = spawnFixture()
+    const pending = createSafeBrowserOpener({ platform: 'linux', spawn: fixture.spawn })
+      .open('https://auth.example.test/authorize')
+    const call = fixture.calls[0]
+    if (call === undefined) {
+      throw new Error('browser spawn call missing')
+    }
+    expect((call.options as { env: Record<string, string> }).env).toEqual(expect.objectContaining({
+      XDG_CURRENT_DESKTOP: 'GNOME:Wayland',
+      XDG_SESSION_DESKTOP: 'gnome.desktop',
+      XDG_SESSION_TYPE: 'wayland',
+      KDE_SESSION_VERSION: '5',
+    }))
+    vi.stubEnv('KDE_SESSION_VERSION', '7')
+    fixture.process.emit('close', 0, null)
+    await expect(pending).resolves.toBe(true)
+
+    const invalid = spawnFixture()
+    const invalidPending = createSafeBrowserOpener({ platform: 'linux', spawn: invalid.spawn })
+      .open('https://auth.example.test/authorize')
+    const invalidCall = invalid.calls[0]
+    if (invalidCall === undefined) {
+      throw new Error('browser spawn call missing')
+    }
+    expect((invalidCall.options as { env: Record<string, string> }).env)
+      .not.toHaveProperty('KDE_SESSION_VERSION')
+    invalid.process.emit('close', 0, null)
+    await expect(invalidPending).resolves.toBe(true)
+  })
+
   it('rejects symlinked or group/world-readable runtime directories', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-opener-runtime-'))
+    const root = repoTemp('dsh-opener-runtime-')
     const symlink = `${root}-link`
     try {
       symlinkSync(root, symlink)
@@ -306,7 +373,7 @@ describe('safe browser opener', () => {
   })
 
   it('constructs a local DBus address instead of copying a hostile source value', async () => {
-    const root = mkdtempSync(join(tmpdir(), 'dsh-opener-bus-'))
+    const root = repoTemp('dsh-opener-bus-')
     const socketPath = join(root, 'bus')
     const server = createServer()
     try {
@@ -326,10 +393,12 @@ describe('safe browser opener', () => {
         throw new Error('browser spawn call missing')
       }
       const env = (call.options as { env: Record<string, string> }).env
+      const canonicalRuntime = realpathSync.native(root)
       expect(env).toMatchObject({
         PATH: '/usr/bin:/bin',
-        XDG_RUNTIME_DIR: root,
-        DBUS_SESSION_BUS_ADDRESS: `unix:path=${socketPath}`,
+        HOME: canonicalHome(),
+        XDG_RUNTIME_DIR: canonicalRuntime,
+        DBUS_SESSION_BUS_ADDRESS: `unix:path=${join(canonicalRuntime, 'bus')}`,
       })
       expect(env['DBUS_SESSION_BUS_ADDRESS']).not.toContain('evil-bus-sentinel')
       fixture.process.emit('close', 0, null)
@@ -340,10 +409,182 @@ describe('safe browser opener', () => {
     }
   })
 
+  it('emits only the canonical runtime after resolving an intermediate symlink', async () => {
+    const target = repoTemp('r-')
+    const runtime = join(target, 'r')
+    mkdirSync(runtime, { mode: 0o700 })
+    chmodSync(runtime, 0o700)
+    const sourceLink = `${target}-l`
+    symlinkSync(target, sourceLink)
+    const socketPath = join(runtime, 'bus')
+    const server = createServer()
+    try {
+      await new Promise<void>((resolve, reject) => {
+        server.once('error', reject)
+        server.listen(socketPath, resolve)
+      })
+      chmodSync(socketPath, 0o600)
+      vi.stubEnv('DISPLAY', '')
+      vi.stubEnv('XDG_RUNTIME_DIR', join(sourceLink, 'r'))
+      const fixture = spawnFixture()
+      const opener = createSafeBrowserOpener({
+        platform: 'linux',
+        spawn: (command, arguments_, options) => {
+          // Swapping the source after browserEnvironment has returned must not
+          // change the canonical value already handed to the child.
+          renameSync(sourceLink, `${sourceLink}-old`)
+          symlinkSync(repoTemp('dsh-opener-canonical-evil-'), sourceLink)
+          return fixture.spawn(command, arguments_, options)
+        },
+      })
+      const pending = opener.open('https://auth.example.test/authorize')
+      const call = fixture.calls[0]
+      if (call === undefined) {
+        throw new Error('browser spawn call missing')
+      }
+      const env = (call.options as { env: Record<string, string> }).env
+      const canonicalRuntime = realpathSync.native(runtime)
+      expect(env['XDG_RUNTIME_DIR']).toBe(canonicalRuntime)
+      expect(env['DBUS_SESSION_BUS_ADDRESS']).toBe(`unix:path=${join(canonicalRuntime, 'bus')}`)
+      expect(env['XDG_RUNTIME_DIR']).not.toContain(sourceLink)
+      fixture.process.emit('close', 0, null)
+      await expect(pending).resolves.toBe(true)
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()))
+      rmSync(sourceLink, { force: true })
+      rmSync(`${sourceLink}-old`, { force: true })
+      rmSync(target, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects unsafe canonical runtime components and hostile ancestors', async () => {
+    const unsafeBase = repoTemp('dsh-opener-unsafe-base-')
+    const unsafeTarget = `${unsafeBase}-日本`
+    renameSync(unsafeBase, unsafeTarget)
+    const unsafeRuntime = join(unsafeTarget, 'runtime')
+    mkdirSync(unsafeRuntime, { mode: 0o700 })
+    chmodSync(unsafeRuntime, 0o700)
+    const unsafeLink = `${unsafeBase}-link`
+    symlinkSync(unsafeTarget, unsafeLink)
+    const ancestor = repoTemp('dsh-opener-hostile-ancestor-')
+    const nestedRuntime = join(ancestor, 'runtime')
+    mkdirSync(nestedRuntime, { mode: 0o700 })
+    chmodSync(nestedRuntime, 0o700)
+    chmodSync(ancestor, 0o777)
+    try {
+      vi.stubEnv('DISPLAY', '')
+      vi.stubEnv('XDG_RUNTIME_DIR', join(unsafeLink, 'runtime'))
+      const unsafeFixture = spawnFixture()
+      await expect(createSafeBrowserOpener({ platform: 'linux', spawn: unsafeFixture.spawn })
+        .open('https://auth.example.test/authorize')).resolves.toBe(false)
+      expect(unsafeFixture.calls).toHaveLength(0)
+
+      vi.stubEnv('XDG_RUNTIME_DIR', nestedRuntime)
+      const hostileFixture = spawnFixture()
+      await expect(createSafeBrowserOpener({ platform: 'linux', spawn: hostileFixture.spawn })
+        .open('https://auth.example.test/authorize')).resolves.toBe(false)
+      expect(hostileFixture.calls).toHaveLength(0)
+    } finally {
+      rmSync(unsafeLink, { force: true })
+      rmSync(unsafeTarget, { recursive: true, force: true })
+      chmodSync(ancestor, 0o700)
+      rmSync(ancestor, { recursive: true, force: true })
+    }
+  })
+
+  it('uses a canonical injected home and ignores ambient HOME and user mismatch', async () => {
+    const home = repoTemp('dsh-opener-home-')
+    const hostileHome = repoTemp('dsh-opener-hostile-home-')
+    try {
+      vi.stubEnv('DISPLAY', ':99')
+      vi.stubEnv('HOME', hostileHome)
+      const fixture = spawnFixture()
+      const pending = createSafeBrowserOpener({
+        platform: 'linux',
+        spawn: fixture.spawn,
+        userInfo: () => ({ uid: currentUid(), homedir: home }),
+      }).open('https://auth.example.test/authorize')
+      const call = fixture.calls[0]
+      if (call === undefined) {
+        throw new Error('browser spawn call missing')
+      }
+      expect((call.options as { env: Record<string, string> }).env).toEqual(expect.objectContaining({
+        HOME: realpathSync.native(home),
+        XDG_CONFIG_HOME: join(realpathSync.native(home), '.config'),
+        XDG_DATA_HOME: join(realpathSync.native(home), '.local', 'share'),
+        XDG_CONFIG_DIRS: '/etc/xdg',
+        XDG_DATA_DIRS: '/usr/local/share:/usr/share',
+      }))
+      expect((call.options as { env: Record<string, string> }).env['HOME']).not.toBe(hostileHome)
+      fixture.process.emit('close', 0, null)
+      await expect(pending).resolves.toBe(true)
+
+      const mismatchFixture = spawnFixture()
+      await expect(createSafeBrowserOpener({
+        platform: 'linux',
+        spawn: mismatchFixture.spawn,
+        userInfo: () => ({ uid: currentUid() + 1, homedir: home }),
+      }).open('https://auth.example.test/authorize')).resolves.toBe(false)
+      expect(mismatchFixture.calls).toHaveLength(0)
+    } finally {
+      rmSync(hostileHome, { recursive: true, force: true })
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('keeps Linux default-handler discovery browser-free and uses the fixed xdg-mime path', () => {
+    if (process.platform !== 'linux') {
+      return
+    }
+    accessSync('/usr/bin/xdg-mime', fsConstants.X_OK)
+    const home = repoTemp('dsh-opener-mime-home-')
+    const config = join(home, '.config')
+    const applications = join(home, '.local', 'share', 'applications')
+    mkdirSync(config, { recursive: true, mode: 0o700 })
+    mkdirSync(applications, { recursive: true, mode: 0o700 })
+    chmodSync(home, 0o700)
+    chmodSync(config, 0o700)
+    chmodSync(applications, 0o700)
+    writeFileSync(join(config, 'mimeapps.list'), [
+      '[Default Applications]',
+      'x-scheme-handler/https=fixture-browser.desktop;',
+      '',
+    ].join('\n'))
+    writeFileSync(join(applications, 'fixture-browser.desktop'), [
+      '[Desktop Entry]',
+      'Type=Application',
+      'Name=DSH test handler',
+      'Exec=/bin/true %u',
+      '',
+    ].join('\n'))
+    try {
+      const result = nodeSpawnSync('/usr/bin/xdg-mime', [
+        'query',
+        'default',
+        'x-scheme-handler/https',
+      ], {
+        shell: false,
+        env: {
+          PATH: '/usr/bin:/bin',
+          HOME: realpathSync.native(home),
+          XDG_CONFIG_HOME: join(realpathSync.native(home), '.config'),
+          XDG_DATA_HOME: join(realpathSync.native(home), '.local', 'share'),
+          XDG_CONFIG_DIRS: '/etc/xdg',
+          XDG_DATA_DIRS: '/usr/local/share:/usr/share',
+        },
+        encoding: 'utf8',
+      })
+      expect(result.status, result.stderr).toBe(0)
+      expect(result.stdout.trim()).toBe('fixture-browser.desktop')
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   it('fails closed for delimiter-bearing runtime paths and omits DBus on a separate display route', async () => {
     const delimiters = [';', ',', '%', '=', ':', '\\', ' ', '日本']
     for (const delimiter of delimiters) {
-      const root = mkdtempSync(join(tmpdir(), 'dsh-opener-path-'))
+      const root = repoTemp('dsh-opener-path-')
       const unsafe = `${root}-${delimiter}`
       renameSync(root, unsafe)
       try {
@@ -366,7 +607,15 @@ describe('safe browser opener', () => {
         expect(call.options).toEqual({
           shell: false,
           stdio: 'ignore',
-          env: { PATH: '/usr/bin:/bin', DISPLAY: ':99' },
+          env: {
+            PATH: '/usr/bin:/bin',
+            HOME: canonicalHome(),
+            XDG_CONFIG_HOME: join(canonicalHome(), '.config'),
+            XDG_DATA_HOME: join(canonicalHome(), '.local', 'share'),
+            XDG_CONFIG_DIRS: '/etc/xdg',
+            XDG_DATA_DIRS: '/usr/local/share:/usr/share',
+            DISPLAY: ':99',
+          },
         })
         displayRoute.process.emit('close', 0, null)
         await expect(pending).resolves.toBe(true)

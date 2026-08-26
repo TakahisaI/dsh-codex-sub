@@ -19,6 +19,40 @@ function streams(): {
   return { input, output, capturedOutput: () => captured }
 }
 
+type InstrumentedInput = PassThrough & {
+  isTTY: boolean
+  isRaw: boolean
+  setRawMode: (mode: boolean) => void
+  rawModeCalls: boolean[]
+  resumeCalls: number
+  pauseCalls: number
+}
+
+function ttyStreams(): ReturnType<typeof streams> & { readonly input: InstrumentedInput } {
+  const terminal = streams()
+  const input = terminal.input as InstrumentedInput
+  input.isTTY = true
+  input.isRaw = false
+  input.rawModeCalls = []
+  input.resumeCalls = 0
+  input.pauseCalls = 0
+  input.setRawMode = (mode: boolean): void => {
+    input.rawModeCalls.push(mode)
+    input.isRaw = mode
+  }
+  const originalResume = input.resume.bind(input)
+  input.resume = (() => {
+    input.resumeCalls += 1
+    return originalResume()
+  }) as InstrumentedInput['resume']
+  const originalPause = input.pause.bind(input)
+  input.pause = (() => {
+    input.pauseCalls += 1
+    return originalPause()
+  }) as InstrumentedInput['pause']
+  return { ...terminal, input }
+}
+
 describe('NodePromptReader', () => {
   it('reads hidden input without writing the answer to the output stream', async () => {
     const sentinel = `CODE_SENTINEL_${randomUUID()}`
@@ -75,6 +109,141 @@ describe('NodePromptReader', () => {
       code: 'CODEX_AUTH_LOGIN_FAILED',
       safeDetails: { reason: 'eof' },
     })
+  })
+
+  it('fails a pre-ended hidden input before prompt or terminal side effects', async () => {
+    const terminal = ttyStreams()
+    terminal.input.on('data', () => undefined)
+    terminal.input.end()
+    await new Promise<void>((resolve) => terminal.input.once('end', resolve))
+    terminal.input.removeAllListeners('data')
+    const baseline = {
+      raw: [...terminal.input.rawModeCalls],
+      resume: terminal.input.resumeCalls,
+      pause: terminal.input.pauseCalls,
+    }
+    const reader = new NodePromptReader(terminal.input, terminal.output)
+
+    await expect(reader.read('Secret: ', { hidden: true })).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(terminal.capturedOutput()).toBe('')
+    expect(terminal.input.listenerCount('data')).toBe(0)
+    expect(terminal.input.listenerCount('end')).toBe(0)
+    expect(terminal.input.listenerCount('error')).toBe(0)
+    expect(terminal.input.rawModeCalls).toEqual(baseline.raw)
+    expect(terminal.input.resumeCalls).toBe(baseline.resume)
+    expect(terminal.input.pauseCalls).toBe(baseline.pause)
+  })
+
+  it('maps an EOF arriving immediately after hidden listeners attach', async () => {
+    const terminal = ttyStreams()
+    const reader = new NodePromptReader(terminal.input, terminal.output)
+    const pending = reader.read('Secret: ', { hidden: true })
+    terminal.input.end()
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(terminal.input.listenerCount('data')).toBe(0)
+    expect(terminal.input.listenerCount('end')).toBe(0)
+    expect(terminal.input.listenerCount('error')).toBe(0)
+    expect(terminal.input.rawModeCalls).toEqual([true, false])
+  })
+
+  it('does not start a hidden prompt after visible input has ended', async () => {
+    const terminal = streams()
+    const reader = new NodePromptReader(terminal.input, terminal.output)
+    const visible = reader.read('Visible: ', { hidden: false })
+    terminal.input.end('answer\n')
+    await expect(visible).resolves.toBe('answer')
+    await new Promise<void>((resolve) => terminal.input.once('end', resolve))
+
+    await expect(reader.read('Hidden: ', { hidden: true })).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(terminal.capturedOutput()).toBe('Visible: ')
+  })
+
+  it('fails the next hidden prompt after an end between prompts', async () => {
+    const terminal = streams()
+    const reader = new NodePromptReader(terminal.input, terminal.output)
+    const first = reader.read('First: ', { hidden: true })
+    terminal.input.write('first\n')
+    await expect(first).resolves.toBe('first')
+    terminal.input.end()
+    await new Promise<void>((resolve) => terminal.input.once('end', resolve))
+
+    await expect(reader.read('Second: ', { hidden: true })).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(terminal.capturedOutput()).toBe('First: \n')
+  })
+
+  it('treats destroyed and unreadable hidden inputs as clean EOF', async () => {
+    const destroyed = streams()
+    destroyed.input.destroy()
+    const destroyedReader = new NodePromptReader(destroyed.input, destroyed.output)
+    await expect(destroyedReader.read('Secret: ', { hidden: true })).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(destroyed.capturedOutput()).toBe('')
+
+    const unreadable = streams()
+    Object.defineProperty(unreadable.input, 'readable', { value: false, configurable: true })
+    const unreadableReader = new NodePromptReader(unreadable.input, unreadable.output)
+    await expect(unreadableReader.read('Secret: ', { hidden: true })).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(unreadable.capturedOutput()).toBe('')
+  })
+
+  it('keeps external cancellation and EOF as the first hidden cause', async () => {
+    const external = streams()
+    const externalController = new AbortController()
+    const externalReader = new NodePromptReader(external.input, external.output)
+    const externalPending = externalReader.read('Secret: ', {
+      hidden: true,
+      signal: externalController.signal,
+    })
+    externalController.abort()
+    external.input.end()
+    await expect(externalPending).rejects.toMatchObject({ name: 'AbortError' })
+
+    const eof = streams()
+    const eofController = new AbortController()
+    const eofReader = new NodePromptReader(eof.input, eof.output)
+    const eofPending = eofReader.read('Secret: ', {
+      hidden: true,
+      signal: eofController.signal,
+    })
+    eof.input.end()
+    await expect(eofPending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    eofController.abort()
+  })
+
+  it('restores only hidden terminal side effects that actually occurred', async () => {
+    const terminal = ttyStreams()
+    terminal.input.pause()
+    const baselinePause = terminal.input.pauseCalls
+    const reader = new NodePromptReader(terminal.input, terminal.output)
+    const pending = reader.read('Secret: ', { hidden: true })
+    terminal.input.end('secret\n')
+
+    await expect(pending).resolves.toBe('secret')
+    expect(terminal.input.rawModeCalls).toEqual([true, false])
+    expect(terminal.input.resumeCalls).toBe(1)
+    expect(terminal.input.pauseCalls).toBe(baselinePause + 1)
+    expect(terminal.capturedOutput()).toBe('Secret: \n')
   })
 
   it('maps visible empty EOF and partial lines to a safe EOF failure', async () => {

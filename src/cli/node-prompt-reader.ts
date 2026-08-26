@@ -35,6 +35,20 @@ function inputFailure(reason = 'prompt_input'): CodexError {
   })
 }
 
+function inputUnavailable(input: TerminalInput): boolean {
+  return input.readableEnded === true || input.destroyed === true || input.readable === false
+}
+
+function failureForSignal(reason: unknown): unknown {
+  if (reason === INTERNAL_EOF_REASON) {
+    return inputFailure('eof')
+  }
+  if (reason === INTERNAL_STREAM_ERROR_REASON) {
+    return inputFailure('prompt_input')
+  }
+  return abortFailure()
+}
+
 export interface NodePromptReaderOptions {
   /** Production login requires a real terminal; tests may use stream fixtures. */
   readonly requireInteractive?: boolean
@@ -62,10 +76,10 @@ export class NodePromptReader implements PromptReader {
       throw abortFailure()
     }
     if (options.hidden) {
-      const signal = options.signal === undefined
-        ? this.#lifetime.signal
-        : AbortSignal.any([this.#lifetime.signal, options.signal])
-      return this.#readHidden(prompt, signal)
+      if (inputUnavailable(this.#input)) {
+        throw inputFailure('eof')
+      }
+      return this.#readHidden(prompt, options.signal)
     }
 
     if (this.#input.readableEnded === true) {
@@ -192,28 +206,43 @@ export class NodePromptReader implements PromptReader {
     }
   }
 
-  #readHidden(prompt: string, signal: AbortSignal): Promise<string> {
+  #readHidden(prompt: string, externalSignal: AbortSignal | undefined): Promise<string> {
     return new Promise<string>((resolve, reject) => {
-      if (signal.aborted) {
-        reject(abortFailure())
-        return
-      }
-
+      const internalAbort = new AbortController()
+      const signal = externalSignal === undefined
+        ? AbortSignal.any([this.#lifetime.signal, internalAbort.signal])
+        : AbortSignal.any([this.#lifetime.signal, externalSignal, internalAbort.signal])
       const decoder = new StringDecoder('utf8')
       const characters: string[] = []
       const wasPaused = this.#input.isPaused()
       const wasRaw = this.#input.isRaw === true
       let settled = false
+      let promptWritten = false
+      let rawModeChanged = false
+      let resumed = false
+
+      const abortInternal = (reason: typeof INTERNAL_EOF_REASON | typeof INTERNAL_STREAM_ERROR_REASON): void => {
+        // If an external abort listener synchronously ends/errors the input,
+        // preserve the external signal as the combined first cause.
+        if (
+          !settled
+          && !internalAbort.signal.aborted
+          && !this.#lifetime.signal.aborted
+          && !externalSignal?.aborted
+        ) {
+          internalAbort.abort(reason)
+        }
+      }
 
       const cleanup = (): void => {
         this.#input.removeListener('data', onData)
         this.#input.removeListener('end', onEnd)
         this.#input.removeListener('error', onError)
         signal.removeEventListener('abort', onAbort)
-        if (this.#input.isTTY === true && this.#input.setRawMode !== undefined) {
+        if (rawModeChanged && this.#input.isTTY === true && this.#input.setRawMode !== undefined) {
           this.#input.setRawMode(wasRaw)
         }
-        if (wasPaused) {
+        if (resumed && wasPaused) {
           this.#input.pause()
         }
       }
@@ -221,7 +250,9 @@ export class NodePromptReader implements PromptReader {
         if (!settled) {
           settled = true
           cleanup()
-          this.#output.write('\n')
+          if (promptWritten) {
+            this.#output.write('\n')
+          }
           operation()
         }
       }
@@ -238,7 +269,7 @@ export class NodePromptReader implements PromptReader {
             return
           }
           if (character === '\u0004') {
-            fail(inputFailure('eof'))
+            abortInternal(INTERNAL_EOF_REASON)
             return
           }
           if (character === '\u0003') {
@@ -265,24 +296,46 @@ export class NodePromptReader implements PromptReader {
           acceptText(trailing)
         }
         if (!settled) {
-          fail(inputFailure('eof'))
+          abortInternal(INTERNAL_EOF_REASON)
         }
       }
       const onError = (): void => {
-        fail(inputFailure())
+        abortInternal(INTERNAL_STREAM_ERROR_REASON)
       }
       const onAbort = (): void => {
-        fail(abortFailure())
+        fail(failureForSignal(signal.reason))
       }
 
-      this.#output.write(prompt)
-      signal.addEventListener('abort', onAbort, { once: true })
+      // Attach every observer before any prompt/raw/resume side effect. This
+      // makes an EOF that arrives in the attach window a clean input failure.
       this.#input.on('data', onData)
       this.#input.once('end', onEnd)
       this.#input.once('error', onError)
+      signal.addEventListener('abort', onAbort, { once: true })
+
+      if (inputUnavailable(this.#input)) {
+        abortInternal(INTERNAL_EOF_REASON)
+      }
+      if (signal.aborted) {
+        fail(failureForSignal(signal.reason))
+        return
+      }
+
+      promptWritten = true
+      this.#output.write(prompt)
+      if (signal.aborted || internalAbort.signal.aborted) {
+        fail(failureForSignal(signal.reason))
+        return
+      }
       if (this.#input.isTTY === true && this.#input.setRawMode !== undefined) {
+        rawModeChanged = true
         this.#input.setRawMode(true)
       }
+      if (signal.aborted || internalAbort.signal.aborted) {
+        fail(failureForSignal(signal.reason))
+        return
+      }
+      resumed = true
       this.#input.resume()
     })
   }

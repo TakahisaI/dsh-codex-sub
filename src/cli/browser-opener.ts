@@ -1,5 +1,6 @@
-import { lstatSync } from 'node:fs'
+import { lstatSync, realpathSync } from 'node:fs'
 import { spawn as nodeSpawn } from 'node:child_process'
+import { userInfo as nodeUserInfo } from 'node:os'
 import { posix as posixPath } from 'node:path'
 
 import { CodexError } from '../core/errors.js'
@@ -14,6 +15,13 @@ const DESKTOP_NAME_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/u
 const WAYLAND_DISPLAY_PATTERN = /^wayland-[0-9]+$/u
 const DISPLAY_PATTERN = /^:[0-9]+(?:\.[0-9]+)?$/u
 const UNIX_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9_.-]+$/u
+
+interface BrowserUserInfo {
+  readonly uid: number
+  readonly homedir: string
+}
+
+type BrowserUserInfoReader = () => BrowserUserInfo
 
 export interface BrowserLaunchProcess {
   on(event: string, listener: (...arguments_: readonly unknown[]) => void): this
@@ -105,8 +113,13 @@ function hasControlCharacters(value: string): boolean {
   })
 }
 
-function currentUserOwns(uid: number): boolean {
-  return uid === process.getuid?.()
+function currentProcessUid(): number | undefined {
+  const realUid = process.getuid?.()
+  const effectiveUid = process.geteuid?.()
+  if (realUid === undefined || effectiveUid === undefined || realUid !== effectiveUid) {
+    return undefined
+  }
+  return realUid
 }
 
 function safeUnixPath(value: string | undefined): string | undefined {
@@ -129,35 +142,84 @@ function safeUnixPath(value: string | undefined): string | undefined {
   return value
 }
 
-function privateRuntimeDirectory(value: string | undefined): string | undefined {
+function trustedAncestors(path: string, uid: number): boolean {
+  let current = path
+  while (true) {
+    let stats
+    try {
+      stats = lstatSync(current)
+    } catch {
+      return false
+    }
+    if (stats.isSymbolicLink() || !stats.isDirectory()) {
+      return false
+    }
+    if (current !== '/') {
+      if ((stats.uid !== 0 && stats.uid !== uid) || (stats.mode & 0o022) !== 0) {
+        return false
+      }
+    }
+    const parent = posixPath.dirname(current)
+    if (parent === current) {
+      return true
+    }
+    current = parent
+  }
+}
+
+function canonicalPrivateDirectory(
+  value: string | undefined,
+  uid: number,
+  requireRuntimeMode: boolean,
+): string | undefined {
   const safePath = safeUnixPath(value)
   if (safePath === undefined) {
     return undefined
   }
   try {
-    const stats = lstatSync(safePath)
+    // Reject a symlink at the source's final component before resolving. An
+    // intermediate symlink is allowed, but all subsequent checks and emitted
+    // environment values use the resolved canonical path only.
+    const sourceStats = lstatSync(safePath)
+    if (sourceStats.isSymbolicLink()) {
+      return undefined
+    }
+    const canonical = realpathSync.native(safePath)
+    if (safeUnixPath(canonical) === undefined) {
+      return undefined
+    }
+    const stats = lstatSync(canonical)
     if (
       !stats.isDirectory()
       || stats.isSymbolicLink()
-      || !currentUserOwns(stats.uid)
-      || (stats.mode & 0o077) !== 0
+      || stats.uid !== uid
+      || (requireRuntimeMode ? (stats.mode & 0o777) !== 0o700 : (stats.mode & 0o022) !== 0)
+      || !trustedAncestors(canonical, uid)
     ) {
       return undefined
     }
-    return safePath
+    return canonical
   } catch {
     return undefined
   }
 }
 
-function privateRuntimeSocket(runtime: string, name: string): string | undefined {
+function privateRuntimeDirectory(value: string | undefined, uid: number): string | undefined {
+  return canonicalPrivateDirectory(value, uid, true)
+}
+
+function privateHomeDirectory(value: string | undefined, uid: number): string | undefined {
+  return canonicalPrivateDirectory(value, uid, false)
+}
+
+function privateRuntimeSocket(runtime: string, name: string, uid: number): string | undefined {
   const socketPath = safeUnixPath(posixPath.join(runtime, name))
   if (socketPath === undefined) {
     return undefined
   }
   try {
     const stats = lstatSync(socketPath)
-    return stats.isSocket() && !stats.isSymbolicLink() && currentUserOwns(stats.uid)
+    return stats.isSocket() && !stats.isSymbolicLink() && stats.uid === uid
       ? socketPath
       : undefined
   } catch {
@@ -165,13 +227,48 @@ function privateRuntimeSocket(runtime: string, name: string): string | undefined
   }
 }
 
-function browserEnvironment(platform: NodeJS.Platform): Readonly<Record<string, string>> | undefined {
+function readBrowserUserInfo(reader: BrowserUserInfoReader): BrowserUserInfo | undefined {
+  try {
+    const user = reader()
+    const uid = currentProcessUid()
+    if (
+      uid === undefined
+      || !Number.isSafeInteger(user.uid)
+      || user.uid !== uid
+      || typeof user.homedir !== 'string'
+    ) {
+      return undefined
+    }
+    return user
+  } catch {
+    return undefined
+  }
+}
+
+function browserEnvironment(
+  platform: NodeJS.Platform,
+  userInfoReader: BrowserUserInfoReader,
+): Readonly<Record<string, string>> | undefined {
   const environment: Record<string, string> = { PATH: FIXED_BROWSER_PATH }
   if (platform !== 'linux') {
     return Object.freeze(environment)
   }
 
-  const runtime = privateRuntimeDirectory(process.env['XDG_RUNTIME_DIR'])
+  const user = readBrowserUserInfo(userInfoReader)
+  if (user === undefined) {
+    return undefined
+  }
+  const home = privateHomeDirectory(user.homedir, user.uid)
+  if (home === undefined) {
+    return undefined
+  }
+  environment['HOME'] = home
+  environment['XDG_CONFIG_HOME'] = posixPath.join(home, '.config')
+  environment['XDG_DATA_HOME'] = posixPath.join(home, '.local', 'share')
+  environment['XDG_CONFIG_DIRS'] = '/etc/xdg'
+  environment['XDG_DATA_DIRS'] = '/usr/local/share:/usr/share'
+
+  const runtime = privateRuntimeDirectory(process.env['XDG_RUNTIME_DIR'], user.uid)
   const display = process.env['DISPLAY']
   const hasDisplayRoute = display !== undefined
     && display.length <= MAX_DISPLAY_LENGTH
@@ -185,13 +282,13 @@ function browserEnvironment(platform: NodeJS.Platform): Readonly<Record<string, 
     && candidateWayland.length <= MAX_WAYLAND_DISPLAY_LENGTH
     && !hasControlCharacters(candidateWayland)
     && WAYLAND_DISPLAY_PATTERN.test(candidateWayland)
-    ? privateRuntimeSocket(runtime, candidateWayland)
+    ? privateRuntimeSocket(runtime, candidateWayland, user.uid)
     : undefined
   if (waylandSocket !== undefined && candidateWayland !== undefined) {
     waylandDisplay = candidateWayland
   }
 
-  const busSocket = runtime === undefined ? undefined : privateRuntimeSocket(runtime, 'bus')
+  const busSocket = runtime === undefined ? undefined : privateRuntimeSocket(runtime, 'bus', user.uid)
   if (!hasDisplayRoute && waylandDisplay === undefined && busSocket === undefined) {
     return undefined
   }
@@ -221,6 +318,10 @@ function browserEnvironment(platform: NodeJS.Platform): Readonly<Record<string, 
   if (sessionType === 'x11' || sessionType === 'wayland') {
     environment['XDG_SESSION_TYPE'] = sessionType
   }
+  const kdeSessionVersion = process.env['KDE_SESSION_VERSION']
+  if (kdeSessionVersion === '4' || kdeSessionVersion === '5' || kdeSessionVersion === '6') {
+    environment['KDE_SESSION_VERSION'] = kdeSessionVersion
+  }
 
   return Object.freeze(environment)
 }
@@ -242,11 +343,16 @@ export function createSafeBrowserOpener(options: {
   readonly platform?: NodeJS.Platform
   readonly spawn?: BrowserSpawn
   readonly timeoutMs?: number
+  readonly userInfo?: BrowserUserInfoReader
 } = {}): BrowserOpener {
   const platform = options.platform ?? process.platform
   const command = commandForPlatform(platform)
   const spawn = options.spawn ?? defaultSpawn
   const timeoutMs = options.timeoutMs ?? BROWSER_OPEN_TIMEOUT_MS
+  const userInfoReader = options.userInfo ?? (() => {
+    const user = nodeUserInfo()
+    return { uid: user.uid, homedir: user.homedir }
+  })
 
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0) {
     throw new RangeError('Invalid browser opener timeout.')
@@ -261,7 +367,7 @@ export function createSafeBrowserOpener(options: {
       if (command === undefined) {
         return false
       }
-      const environment = browserEnvironment(platform)
+      const environment = browserEnvironment(platform, userInfoReader)
       if (environment === undefined) {
         return false
       }

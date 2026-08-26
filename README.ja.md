@@ -88,7 +88,11 @@ dsh-codex-sub version
 browser 起動は macOS では絶対パス `/usr/bin/open`、Linux では `/usr/bin/xdg-open` だけを使い、
 shell interpolation は行いません。Linux に渡す環境は固定の `/usr/bin:/bin` と検証済みの local
 desktop/session 値だけで、ambient な browser、loader、shell startup、Node injection の値は継承しません。
+Linux の `HOME` と XDG config/data root は OS account の `os.userInfo()` が返す canonical かつ信頼できる
+home から固定的に構成し、real/effective UID が一致しない場合や runtime/home の ancestor が書き込み可能な場合は起動しません。
 起動できない場合、検証済みの local GUI route がない場合、または失敗した場合は、安全な案内を表示して URL の手動入力へ戻ります。
+Enter の明示確認は、検証済み URL を OS account が設定した default `.desktop` handler へ渡すことを明示的に承認します。
+`/usr/bin/xdg-open` は eventual な handoff の要求であり、browser process の存続や監視を保証しません。
 secret と manual code の入力は terminal へ echo しません。
 JSON command は version 付き document を一つだけ出力し、credential 内容、account identifier、token timestamp、認証 URL、local path を含めません。
 

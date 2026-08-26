@@ -61,6 +61,15 @@ injection variable is inherited; without one validated GUI route the opener fall
 instructions. The detached child is unrefed immediately, while the bounded open timer remains
 referenced until settlement and only SIGTERM is attempted.
 
+On Linux, the environment also uses the canonical, trusted home directory reported by the OS
+account (`os.userInfo()`), with fixed XDG config/data roots; ambient `HOME` and XDG roots are not
+trusted. Real and effective UIDs must match, runtime/home ancestors must not be group/world
+writable, and the runtime directory itself must be a current-user-owned `0700` directory. The
+validated authorization URL is intentionally disclosed to that OS account's configured default
+`.desktop` handler through the fixed opener. This is an explicit user-visible handoff; the opener
+only requests the eventual default-handler action and does not claim to monitor or guarantee a
+browser process after the native command returns.
+
 Never print caught objects, stacks, causes, or arbitrary provider data. Expected project failures
 print only their stable code and safe fixed message; unexpected failures use one fixed message.
 When pi-ai wraps a project credential-conversion failure during login, retain the safe
