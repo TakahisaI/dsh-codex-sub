@@ -1,19 +1,30 @@
+import { lstatSync } from 'node:fs'
 import { spawn as nodeSpawn } from 'node:child_process'
+import { isAbsolute, join } from 'node:path'
 
 import { CodexError } from '../core/errors.js'
 
 const BROWSER_OPEN_TIMEOUT_MS = 5_000
 const LATE_ERROR_DRAIN_MS = 5_000
+const FIXED_BROWSER_PATH = '/usr/bin:/bin'
+const MAX_RUNTIME_DIRECTORY_LENGTH = 4_096
+const MAX_WAYLAND_DISPLAY_LENGTH = 128
+const MAX_DISPLAY_LENGTH = 64
+const DESKTOP_NAME_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/u
+const WAYLAND_DISPLAY_PATTERN = /^wayland-[0-9]+$/u
+const DISPLAY_PATTERN = /^:[0-9]+(?:\.[0-9]+)?$/u
 
 export interface BrowserLaunchProcess {
   on(event: string, listener: (...arguments_: readonly unknown[]) => void): this
   removeListener(event: string, listener: (...arguments_: readonly unknown[]) => void): this
   kill(signal?: NodeJS.Signals): boolean
+  unref(): void
 }
 
 export interface BrowserSpawnOptions {
   readonly shell: false
   readonly stdio: 'ignore'
+  readonly env: Readonly<Record<string, string>>
 }
 
 export type BrowserSpawn = (
@@ -67,7 +78,11 @@ function defaultSpawn(
   arguments_: readonly string[],
   options: BrowserSpawnOptions,
 ): BrowserLaunchProcess {
-  return nodeSpawn(command, [...arguments_], options) as unknown as BrowserLaunchProcess
+  return nodeSpawn(command, [...arguments_], {
+    shell: options.shell,
+    stdio: options.stdio,
+    env: { ...options.env },
+  }) as unknown as BrowserLaunchProcess
 }
 
 function commandForPlatform(platform: NodeJS.Platform): string | undefined {
@@ -75,10 +90,117 @@ function commandForPlatform(platform: NodeJS.Platform): string | undefined {
     case 'darwin':
       return '/usr/bin/open'
     case 'linux':
-      return 'xdg-open'
+      return '/usr/bin/xdg-open'
     default:
       return undefined
   }
+}
+
+function hasControlCharacters(value: string): boolean {
+  return [...value].some((character) => {
+    const codePoint = character.codePointAt(0)
+    return codePoint !== undefined
+      && (codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f))
+  })
+}
+
+function currentUserOwns(uid: number): boolean {
+  return uid === process.getuid?.()
+}
+
+function privateRuntimeDirectory(value: string | undefined): string | undefined {
+  if (
+    value === undefined
+    || value.length === 0
+    || value.length > MAX_RUNTIME_DIRECTORY_LENGTH
+    || hasControlCharacters(value)
+    || !isAbsolute(value)
+  ) {
+    return undefined
+  }
+  try {
+    const stats = lstatSync(value)
+    if (
+      !stats.isDirectory()
+      || stats.isSymbolicLink()
+      || !currentUserOwns(stats.uid)
+      || (stats.mode & 0o077) !== 0
+    ) {
+      return undefined
+    }
+    return value
+  } catch {
+    return undefined
+  }
+}
+
+function privateRuntimeSocket(runtime: string, name: string): boolean {
+  try {
+    const stats = lstatSync(join(runtime, name))
+    return stats.isSocket() && !stats.isSymbolicLink() && currentUserOwns(stats.uid)
+  } catch {
+    return false
+  }
+}
+
+function browserEnvironment(platform: NodeJS.Platform): Readonly<Record<string, string>> | undefined {
+  const environment: Record<string, string> = { PATH: FIXED_BROWSER_PATH }
+  if (platform !== 'linux') {
+    return Object.freeze(environment)
+  }
+
+  const runtime = privateRuntimeDirectory(process.env['XDG_RUNTIME_DIR'])
+  const display = process.env['DISPLAY']
+  const hasDisplayRoute = display !== undefined
+    && display.length <= MAX_DISPLAY_LENGTH
+    && !hasControlCharacters(display)
+    && DISPLAY_PATTERN.test(display)
+
+  let waylandDisplay: string | undefined
+  const candidateWayland = process.env['WAYLAND_DISPLAY']
+  if (
+    runtime !== undefined
+    && candidateWayland !== undefined
+    && candidateWayland.length <= MAX_WAYLAND_DISPLAY_LENGTH
+    && !hasControlCharacters(candidateWayland)
+    && WAYLAND_DISPLAY_PATTERN.test(candidateWayland)
+    && privateRuntimeSocket(runtime, candidateWayland)
+  ) {
+    waylandDisplay = candidateWayland
+  }
+
+  const hasBusRoute = runtime !== undefined && privateRuntimeSocket(runtime, 'bus')
+  if (!hasDisplayRoute && waylandDisplay === undefined && !hasBusRoute) {
+    return undefined
+  }
+
+  if (runtime !== undefined) {
+    environment['XDG_RUNTIME_DIR'] = runtime
+  }
+  if (hasDisplayRoute) {
+    environment['DISPLAY'] = display
+  }
+  if (waylandDisplay !== undefined) {
+    environment['WAYLAND_DISPLAY'] = waylandDisplay
+  }
+  if (hasBusRoute && runtime !== undefined) {
+    // Never copy a caller-supplied bus address. A private runtime socket is
+    // the only accepted local session route.
+    environment['DBUS_SESSION_BUS_ADDRESS'] = `unix:path=${join(runtime, 'bus')}`
+  }
+
+  for (const name of ['XDG_CURRENT_DESKTOP', 'XDG_SESSION_DESKTOP'] as const) {
+    const value = process.env[name]
+    if (value !== undefined && DESKTOP_NAME_PATTERN.test(value)) {
+      environment[name] = value
+    }
+  }
+  const sessionType = process.env['XDG_SESSION_TYPE']
+  if (sessionType === 'x11' || sessionType === 'wayland') {
+    environment['XDG_SESSION_TYPE'] = sessionType
+  }
+
+  return Object.freeze(environment)
 }
 
 function argumentsForPlatform(platform: NodeJS.Platform, url: string): readonly string[] {
@@ -117,6 +239,10 @@ export function createSafeBrowserOpener(options: {
       if (command === undefined) {
         return false
       }
+      const environment = browserEnvironment(platform)
+      if (environment === undefined) {
+        return false
+      }
 
       return new Promise<boolean>((resolve, reject) => {
         let child: BrowserLaunchProcess | undefined
@@ -124,6 +250,19 @@ export function createSafeBrowserOpener(options: {
         let drainTimer: ReturnType<typeof setTimeout> | undefined
         let settled = false
         let drainInstalled = false
+        let childUnrefed = false
+
+        const unrefChild = (): void => {
+          if (child !== undefined && !childUnrefed) {
+            childUnrefed = true
+            try {
+              child.unref()
+            } catch {
+              // Process lifetime hints are best effort and never affect the
+              // safe browser-open result.
+            }
+          }
+        }
 
         const onError = (): void => {
           finish(false, false)
@@ -218,7 +357,14 @@ export function createSafeBrowserOpener(options: {
         }
 
         try {
-          child = spawn(command, argumentsForPlatform(platform, url), { shell: false, stdio: 'ignore' })
+          child = spawn(command, argumentsForPlatform(platform, url), {
+            shell: false,
+            stdio: 'ignore',
+            env: environment,
+          })
+          // Detach the native child from the parent event-loop immediately,
+          // before an abort/exit race can install any post-spawn handlers.
+          unrefChild()
           if (settled) {
             installDrain()
             try {

@@ -13,6 +13,12 @@ import type {
 
 const MAX_PROMPT_INPUT_LENGTH = 16_384
 
+// These symbols never cross the PromptReader boundary. They let the visible
+// reader distinguish an input EOF/stream failure from a caller cancellation,
+// even though readline reports both through an AbortError.
+const INTERNAL_EOF_REASON = Symbol('node-prompt-reader.eof')
+const INTERNAL_STREAM_ERROR_REASON = Symbol('node-prompt-reader.stream-error')
+
 type TerminalInput = Readable & {
   readonly isRaw?: boolean
   readonly isTTY?: boolean
@@ -52,44 +58,116 @@ export class NodePromptReader implements PromptReader {
       throw abortFailure()
     }
     this.assertInteractive()
-    const signal = options.signal === undefined
-      ? this.#lifetime.signal
-      : AbortSignal.any([this.#lifetime.signal, options.signal])
+    if (this.#lifetime.signal.aborted || options.signal?.aborted === true) {
+      throw abortFailure()
+    }
     if (options.hidden) {
+      const signal = options.signal === undefined
+        ? this.#lifetime.signal
+        : AbortSignal.any([this.#lifetime.signal, options.signal])
       return this.#readHidden(prompt, signal)
     }
 
-    const readline = createInterface({
-      input: this.#input,
-      output: this.#output,
-      terminal: this.#input.isTTY === true,
-    })
+    if (this.#input.readableEnded === true) {
+      throw inputFailure('eof')
+    }
+
+    const internalAbort = new AbortController()
+    const signal = options.signal === undefined
+      ? AbortSignal.any([this.#lifetime.signal, internalAbort.signal])
+      : AbortSignal.any([this.#lifetime.signal, options.signal, internalAbort.signal])
     let ended = false
-    let sawLineTerminator = false
+    let lineCompleted = false
     let sawControlD = false
+    let settled = false
+    const abortInternal = (reason: typeof INTERNAL_EOF_REASON | typeof INTERNAL_STREAM_ERROR_REASON): void => {
+      if (!settled && !internalAbort.signal.aborted) {
+        internalAbort.abort(reason)
+      }
+    }
     const observeInput = (chunk: string | Buffer): void => {
       const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
-      sawLineTerminator ||= /[\r\n]/u.test(text)
-      sawControlD ||= text.includes('\u0004')
+      for (const character of text) {
+        // Once a complete line has arrived, a subsequent Ctrl-D/end event is
+        // part of stream teardown and must not turn that successful line into
+        // an EOF failure.
+        if (character === '\r' || character === '\n') {
+          lineCompleted = true
+          return
+        }
+        if (character === '\u0004') {
+          sawControlD = true
+          abortInternal(INTERNAL_EOF_REASON)
+          return
+        }
+      }
     }
     const observeEnd = (): void => {
       ended = true
+      if (!lineCompleted) {
+        abortInternal(INTERNAL_EOF_REASON)
+      }
     }
+    const observeError = (): void => {
+      if (!lineCompleted) {
+        abortInternal(INTERNAL_STREAM_ERROR_REASON)
+      }
+    }
+    const observeReadlineError = (): void => {
+      if (!lineCompleted) {
+        abortInternal(INTERNAL_STREAM_ERROR_REASON)
+      }
+    }
+
+    // Attach all stream observers before constructing readline. This closes
+    // the pre-ended/empty-EOF race where readline could otherwise miss end.
     this.#input.on('data', observeInput)
     this.#input.once('end', observeEnd)
+    this.#input.once('error', observeError)
+    let readline: ReturnType<typeof createInterface> | undefined
+
     try {
+      if (this.#input.readableEnded) {
+        abortInternal(INTERNAL_EOF_REASON)
+      }
+      if (signal.aborted) {
+        throw abortFailure()
+      }
+      readline = createInterface({
+        input: this.#input,
+        output: this.#output,
+        terminal: this.#input.isTTY === true,
+      })
+      // readline re-emits input errors on its own EventEmitter. Keep a local
+      // sink so a stream failure cannot become an uncaught EventEmitter error.
+      readline.on('error', observeReadlineError)
       const result = await readline.question(prompt, { signal })
-      if (sawControlD || (ended && !sawLineTerminator)) {
+      if (sawControlD || (ended && !lineCompleted)) {
         throw inputFailure('eof')
       }
       if (result.length > MAX_PROMPT_INPUT_LENGTH) {
         throw inputFailure()
       }
       return result
+    } catch (error) {
+      const reason = internalAbort.signal.reason
+      if (reason === INTERNAL_EOF_REASON) {
+        throw inputFailure('eof')
+      }
+      if (reason === INTERNAL_STREAM_ERROR_REASON) {
+        throw inputFailure('prompt_input')
+      }
+      if (signal.aborted || this.#lifetime.signal.aborted || options.signal?.aborted) {
+        throw abortFailure()
+      }
+      throw error
     } finally {
+      settled = true
       this.#input.removeListener('data', observeInput)
       this.#input.removeListener('end', observeEnd)
-      readline.close()
+      this.#input.removeListener('error', observeError)
+      readline?.removeListener('error', observeReadlineError)
+      readline?.close()
     }
   }
 

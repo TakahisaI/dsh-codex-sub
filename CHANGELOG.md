@@ -7,7 +7,9 @@
 - Make a single explicitly marked selector default accept Enter without changing the existing
   exact numeric/id/label selection rules.
 - Ask for an explicit Enter confirmation before opening a validated OAuth destination with the
-  fixed macOS/Linux browser opener; unsupported or failed launches retain a safe manual fallback.
+  fixed absolute macOS/Linux browser opener; unsupported, route-less, or failed launches retain a
+  safe manual fallback. Sanitize the native child environment, drain late process errors, and
+  unref the child immediately while retaining a bounded referenced open wait.
 
 ## 0.1.0-alpha.2
 

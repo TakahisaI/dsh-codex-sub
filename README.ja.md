@@ -85,8 +85,10 @@ dsh-codex-sub version
 
 `status` と `doctor` は local かつ offline です。
 `login` は検証済みの HTTPS 認証先を表示し、Enter の明示確認後に OS の default browser を開きます。
-browser 起動は macOS/Linux の固定 native opener だけを使い、shell interpolation は行いません。
-起動できない場合は、安全な案内を表示して URL の手動入力へ戻ります。
+browser 起動は macOS では絶対パス `/usr/bin/open`、Linux では `/usr/bin/xdg-open` だけを使い、
+shell interpolation は行いません。Linux に渡す環境は固定の `/usr/bin:/bin` と検証済みの local
+desktop/session 値だけで、ambient な browser、loader、shell startup、Node injection の値は継承しません。
+起動できない場合、検証済みの local GUI route がない場合、または失敗した場合は、安全な案内を表示して URL の手動入力へ戻ります。
 secret と manual code の入力は terminal へ echo しません。
 JSON command は version 付き document を一つだけ出力し、credential 内容、account identifier、token timestamp、認証 URL、local path を含めません。
 

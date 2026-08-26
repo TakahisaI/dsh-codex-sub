@@ -114,10 +114,13 @@ dsh-codex-sub version
 
 `status` and `doctor` are local and offline. Login prints a validated HTTPS authorization
 destination and asks for an explicit Enter confirmation before opening it in the system default
-browser. Browser launch uses only the fixed macOS/Linux native opener with no shell interpolation;
-if it is unavailable or fails, the validated URL remains available for manual opening. Secret and
-manual-code prompts do not echo input. JSON commands emit one versioned document and never include
-credential contents, account identifiers, token timestamps, authorization URLs, or local paths.
+browser. Browser launch uses only the absolute `/usr/bin/open` (macOS) or `/usr/bin/xdg-open`
+(Linux) command with no shell interpolation. Linux receives only a fixed `/usr/bin:/bin` path and
+validated local desktop-session variables; ambient browser, loader, shell-startup, and Node
+injection variables are not inherited. If the opener is unavailable, has no validated local GUI
+route, or fails, the validated URL remains available for manual opening. Secret and manual-code
+prompts do not echo input. JSON commands emit one versioned document and never include credential
+contents, account identifiers, token timestamps, authorization URLs, or local paths.
 
 ## Upstream boundary
 

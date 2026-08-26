@@ -123,8 +123,18 @@ Mitigation during CLI login:
 - do not persist or include the URL in diagnostics;
 - cancel the login on invalid events.
 - open a validated authorization destination only after an explicit Enter confirmation;
-- use only the fixed macOS/Linux native opener with `shell: false`, ignored stdio, a bounded timeout,
-  and cancellation cleanup;
+- use only the absolute `/usr/bin/open` (macOS) or `/usr/bin/xdg-open` (Linux) opener with
+  `shell: false`, ignored stdio, a bounded timeout, and cancellation cleanup. Linux receives exactly
+  `PATH=/usr/bin:/bin`; `HOME`, `BROWSER`, loader variables, shell startup files, Node injection,
+  and all other ambient values are omitted. `XDG_RUNTIME_DIR` is copied only when its absolute,
+  control-free, at-most-4096-byte `lstat` path is a current-user-owned directory with no group or
+  other permission bits. Local `DISPLAY` must match `:[0-9]+` with an optional `.[0-9]+`; a
+  `WAYLAND_DISPLAY` basename is accepted only when its current-user-owned socket exists under that
+  runtime directory. The DBus source value is never copied: a current-user-owned runtime `bus`
+  socket is represented as `unix:path=<runtime>/bus`. Strict bounded allow-lists cover desktop and
+  session names/types. Without a validated local DISPLAY, Wayland socket, or runtime bus route,
+  no native process is spawned. The child is unrefed exactly once immediately after spawn; the
+  bounded open timer remains referenced until settlement and SIGTERM is the only kill signal.
 - keep manual opening available when the native opener is unsupported or fails;
 - read secret and manual-code prompts through a non-echoing terminal path;
 - propagate cancellation to pending prompts and remove their listeners.
