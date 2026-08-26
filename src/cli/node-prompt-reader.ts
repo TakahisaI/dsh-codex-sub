@@ -23,27 +23,35 @@ function abortFailure(): DOMException {
   return new DOMException('The operation was aborted.', 'AbortError')
 }
 
-function inputFailure(): CodexError {
+function inputFailure(reason = 'prompt_input'): CodexError {
   return new CodexError('Interactive login input failed.', 'CODEX_AUTH_LOGIN_FAILED', {
-    safeDetails: { reason: 'prompt_input' },
+    safeDetails: { reason },
   })
+}
+
+export interface NodePromptReaderOptions {
+  /** Production login requires a real terminal; tests may use stream fixtures. */
+  readonly requireInteractive?: boolean
 }
 
 export class NodePromptReader implements PromptReader {
   readonly #input: TerminalInput
   readonly #lifetime = new AbortController()
   readonly #output: Writable
+  readonly #requireInteractive: boolean
   #closed = false
 
-  constructor(input: TerminalInput, output: Writable) {
+  constructor(input: TerminalInput, output: Writable, options: NodePromptReaderOptions = {}) {
     this.#input = input
     this.#output = output
+    this.#requireInteractive = options.requireInteractive === true
   }
 
   async read(prompt: string, options: PromptReadOptions): Promise<string> {
     if (this.#closed) {
       throw abortFailure()
     }
+    this.assertInteractive()
     const signal = options.signal === undefined
       ? this.#lifetime.signal
       : AbortSignal.any([this.#lifetime.signal, options.signal])
@@ -56,13 +64,31 @@ export class NodePromptReader implements PromptReader {
       output: this.#output,
       terminal: this.#input.isTTY === true,
     })
+    let ended = false
+    let sawLineTerminator = false
+    let sawControlD = false
+    const observeInput = (chunk: string | Buffer): void => {
+      const text = typeof chunk === 'string' ? chunk : chunk.toString('utf8')
+      sawLineTerminator ||= /[\r\n]/u.test(text)
+      sawControlD ||= text.includes('\u0004')
+    }
+    const observeEnd = (): void => {
+      ended = true
+    }
+    this.#input.on('data', observeInput)
+    this.#input.once('end', observeEnd)
     try {
       const result = await readline.question(prompt, { signal })
+      if (sawControlD || (ended && !sawLineTerminator)) {
+        throw inputFailure('eof')
+      }
       if (result.length > MAX_PROMPT_INPUT_LENGTH) {
         throw inputFailure()
       }
       return result
     } finally {
+      this.#input.removeListener('data', observeInput)
+      this.#input.removeListener('end', observeEnd)
       readline.close()
     }
   }
@@ -71,6 +97,12 @@ export class NodePromptReader implements PromptReader {
     if (!this.#closed) {
       this.#closed = true
       this.#lifetime.abort()
+    }
+  }
+
+  assertInteractive(): void {
+    if (this.#requireInteractive && this.#input.isTTY !== true) {
+      throw inputFailure('non_tty')
     }
   }
 
@@ -115,8 +147,12 @@ export class NodePromptReader implements PromptReader {
       }
       const acceptText = (text: string): void => {
         for (const character of text) {
-          if (character === '\r' || character === '\n' || character === '\u0004') {
+          if (character === '\r' || character === '\n') {
             finish()
+            return
+          }
+          if (character === '\u0004') {
+            fail(inputFailure('eof'))
             return
           }
           if (character === '\u0003') {
@@ -143,7 +179,7 @@ export class NodePromptReader implements PromptReader {
           acceptText(trailing)
         }
         if (!settled) {
-          finish()
+          fail(inputFailure('eof'))
         }
       }
       const onError = (): void => {

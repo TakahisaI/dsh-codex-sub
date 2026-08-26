@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
 
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 
 import { createTerminalLoginInteraction } from '../src/cli/login-interaction.js'
 import type {
@@ -47,6 +47,73 @@ function captureIo(): { readonly io: CliIo; stdout: () => string; stderr: () => 
 }
 
 describe('terminal pi-ai login interaction', () => {
+  it('accepts Enter for exactly one explicitly marked default', async () => {
+    const reader = new QueuePromptReader([''])
+    const interaction = createTerminalLoginInteraction({ io: captureIo().io, reader })
+
+    await expect(interaction.prompt({
+      type: 'select',
+      message: 'Select login method',
+      options: [
+        { id: 'browser', label: 'Browser login (default)' },
+        { id: 'device', label: 'Device code login' },
+      ],
+    })).resolves.toBe('browser')
+    expect(reader.calls[0]?.prompt).toBe('Selection [n]: ')
+  })
+
+  it('does not guess when a select prompt has no default', async () => {
+    const reader = new QueuePromptReader(['', 'device'])
+    const capture = captureIo()
+    const interaction = createTerminalLoginInteraction({ io: capture.io, reader })
+
+    await expect(interaction.prompt({
+      type: 'select',
+      message: 'Select login method',
+      options: [
+        { id: 'browser', label: 'Browser login' },
+        { id: 'device', label: 'Device code login' },
+      ],
+    })).resolves.toBe('device')
+    expect(capture.stdout()).toContain('Enter one of the listed numbers.\n')
+  })
+
+  it('rejects multiple defaults before reading a selection', async () => {
+    const reader = new QueuePromptReader([''])
+    const capture = captureIo()
+    const interaction = createTerminalLoginInteraction({ io: capture.io, reader })
+
+    await expect(interaction.prompt({
+      type: 'select',
+      message: 'Select login method',
+      options: [
+        { id: 'browser', label: 'Browser login (default)' },
+        { id: 'device', label: 'Device code login (default)' },
+      ],
+    })).rejects.toMatchObject({
+      code: 'CODEX_UPSTREAM_PROTOCOL',
+      safeDetails: { reason: 'select_default' },
+    })
+    expect(reader.calls).toHaveLength(0)
+    expect(capture.stdout()).toBe('')
+  })
+
+  it('accepts exact ids and unique rendered labels without fuzzy matching', async () => {
+    const reader = new QueuePromptReader(['device', 'Browser login'])
+    const interaction = createTerminalLoginInteraction({ io: captureIo().io, reader })
+    const prompt = {
+      type: 'select' as const,
+      message: 'Select login method',
+      options: [
+        { id: 'browser', label: 'Browser login' },
+        { id: 'device', label: 'Device code login' },
+      ],
+    }
+
+    await expect(interaction.prompt(prompt)).resolves.toBe('device')
+    await expect(interaction.prompt(prompt)).resolves.toBe('browser')
+  })
+
   it('renders every published notification form after validating destinations', () => {
     const capture = captureIo()
     const interaction = createTerminalLoginInteraction({
@@ -168,5 +235,111 @@ describe('terminal pi-ai login interaction', () => {
     expect(capture.stdout()).toContain('accessToken=[REDACTED] Still working\n')
     expect(capture.stdout()).not.toContain(sentinel)
     expect(reader.calls[0]?.options.signal?.aborted).toBe(true)
+  })
+
+  it('opens one validated authorization URL after an empty manual-code response', async () => {
+    const reader = new QueuePromptReader(['', ''])
+    const opened: string[] = []
+    const capture = captureIo()
+    const interaction = createTerminalLoginInteraction({
+      io: capture.io,
+      reader,
+      browserOpener: {
+        async open(url) {
+          opened.push(url)
+          return true
+        },
+      },
+    })
+
+    interaction.notify({
+      type: 'auth_url',
+      url: 'https://auth.example.test/authorize?client_id=public',
+    })
+    await expect(interaction.prompt({
+      type: 'manual_code',
+      message: 'Complete login',
+    })).resolves.toBe('')
+
+    expect(opened).toEqual(['https://auth.example.test/authorize?client_id=public'])
+    expect(reader.calls[0]?.prompt).toContain('Press Enter to open in your default browser')
+  })
+
+  it('passes through a non-empty manual code without opening the browser', async () => {
+    const reader = new QueuePromptReader(['CODE_SENTINEL'])
+    const opener = { open: vi.fn(async () => true) }
+    const interaction = createTerminalLoginInteraction({
+      io: captureIo().io,
+      reader,
+      browserOpener: opener,
+    })
+
+    interaction.notify({ type: 'auth_url', url: 'https://auth.example.test/authorize' })
+    await expect(interaction.prompt({
+      type: 'manual_code',
+      message: 'Authorization code',
+    })).resolves.toBe('CODE_SENTINEL')
+    expect(opener.open).not.toHaveBeenCalled()
+  })
+
+  it('keeps a safe manual fallback when browser launch fails', async () => {
+    const reader = new QueuePromptReader(['', 'CODE_SENTINEL'])
+    const capture = captureIo()
+    const interaction = createTerminalLoginInteraction({
+      io: capture.io,
+      reader,
+      browserOpener: {
+        async open() {
+          throw new Error('native detail sentinel')
+        },
+      },
+    })
+
+    interaction.notify({ type: 'auth_url', url: 'https://auth.example.test/authorize' })
+    await expect(interaction.prompt({
+      type: 'manual_code',
+      message: 'Authorization code',
+    })).resolves.toBe('CODE_SENTINEL')
+    expect(capture.stdout()).toContain('Could not open the browser automatically. Open the URL manually.\n')
+    expect(capture.stdout()).not.toContain('native detail sentinel')
+  })
+
+  it('does not open invalid destinations or device-code URLs', async () => {
+    const reader = new QueuePromptReader(['CODE_SENTINEL'])
+    const opener = { open: vi.fn(async () => true) }
+    const capture = captureIo()
+    const interaction = createTerminalLoginInteraction({
+      io: capture.io,
+      reader,
+      browserOpener: opener,
+    })
+
+    expect(() => interaction.notify({ type: 'auth_url', url: 'http://unsafe.example.test' })).toThrowError(
+      expect.objectContaining({ code: 'CODEX_UPSTREAM_PROTOCOL' }),
+    )
+    interaction.notify({
+      type: 'device_code',
+      userCode: 'DEVICE_CODE',
+      verificationUri: 'https://auth.example.test/device',
+    })
+    await expect(interaction.prompt({ type: 'manual_code', message: 'Code' })).resolves.toBe('CODE_SENTINEL')
+    expect(opener.open).not.toHaveBeenCalled()
+  })
+
+  it('fails closed for a prompt sequence that is not manual_code after auth_url', async () => {
+    const interaction = createTerminalLoginInteraction({
+      io: captureIo().io,
+      reader: new QueuePromptReader(['browser']),
+    })
+    interaction.notify({ type: 'auth_url', url: 'https://auth.example.test/authorize' })
+
+    await expect(interaction.prompt({
+      type: 'select',
+      message: 'Unexpected next prompt',
+      options: [{ id: 'browser', label: 'Browser' }],
+    })).rejects.toMatchObject({
+      code: 'CODEX_UPSTREAM_PROTOCOL',
+      safeDetails: { reason: 'auth_sequence' },
+    })
   })
 })

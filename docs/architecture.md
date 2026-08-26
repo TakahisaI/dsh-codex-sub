@@ -249,8 +249,11 @@ The executable then forces termination so a leaked upstream OAuth handle cannot 
 ADR 0016.
 
 `login` adapts pi-ai's published interaction events. It validates destinations as HTTPS URLs with
-no user information, prints them without opening a browser, and uses non-echoing reads for secret
-and manual-code prompts. SIGINT aborts the interaction and pending prompt resources.
+no user information, keeps a destination only for the next manual-code prompt, and asks for an
+explicit empty Enter before invoking the fixed shell-free macOS/Linux default-browser opener.
+Unsupported or failed launches fall back to manual opening without native error details. Secret and
+manual-code prompts use non-echoing reads, and SIGINT aborts the interaction and pending prompt
+resources.
 
 `status` is local and offline. `doctor` is deterministic and secret-free: it uses bounded vault
 inspection rather than a full credential read and performs no login, refresh, model request, or

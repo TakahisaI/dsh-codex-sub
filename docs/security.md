@@ -122,7 +122,10 @@ Mitigation during CLI login:
   `127.0.0.1` or `::1`;
 - do not persist or include the URL in diagnostics;
 - cancel the login on invalid events.
-- do not open a browser automatically in the first release;
+- open a validated authorization destination only after an explicit Enter confirmation;
+- use only the fixed macOS/Linux native opener with `shell: false`, ignored stdio, a bounded timeout,
+  and cancellation cleanup;
+- keep manual opening available when the native opener is unsupported or fails;
 - read secret and manual-code prompts through a non-echoing terminal path;
 - propagate cancellation to pending prompts and remove their listeners.
 

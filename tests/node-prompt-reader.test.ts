@@ -56,4 +56,38 @@ describe('NodePromptReader', () => {
     })).rejects.toMatchObject({ name: 'AbortError' })
     expect(terminal.capturedOutput()).toBe('')
   })
+
+  it('treats Ctrl-D and stream EOF as input failures', async () => {
+    const ctrlD = streams()
+    const reader = new NodePromptReader(ctrlD.input, ctrlD.output)
+    const ctrlDPending = reader.read('Code: ', { hidden: true })
+    ctrlD.input.write('\u0004')
+    await expect(ctrlDPending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+
+    const eof = streams()
+    const eofReader = new NodePromptReader(eof.input, eof.output)
+    const eofPending = eofReader.read('Code: ', { hidden: true })
+    eof.input.end()
+    await expect(eofPending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+  })
+
+  it('fails before reading when production requires an interactive terminal', async () => {
+    const terminal = streams()
+    const reader = new NodePromptReader(terminal.input, terminal.output, {
+      requireInteractive: true,
+    })
+
+    await expect(reader.read('Code: ', { hidden: true })).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'non_tty' },
+    })
+    expect(terminal.capturedOutput()).toBe('')
+  })
+
 })

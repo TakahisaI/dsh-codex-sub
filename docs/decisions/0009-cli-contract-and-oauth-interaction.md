@@ -40,11 +40,18 @@ and login cancellation uses four.
 Adapt pi-ai's published `AuthInteraction` structurally inside `src/piai/**` and implement terminal
 rendering in `src/cli/**`. Validate every displayed destination with the platform URL parser and
 allow only HTTPS URLs without username or password. Print validated authorization URLs and device
-codes only as ephemeral interactive output; never place them in reports or persistence. Do not open
-a browser automatically. Before login, reject an explicit `PI_OAUTH_CALLBACK_HOST` unless it is the
-loopback literal `127.0.0.1` or `::1`; the configured value never enters output. Read `secret` and
-`manual_code` prompts with a non-echoing input path, render `select` prompts as numbered choices,
-and propagate the combined interaction/prompt abort signal to every pending read.
+codes only as ephemeral interactive output; never place them in reports or persistence. An
+`auth_url` is held only as an ephemeral pending interaction value. The following `manual_code`
+prompt first reads hidden input that treats an empty Enter as explicit confirmation to invoke one
+fixed, shell-free macOS/Linux default-browser opener; a non-empty answer is passed through without
+launching. Unsupported or failed launches print one fixed manual-opening fallback and continue to
+the normal hidden code prompt. A second pending destination or any prompt other than the expected
+`manual_code` fails closed. Before login, reject an explicit `PI_OAUTH_CALLBACK_HOST` unless it is
+the loopback literal `127.0.0.1` or `::1`; the configured value never enters output. Read `secret`
+and `manual_code` prompts with a non-echoing input path, render `select` prompts as numbered
+choices, accept Enter only for one option whose sanitized label ends with the exact case-sensitive
+suffix ` (default)`, and propagate the combined interaction/prompt abort signal to every pending
+read.
 
 Never print caught objects, stacks, causes, or arbitrary provider data. Expected project failures
 print only their stable code and safe fixed message; unexpected failures use one fixed message.

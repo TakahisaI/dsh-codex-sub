@@ -113,9 +113,11 @@ dsh-codex-sub version
 ```
 
 `status` and `doctor` are local and offline. Login prints a validated HTTPS authorization
-destination but does not open a browser automatically. Secret and manual-code prompts do not echo
-input. JSON commands emit one versioned document and never include credential contents, account
-identifiers, token timestamps, authorization URLs, or local paths.
+destination and asks for an explicit Enter confirmation before opening it in the system default
+browser. Browser launch uses only the fixed macOS/Linux native opener with no shell interpolation;
+if it is unavailable or fails, the validated URL remains available for manual opening. Secret and
+manual-code prompts do not echo input. JSON commands emit one versioned document and never include
+credential contents, account identifiers, token timestamps, authorization URLs, or local paths.
 
 ## Upstream boundary
 
