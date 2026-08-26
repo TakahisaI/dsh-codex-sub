@@ -1,5 +1,7 @@
+import { spawn as nodeSpawn } from 'node:child_process'
 import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
+import { join } from 'node:path'
 import { PassThrough } from 'node:stream'
 
 import { describe, expect, it } from 'vitest'
@@ -70,6 +72,49 @@ class ThrowingPromptOutput extends EventEmitter {
     }
     return true
   }
+}
+
+async function runOutputErrorFixture(mode: 'prompt' | 'newline'): Promise<{
+  readonly code: number | null
+  readonly signal: NodeJS.Signals | null
+  readonly stdout: string
+  readonly stderr: string
+}> {
+  const fixturePath = join(process.cwd(), 'tests/fixtures/node-prompt-reader-output-parent.mjs')
+  const loaderPath = join(process.cwd(), 'tests/fixtures/resolve-ts-js-loader.mjs')
+  const child = nodeSpawn(process.execPath, [
+    '--experimental-strip-types',
+    '--loader',
+    loaderPath,
+    fixturePath,
+    mode,
+  ], {
+    cwd: process.cwd(),
+    env: { ...process.env },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  })
+  let stdout = ''
+  let stderr = ''
+  child.stdout?.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString('utf8')
+  })
+  child.stderr?.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString('utf8')
+  })
+  return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      child.kill('SIGKILL')
+      reject(new Error(`output fixture timed out (${mode})`))
+    }, 5_000)
+    child.once('error', (error) => {
+      clearTimeout(timeout)
+      reject(error)
+    })
+    child.once('close', (code, signal) => {
+      clearTimeout(timeout)
+      resolve({ code, signal, stdout, stderr })
+    })
+  })
 }
 
 describe('NodePromptReader', () => {
@@ -604,6 +649,20 @@ describe('NodePromptReader', () => {
     expect(terminal.input.listenerCount('end')).toBe(0)
     expect(terminal.input.listenerCount('error')).toBe(0)
     expect(terminal.input.listenerCount('close')).toBe(0)
+  })
+
+  it('drains asynchronous prompt and final-newline Writable errors in a subprocess', async () => {
+    const prompt = await runOutputErrorFixture('prompt')
+    expect(prompt.code).toBe(0)
+    expect(prompt.signal).toBeNull()
+    expect(prompt.stdout).toContain('RESULT CODEX_AUTH_LOGIN_FAILED prompt_input')
+    expect(prompt.stdout).not.toContain('UNCAUGHT')
+
+    const newline = await runOutputErrorFixture('newline')
+    expect(newline.code).toBe(0)
+    expect(newline.signal).toBeNull()
+    expect(newline.stdout).toContain('RESULT SUCCESS answer')
+    expect(newline.stdout).not.toContain('UNCAUGHT')
   })
 
   it('maps visible empty EOF and partial lines to a safe EOF failure', async () => {

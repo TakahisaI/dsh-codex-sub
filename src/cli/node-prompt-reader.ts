@@ -12,6 +12,7 @@ import type {
 } from './types.js'
 
 const MAX_PROMPT_INPUT_LENGTH = 16_384
+const OUTPUT_ERROR_DRAIN_MS = 5_000
 
 // These symbols never cross the PromptReader boundary. They let the visible
 // reader distinguish an input EOF/stream failure from a caller cancellation,
@@ -37,6 +38,70 @@ function inputFailure(reason = 'prompt_input'): CodexError {
 
 function inputUnavailable(input: TerminalInput): boolean {
   return input.readableEnded === true || input.destroyed === true || input.readable === false
+}
+
+/**
+ * Keep an error sink attached across the whole Writable write lifecycle.
+ *
+ * A Writable may report an `_write` callback error after `write()` returns,
+ * and Node can emit the corresponding `error` event after that callback. The
+ * bounded drain window covers both deliveries without retaining a listener
+ * forever when a non-standard Writable never calls its callback.
+ */
+function writeOutputWithErrorDrain(
+  output: Writable,
+  chunk: string,
+  onError: (error: unknown) => void,
+): void {
+  let cleanupTimer: ReturnType<typeof setTimeout> | undefined
+  let cleaned = false
+  const cleanup = (): void => {
+    if (cleaned) {
+      return
+    }
+    cleaned = true
+    if (cleanupTimer !== undefined) {
+      clearTimeout(cleanupTimer)
+      cleanupTimer = undefined
+    }
+    try {
+      output.removeListener('error', drainError)
+    } catch {
+      // Listener cleanup is best effort; never replace the prompt result.
+    }
+  }
+  const armCleanup = (): void => {
+    if (cleaned || cleanupTimer !== undefined) {
+      return
+    }
+    cleanupTimer = setTimeout(cleanup, OUTPUT_ERROR_DRAIN_MS)
+    cleanupTimer.unref?.()
+  }
+  const drainError = (error: unknown): void => {
+    onError(error)
+    // Error may be emitted before the write callback. Keep the sink alive for
+    // the callback as well, then remove it at the bounded deadline.
+    armCleanup()
+  }
+  const onWrite = (error?: Error | null): void => {
+    if (error !== undefined && error !== null) {
+      onError(error)
+    }
+    // Keep the listener through the post-callback error event. The timer is
+    // unref'ed so a broken output cannot keep the CLI alive by itself.
+    armCleanup()
+  }
+
+  output.on('error', drainError)
+  try {
+    output.write(chunk, onWrite)
+  } catch (error) {
+    // Synchronous write failures still need the same late-error drain.
+    onError(error)
+    armCleanup()
+    throw error
+  }
+  armCleanup()
 }
 
 function failureForSignal(reason: unknown): unknown {
@@ -278,30 +343,11 @@ export class NodePromptReader implements PromptReader {
             cleanup()
           } finally {
             if (promptWritten) {
-              const drainOutputError = (): void => undefined
-              let drainInstalled = false
               try {
-                try {
-                  this.#output.on('error', drainOutputError)
-                  drainInstalled = true
-                } catch {
-                  // A nonstandard output may reject listener installation;
-                  // still make the write attempt and preserve the result.
-                }
-                try {
-                  this.#output.write('\n')
-                } catch {
-                  // Newline rendering is best effort and must not replace the
-                  // original answer, EOF, or caller-abort result.
-                }
-              } finally {
-                if (drainInstalled) {
-                  try {
-                    this.#output.removeListener('error', drainOutputError)
-                  } catch {
-                    // Listener cleanup itself is also best effort.
-                  }
-                }
+                writeOutputWithErrorDrain(this.#output, '\n', () => undefined)
+              } catch {
+                // Newline rendering is best effort and must not replace the
+                // original answer, EOF, or caller-abort result.
               }
             }
             // Always invoke the original operation, including after any
@@ -387,7 +433,17 @@ export class NodePromptReader implements PromptReader {
         // Mark the prompt before writing because a custom Writable may write a
         // prefix and then throw. The trailing newline remains best effort.
         promptWritten = true
-        this.#output.write(prompt)
+        writeOutputWithErrorDrain(this.#output, prompt, (error) => {
+          if (!settled) {
+            fail(inputFailure('prompt_input'))
+          }
+          // The native error is intentionally not surfaced. The sink remains
+          // attached for late events, while the stable public failure wins.
+          void error
+        })
+        if (settled) {
+          return
+        }
         if (signal.aborted || internalAbort.signal.aborted) {
           fail(failureForSignal(signal.reason))
           return
