@@ -1,6 +1,5 @@
 import { EventEmitter } from 'node:events'
-import { randomUUID } from 'node:crypto'
-import { chmodSync, mkdtempSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdtempSync, renameSync, rmSync, symlinkSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn as nodeSpawn } from 'node:child_process'
@@ -411,110 +410,91 @@ describe('safe browser opener', () => {
       return
     }
 
-    const fixturePath = join(process.cwd(), 'tests', `.browser-parent-${process.pid}-${randomUUID()}.test.ts`)
-    const fixtureSource = `
-import { spawn } from 'node:child_process'
-import { expect, it } from 'vitest'
-import {
-  createSafeBrowserOpener,
-  type BrowserLaunchProcess,
-  type BrowserSpawn,
-} from '../src/cli/browser-opener.js'
+    const fixturePath = join(process.cwd(), 'tests/fixtures/browser-opener-parent.mjs')
+    const loaderPath = join(process.cwd(), 'tests/fixtures/resolve-ts-js-loader.mjs')
 
-it('settles while a SIGTERM-ignoring child remains alive', async () => {
-  process.env['DISPLAY'] = ':99'
-  delete process.env['XDG_RUNTIME_DIR']
-  delete process.env['WAYLAND_DISPLAY']
-  delete process.env['DBUS_SESSION_BUS_ADDRESS']
-  const send = (message: { type: string; pid?: number | undefined }): Promise<void> => {
-    return new Promise((resolve) => {
-      const payload = message.type === 'browser-child-pid'
-        ? 'CODEX_CHILD_PID:' + String(message.pid) + '\\n'
-        : 'CODEX_PARENT_SETTLED\\n'
-      process.stdout.write(payload, () => resolve())
-    })
-  }
-  let childPidDelivery: Promise<void> | undefined
-  const browserSpawn: BrowserSpawn = (_command, _arguments_, options) => {
-    const child = spawn(process.execPath, [
-      '-e',
-      'process.on("SIGTERM", () => {}); setTimeout(() => {}, 60000)',
-    ], {
-      shell: false,
-      stdio: 'ignore',
-      env: { ...options.env },
-    })
-    childPidDelivery = send({ type: 'browser-child-pid', pid: child.pid })
-    return child as unknown as BrowserLaunchProcess
-  }
-  const opened = await createSafeBrowserOpener({
-    platform: process.platform,
-    spawn: browserSpawn,
-    timeoutMs: 50,
-  }).open('https://auth.example.test/authorize')
-  expect(opened).toBe(false)
-  await childPidDelivery
-})
-`
-    writeFileSync(fixturePath, fixtureSource, { encoding: 'utf8', mode: 0o600 })
-
-    const parent = nodeSpawn(process.execPath, [
-      join(process.cwd(), 'node_modules/vitest/vitest.mjs'),
-      'run',
-      fixturePath,
-      '--reporter=dot',
-    ], {
-      cwd: process.cwd(),
-      env: { ...process.env, CODEX_PARENT_LIFETIME_FIXTURE: '1' },
-      stdio: ['ignore', 'pipe', 'pipe'],
-    })
-    let childPid: number | undefined
-    let stdout = ''
-    let stderr = ''
-    parent.stdout?.on('data', (chunk: Buffer) => {
-      stdout += chunk.toString('utf8')
-    })
-    parent.stderr?.on('data', (chunk: Buffer) => {
-      stderr += chunk.toString('utf8')
-    })
-    let timedOut = false
-    const parentExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
-      parent.once('error', reject)
-      parent.once('close', (code, signal) => resolve({ code, signal }))
-    })
-    const deadline = setTimeout(() => {
-      timedOut = true
+    const killAndReap = async (pid: number): Promise<void> => {
       try {
-        parent.kill('SIGKILL')
-      } catch {
-        // The close handler below still settles the bounded wait.
+        process.kill(pid, 'SIGKILL')
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+          return
+        }
+        throw error
       }
-    }, 15_000)
-
-    try {
-      const result = await parentExit
-      expect(timedOut, stderr).toBe(false)
-      expect(result.code, `${stdout}\n${stderr}`).toBe(0)
-      expect(result.signal).toBeNull()
-      const childPidMatch = /CODEX_CHILD_PID:(\d+)/u.exec(stdout)
-      if (childPidMatch !== null) {
-        childPid = Number(childPidMatch[1])
-      }
-      expect(childPid).toBeDefined()
-      if (childPid !== undefined) {
-        const pid = childPid
-        expect(() => process.kill(pid, 0)).not.toThrow()
-      }
-    } finally {
-      clearTimeout(deadline)
-      if (childPid !== undefined) {
+      const deadline = Date.now() + 5_000
+      while (Date.now() < deadline) {
         try {
-          process.kill(childPid, 'SIGKILL')
+          process.kill(pid, 0)
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code === 'ESRCH') {
+            return
+          }
+          throw error
+        }
+        await new Promise<void>((resolve) => setTimeout(resolve, 25))
+      }
+      throw new Error(`child process ${pid} did not exit after cleanup`)
+    }
+
+    for (const noOpUnref of [false, true]) {
+      const parent = nodeSpawn(process.execPath, [
+        '--experimental-strip-types',
+        '--loader',
+        loaderPath,
+        fixturePath,
+      ], {
+        cwd: process.cwd(),
+        env: { ...process.env, CODEX_NOOP_UNREF: noOpUnref ? '1' : '0' },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      })
+      let childPid: number | undefined
+      let stdout = ''
+      let stderr = ''
+      parent.stdout?.on('data', (chunk: Buffer) => {
+        stdout += chunk.toString('utf8')
+        if (childPid === undefined) {
+          const match = /^READY (\d+)$/mu.exec(stdout)
+          if (match !== null) {
+            childPid = Number(match[1])
+          }
+        }
+      })
+      parent.stderr?.on('data', (chunk: Buffer) => {
+        stderr += chunk.toString('utf8')
+      })
+      let timedOut = false
+      const parentExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+        parent.once('error', reject)
+        parent.once('close', (code, signal) => resolve({ code, signal }))
+      })
+      const deadline = setTimeout(() => {
+        timedOut = true
+        try {
+          parent.kill('SIGKILL')
         } catch {
-          // The fixture may have exited between the liveness check and cleanup.
+          // The close handler below still settles the bounded wait.
+        }
+      }, noOpUnref ? 3_000 : 10_000)
+
+      try {
+        const result = await parentExit
+        expect(childPid, `${stdout}\n${stderr}`).toBeDefined()
+        expect(stdout).toContain('SETTLED false')
+        if (noOpUnref) {
+          expect(timedOut, `${stdout}\n${stderr}`).toBe(true)
+          expect(result.signal).toBe('SIGKILL')
+        } else {
+          expect(timedOut, `${stdout}\n${stderr}`).toBe(false)
+          expect(result.code, `${stdout}\n${stderr}`).toBe(0)
+          expect(result.signal).toBeNull()
+        }
+      } finally {
+        clearTimeout(deadline)
+        if (childPid !== undefined) {
+          await killAndReap(childPid)
         }
       }
-      unlinkSync(fixturePath)
     }
   }, 20_000)
 })
