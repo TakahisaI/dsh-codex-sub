@@ -1,6 +1,6 @@
 import { lstatSync } from 'node:fs'
 import { spawn as nodeSpawn } from 'node:child_process'
-import { isAbsolute, join } from 'node:path'
+import { posix as posixPath } from 'node:path'
 
 import { CodexError } from '../core/errors.js'
 
@@ -13,6 +13,7 @@ const MAX_DISPLAY_LENGTH = 64
 const DESKTOP_NAME_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/u
 const WAYLAND_DISPLAY_PATTERN = /^wayland-[0-9]+$/u
 const DISPLAY_PATTERN = /^:[0-9]+(?:\.[0-9]+)?$/u
+const UNIX_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9_.-]+$/u
 
 export interface BrowserLaunchProcess {
   on(event: string, listener: (...arguments_: readonly unknown[]) => void): this
@@ -108,18 +109,33 @@ function currentUserOwns(uid: number): boolean {
   return uid === process.getuid?.()
 }
 
-function privateRuntimeDirectory(value: string | undefined): string | undefined {
+function safeUnixPath(value: string | undefined): string | undefined {
   if (
     value === undefined
     || value.length === 0
     || value.length > MAX_RUNTIME_DIRECTORY_LENGTH
+    || !value.startsWith('/')
     || hasControlCharacters(value)
-    || !isAbsolute(value)
+    || posixPath.normalize(value) !== value
   ) {
     return undefined
   }
+  const segments = value.split('/')
+  if (segments[0] !== '' || segments.slice(1).some((segment) => {
+    return !UNIX_PATH_SEGMENT_PATTERN.test(segment)
+  })) {
+    return undefined
+  }
+  return value
+}
+
+function privateRuntimeDirectory(value: string | undefined): string | undefined {
+  const safePath = safeUnixPath(value)
+  if (safePath === undefined) {
+    return undefined
+  }
   try {
-    const stats = lstatSync(value)
+    const stats = lstatSync(safePath)
     if (
       !stats.isDirectory()
       || stats.isSymbolicLink()
@@ -128,18 +144,24 @@ function privateRuntimeDirectory(value: string | undefined): string | undefined 
     ) {
       return undefined
     }
-    return value
+    return safePath
   } catch {
     return undefined
   }
 }
 
-function privateRuntimeSocket(runtime: string, name: string): boolean {
+function privateRuntimeSocket(runtime: string, name: string): string | undefined {
+  const socketPath = safeUnixPath(posixPath.join(runtime, name))
+  if (socketPath === undefined) {
+    return undefined
+  }
   try {
-    const stats = lstatSync(join(runtime, name))
+    const stats = lstatSync(socketPath)
     return stats.isSocket() && !stats.isSymbolicLink() && currentUserOwns(stats.uid)
+      ? socketPath
+      : undefined
   } catch {
-    return false
+    return undefined
   }
 }
 
@@ -158,19 +180,19 @@ function browserEnvironment(platform: NodeJS.Platform): Readonly<Record<string, 
 
   let waylandDisplay: string | undefined
   const candidateWayland = process.env['WAYLAND_DISPLAY']
-  if (
-    runtime !== undefined
+  const waylandSocket = runtime !== undefined
     && candidateWayland !== undefined
     && candidateWayland.length <= MAX_WAYLAND_DISPLAY_LENGTH
     && !hasControlCharacters(candidateWayland)
     && WAYLAND_DISPLAY_PATTERN.test(candidateWayland)
-    && privateRuntimeSocket(runtime, candidateWayland)
-  ) {
+    ? privateRuntimeSocket(runtime, candidateWayland)
+    : undefined
+  if (waylandSocket !== undefined && candidateWayland !== undefined) {
     waylandDisplay = candidateWayland
   }
 
-  const hasBusRoute = runtime !== undefined && privateRuntimeSocket(runtime, 'bus')
-  if (!hasDisplayRoute && waylandDisplay === undefined && !hasBusRoute) {
+  const busSocket = runtime === undefined ? undefined : privateRuntimeSocket(runtime, 'bus')
+  if (!hasDisplayRoute && waylandDisplay === undefined && busSocket === undefined) {
     return undefined
   }
 
@@ -183,10 +205,10 @@ function browserEnvironment(platform: NodeJS.Platform): Readonly<Record<string, 
   if (waylandDisplay !== undefined) {
     environment['WAYLAND_DISPLAY'] = waylandDisplay
   }
-  if (hasBusRoute && runtime !== undefined) {
+  if (busSocket !== undefined) {
     // Never copy a caller-supplied bus address. A private runtime socket is
     // the only accepted local session route.
-    environment['DBUS_SESSION_BUS_ADDRESS'] = `unix:path=${join(runtime, 'bus')}`
+    environment['DBUS_SESSION_BUS_ADDRESS'] = `unix:path=${busSocket}`
   }
 
   for (const name of ['XDG_CURRENT_DESKTOP', 'XDG_SESSION_DESKTOP'] as const) {

@@ -9,7 +9,9 @@
 - Ask for an explicit Enter confirmation before opening a validated OAuth destination with the
   fixed absolute macOS/Linux browser opener; unsupported, route-less, or failed launches retain a
   safe manual fallback. Sanitize the native child environment, drain late process errors, and
-  unref the child immediately while retaining a bounded referenced open wait.
+  unref the child immediately while retaining a bounded referenced open wait. Restrict constructed
+  Linux DBus paths to normalized ASCII-safe runtime segments and prove parent exit in a subprocess
+  fixture.
 
 ## 0.1.0-alpha.2
 

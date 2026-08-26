@@ -1,5 +1,6 @@
 import { EventEmitter } from 'node:events'
-import { chmodSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import { randomUUID } from 'node:crypto'
+import { chmodSync, mkdtempSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { spawn as nodeSpawn } from 'node:child_process'
@@ -340,6 +341,42 @@ describe('safe browser opener', () => {
     }
   })
 
+  it('fails closed for delimiter-bearing runtime paths and omits DBus on a separate display route', async () => {
+    const delimiters = [';', ',', '%', '=', ':', '\\', ' ', '日本']
+    for (const delimiter of delimiters) {
+      const root = mkdtempSync(join(tmpdir(), 'dsh-opener-path-'))
+      const unsafe = `${root}-${delimiter}`
+      renameSync(root, unsafe)
+      try {
+        vi.stubEnv('DISPLAY', '')
+        vi.stubEnv('XDG_RUNTIME_DIR', unsafe)
+        const noRoute = spawnFixture()
+        await expect(createSafeBrowserOpener({ platform: 'linux', spawn: noRoute.spawn })
+          .open('https://auth.example.test/authorize')).resolves.toBe(false)
+        expect(noRoute.calls).toHaveLength(0)
+
+        vi.stubEnv('DISPLAY', ':99')
+        vi.stubEnv('DBUS_SESSION_BUS_ADDRESS', 'unix:path=/tmp/evil-bus-sentinel')
+        const displayRoute = spawnFixture()
+        const pending = createSafeBrowserOpener({ platform: 'linux', spawn: displayRoute.spawn })
+          .open('https://auth.example.test/authorize')
+        const call = displayRoute.calls[0]
+        if (call === undefined) {
+          throw new Error('browser spawn call missing')
+        }
+        expect(call.options).toEqual({
+          shell: false,
+          stdio: 'ignore',
+          env: { PATH: '/usr/bin:/bin', DISPLAY: ':99' },
+        })
+        displayRoute.process.emit('close', 0, null)
+        await expect(pending).resolves.toBe(true)
+      } finally {
+        rmSync(unsafe, { recursive: true, force: true })
+      }
+    }
+  })
+
   it('unrefs a real SIGTERM-ignoring child while keeping the parent bounded', async () => {
     if (process.platform !== 'linux' && process.platform !== 'darwin') {
       return
@@ -368,4 +405,116 @@ describe('safe browser opener', () => {
       }
     }
   })
+
+  it('lets a separate parent exit naturally after timeout while its child remains for cleanup', async () => {
+    if (process.platform !== 'linux' && process.platform !== 'darwin') {
+      return
+    }
+
+    const fixturePath = join(process.cwd(), 'tests', `.browser-parent-${process.pid}-${randomUUID()}.test.ts`)
+    const fixtureSource = `
+import { spawn } from 'node:child_process'
+import { expect, it } from 'vitest'
+import {
+  createSafeBrowserOpener,
+  type BrowserLaunchProcess,
+  type BrowserSpawn,
+} from '../src/cli/browser-opener.js'
+
+it('settles while a SIGTERM-ignoring child remains alive', async () => {
+  process.env['DISPLAY'] = ':99'
+  delete process.env['XDG_RUNTIME_DIR']
+  delete process.env['WAYLAND_DISPLAY']
+  delete process.env['DBUS_SESSION_BUS_ADDRESS']
+  const send = (message: { type: string; pid?: number | undefined }): Promise<void> => {
+    return new Promise((resolve) => {
+      const payload = message.type === 'browser-child-pid'
+        ? 'CODEX_CHILD_PID:' + String(message.pid) + '\\n'
+        : 'CODEX_PARENT_SETTLED\\n'
+      process.stdout.write(payload, () => resolve())
+    })
+  }
+  let childPidDelivery: Promise<void> | undefined
+  const browserSpawn: BrowserSpawn = (_command, _arguments_, options) => {
+    const child = spawn(process.execPath, [
+      '-e',
+      'process.on("SIGTERM", () => {}); setTimeout(() => {}, 60000)',
+    ], {
+      shell: false,
+      stdio: 'ignore',
+      env: { ...options.env },
+    })
+    childPidDelivery = send({ type: 'browser-child-pid', pid: child.pid })
+    return child as unknown as BrowserLaunchProcess
+  }
+  const opened = await createSafeBrowserOpener({
+    platform: process.platform,
+    spawn: browserSpawn,
+    timeoutMs: 50,
+  }).open('https://auth.example.test/authorize')
+  expect(opened).toBe(false)
+  await childPidDelivery
+})
+`
+    writeFileSync(fixturePath, fixtureSource, { encoding: 'utf8', mode: 0o600 })
+
+    const parent = nodeSpawn(process.execPath, [
+      join(process.cwd(), 'node_modules/vitest/vitest.mjs'),
+      'run',
+      fixturePath,
+      '--reporter=dot',
+    ], {
+      cwd: process.cwd(),
+      env: { ...process.env, CODEX_PARENT_LIFETIME_FIXTURE: '1' },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    })
+    let childPid: number | undefined
+    let stdout = ''
+    let stderr = ''
+    parent.stdout?.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString('utf8')
+    })
+    parent.stderr?.on('data', (chunk: Buffer) => {
+      stderr += chunk.toString('utf8')
+    })
+    let timedOut = false
+    const parentExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>((resolve, reject) => {
+      parent.once('error', reject)
+      parent.once('close', (code, signal) => resolve({ code, signal }))
+    })
+    const deadline = setTimeout(() => {
+      timedOut = true
+      try {
+        parent.kill('SIGKILL')
+      } catch {
+        // The close handler below still settles the bounded wait.
+      }
+    }, 15_000)
+
+    try {
+      const result = await parentExit
+      expect(timedOut, stderr).toBe(false)
+      expect(result.code, `${stdout}\n${stderr}`).toBe(0)
+      expect(result.signal).toBeNull()
+      const childPidMatch = /CODEX_CHILD_PID:(\d+)/u.exec(stdout)
+      if (childPidMatch !== null) {
+        childPid = Number(childPidMatch[1])
+      }
+      expect(childPid).toBeDefined()
+      if (childPid !== undefined) {
+        const pid = childPid
+        expect(() => process.kill(pid, 0)).not.toThrow()
+      }
+    } finally {
+      clearTimeout(deadline)
+      if (childPid !== undefined) {
+        try {
+          process.kill(childPid, 'SIGKILL')
+        } catch {
+          // The fixture may have exited between the liveness check and cleanup.
+        }
+      }
+      unlinkSync(fixturePath)
+    }
+  }, 20_000)
 })

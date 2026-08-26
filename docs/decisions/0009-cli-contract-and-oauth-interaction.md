@@ -54,8 +54,9 @@ suffix ` (default)`, and propagate the combined interaction/prompt abort signal 
 read. Native browser launch uses only absolute `/usr/bin/open` or `/usr/bin/xdg-open` paths with
 shell disabled. Its child receives a fixed `/usr/bin:/bin` path and only validated local Linux
 desktop-session values: a private current-user-owned runtime directory, local `DISPLAY`, a
-runtime-owned Wayland socket, a runtime-owned `bus` socket represented as `unix:path=...`, and
-strictly validated desktop/session names. No ambient browser, loader, shell-startup, or Node
+runtime-owned Wayland socket, a runtime-owned `bus` socket represented as `unix:path=...` only
+when the normalized absolute path has non-empty ASCII `[A-Za-z0-9_.-]+` segments, and strictly
+validated desktop/session names. No ambient browser, loader, shell-startup, or Node
 injection variable is inherited; without one validated GUI route the opener falls back to manual
 instructions. The detached child is unrefed immediately, while the bounded open timer remains
 referenced until settlement and only SIGTERM is attempted.

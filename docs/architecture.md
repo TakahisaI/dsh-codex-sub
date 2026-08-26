@@ -252,7 +252,8 @@ ADR 0016.
 no user information, keeps a destination only for the next manual-code prompt, and asks for an
 explicit empty Enter before invoking the fixed shell-free macOS/Linux default-browser opener.
 The opener uses absolute `/usr/bin/open` or `/usr/bin/xdg-open` paths and a sanitized environment
-(`PATH=/usr/bin:/bin` plus only validated local Linux desktop/session values). Unsupported,
+(`PATH=/usr/bin:/bin` plus only validated local Linux desktop/session values; constructed DBus
+paths use normalized ASCII-safe runtime segments). Unsupported,
 route-less, or failed launches fall back to manual opening without native error details. The
 native child is unrefed immediately; its five-second wait remains referenced until settlement and
 SIGTERM is the only termination attempt. Secret and manual-code prompts use non-echoing reads,

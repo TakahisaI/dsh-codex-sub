@@ -167,6 +167,62 @@ describe('NodePromptReader', () => {
     await expect(abortPending).rejects.toMatchObject({ name: 'AbortError' })
   })
 
+  it('keeps external cancellation first when its listener synchronously emits EOF or error', async () => {
+    const eof = streams()
+    const eofController = new AbortController()
+    eofController.signal.addEventListener('abort', () => eof.input.end())
+    const eofReader = new NodePromptReader(eof.input, eof.output)
+    const eofPending = eofReader.read('Name: ', {
+      hidden: false,
+      signal: eofController.signal,
+    })
+    eofController.abort()
+    await expect(eofPending).rejects.toMatchObject({ name: 'AbortError' })
+
+    const streamError = streams()
+    const streamErrorController = new AbortController()
+    streamErrorController.signal.addEventListener('abort', () => {
+      streamError.input.emit('error', new Error('external-error-race sentinel'))
+    })
+    const streamErrorReader = new NodePromptReader(streamError.input, streamError.output)
+    const streamErrorPending = streamErrorReader.read('Name: ', {
+      hidden: false,
+      signal: streamErrorController.signal,
+    })
+    streamErrorController.abort()
+    await expect(streamErrorPending).rejects.toMatchObject({ name: 'AbortError' })
+  })
+
+  it('keeps internal EOF or stream error first when external cancellation follows synchronously', async () => {
+    const eof = streams()
+    const eofController = new AbortController()
+    const eofReader = new NodePromptReader(eof.input, eof.output)
+    const eofPending = eofReader.read('Name: ', {
+      hidden: false,
+      signal: eofController.signal,
+    })
+    eof.input.once('end', () => eofController.abort())
+    eof.input.end()
+    await expect(eofPending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+
+    const streamError = streams()
+    const streamErrorController = new AbortController()
+    const streamErrorReader = new NodePromptReader(streamError.input, streamError.output)
+    const streamErrorPending = streamErrorReader.read('Name: ', {
+      hidden: false,
+      signal: streamErrorController.signal,
+    })
+    streamError.input.once('error', () => streamErrorController.abort())
+    streamError.input.emit('error', new Error('internal-error-race sentinel'))
+    await expect(streamErrorPending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'prompt_input' },
+    })
+  })
+
   it('removes visible input listeners after success, failure, and abort', async () => {
     const success = streams()
     const successReader = new NodePromptReader(success.input, success.output)

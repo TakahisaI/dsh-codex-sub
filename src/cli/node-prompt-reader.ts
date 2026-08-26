@@ -81,7 +81,15 @@ export class NodePromptReader implements PromptReader {
     let sawControlD = false
     let settled = false
     const abortInternal = (reason: typeof INTERNAL_EOF_REASON | typeof INTERNAL_STREAM_ERROR_REASON): void => {
-      if (!settled && !internalAbort.signal.aborted) {
+      // An external abort event can synchronously emit end/error from one of
+      // its listeners. The base signal is already marked aborted at that
+      // point, so keep the combined signal's external first cause intact.
+      if (
+        !settled
+        && !internalAbort.signal.aborted
+        && !this.#lifetime.signal.aborted
+        && !options.signal?.aborted
+      ) {
         internalAbort.abort(reason)
       }
     }
@@ -150,7 +158,7 @@ export class NodePromptReader implements PromptReader {
       }
       return result
     } catch (error) {
-      const reason = internalAbort.signal.reason
+      const reason = signal.reason
       if (reason === INTERNAL_EOF_REASON) {
         throw inputFailure('eof')
       }

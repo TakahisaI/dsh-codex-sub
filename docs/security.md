@@ -131,7 +131,9 @@ Mitigation during CLI login:
   other permission bits. Local `DISPLAY` must match `:[0-9]+` with an optional `.[0-9]+`; a
   `WAYLAND_DISPLAY` basename is accepted only when its current-user-owned socket exists under that
   runtime directory. The DBus source value is never copied: a current-user-owned runtime `bus`
-  socket is represented as `unix:path=<runtime>/bus`. Strict bounded allow-lists cover desktop and
+  socket is represented as `unix:path=<runtime>/bus`, where the normalized absolute runtime path
+  has only non-empty ASCII `[A-Za-z0-9_.-]+` segments (so D-Bus delimiters, separators, traversal,
+  whitespace, and Unicode cannot be interpolated). Strict bounded allow-lists cover desktop and
   session names/types. Without a validated local DISPLAY, Wayland socket, or runtime bus route,
   no native process is spawned. The child is unrefed exactly once immediately after spawn; the
   bounded open timer remains referenced until settlement and SIGTERM is the only kill signal.
