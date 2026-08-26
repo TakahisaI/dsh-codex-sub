@@ -3,6 +3,7 @@ import { spawn as nodeSpawn } from 'node:child_process'
 import { CodexError } from '../core/errors.js'
 
 const BROWSER_OPEN_TIMEOUT_MS = 5_000
+const LATE_ERROR_DRAIN_MS = 5_000
 
 export interface BrowserLaunchProcess {
   on(event: string, listener: (...arguments_: readonly unknown[]) => void): this
@@ -120,13 +121,18 @@ export function createSafeBrowserOpener(options: {
       return new Promise<boolean>((resolve, reject) => {
         let child: BrowserLaunchProcess | undefined
         let timer: ReturnType<typeof setTimeout> | undefined
+        let drainTimer: ReturnType<typeof setTimeout> | undefined
         let settled = false
+        let drainInstalled = false
 
         const onError = (): void => {
-          finish(false)
+          finish(false, false)
         }
         const onExit = (code: unknown, signalName: unknown): void => {
-          finish(code === 0 && signalName == null)
+          finish(code === 0 && signalName == null, false)
+        }
+        const onClose = (code: unknown, signalName: unknown): void => {
+          finish(code === 0 && signalName == null, true)
         }
         const onAbort = (): void => {
           if (!settled) {
@@ -145,15 +151,47 @@ export function createSafeBrowserOpener(options: {
           }
           child?.removeListener('error', onError)
           child?.removeListener('exit', onExit)
-          child?.removeListener('close', onExit)
+          child?.removeListener('close', onClose)
           signal?.removeEventListener('abort', onAbort)
         }
-        const finish = (opened: boolean): void => {
+        const cleanupDrain = (): void => {
+          if (!drainInstalled) {
+            return
+          }
+          drainInstalled = false
+          if (drainTimer !== undefined) {
+            clearTimeout(drainTimer)
+            drainTimer = undefined
+          }
+          child?.removeListener('error', drainError)
+          child?.removeListener('exit', drainExit)
+          child?.removeListener('close', drainClose)
+        }
+        const installDrain = (): void => {
+          if (child === undefined || drainInstalled) {
+            return
+          }
+          drainInstalled = true
+          child.on('error', drainError)
+          child.on('exit', drainExit)
+          child.on('close', drainClose)
+          drainTimer = setTimeout(cleanupDrain, LATE_ERROR_DRAIN_MS)
+          drainTimer.unref?.()
+        }
+        const finish = (opened: boolean, closed: boolean): void => {
           if (settled) {
             return
           }
           settled = true
           cleanup()
+          if (closed) {
+            cleanupDrain()
+          } else {
+            // Keep one native error sink alive until the child closes (or the
+            // bounded drain grace period expires). This prevents a late ENOENT
+            // after abort/timeout from becoming an uncaught EventEmitter error.
+            installDrain()
+          }
           resolve(opened)
         }
         const finishAbort = (): void => {
@@ -162,7 +200,13 @@ export function createSafeBrowserOpener(options: {
           }
           settled = true
           cleanup()
+          installDrain()
           reject(abortFailure())
+        }
+        const drainError = (): void => undefined
+        const drainExit = (): void => undefined
+        const drainClose = (): void => {
+          cleanupDrain()
         }
 
         if (signal !== undefined) {
@@ -176,6 +220,7 @@ export function createSafeBrowserOpener(options: {
         try {
           child = spawn(command, argumentsForPlatform(platform, url), { shell: false, stdio: 'ignore' })
           if (settled) {
+            installDrain()
             try {
               child.kill('SIGTERM')
             } catch {
@@ -185,6 +230,7 @@ export function createSafeBrowserOpener(options: {
           }
           child.on('error', onError)
           if (settled) {
+            installDrain()
             try {
               child.kill('SIGTERM')
             } catch {
@@ -194,6 +240,7 @@ export function createSafeBrowserOpener(options: {
           }
           child.on('exit', onExit)
           if (settled) {
+            installDrain()
             try {
               child.kill('SIGTERM')
             } catch {
@@ -201,8 +248,9 @@ export function createSafeBrowserOpener(options: {
             }
             return
           }
-          child.on('close', onExit)
+          child.on('close', onClose)
           if (settled) {
+            installDrain()
             try {
               child.kill('SIGTERM')
             } catch {
@@ -211,7 +259,7 @@ export function createSafeBrowserOpener(options: {
             return
           }
           timer = setTimeout(() => {
-            finish(false)
+            finish(false, false)
             try {
               child?.kill('SIGTERM')
             } catch {
@@ -219,7 +267,7 @@ export function createSafeBrowserOpener(options: {
             }
           }, timeoutMs)
         } catch {
-          finish(false)
+          finish(false, false)
         }
       })
     },

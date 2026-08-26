@@ -124,14 +124,19 @@ async function readSelect(
   }
 
   while (true) {
-    const answer = await reader.read('Selection [n]: ', {
+    const rawAnswer = await reader.read('Selection [n]: ', {
       hidden: false,
       ...(signal === undefined ? {} : { signal }),
     })
-    if (answer.length === 0) {
+    if (rawAnswer.length === 0) {
       if (defaults.length === 1) {
         return defaults[0]!.id
       }
+      io.stdout('Enter one of the listed numbers.\n')
+      continue
+    }
+    const answer = rawAnswer.trim()
+    if (answer.length === 0) {
       io.stdout('Enter one of the listed numbers.\n')
       continue
     }

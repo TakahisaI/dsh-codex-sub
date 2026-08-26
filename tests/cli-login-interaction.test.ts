@@ -133,6 +133,66 @@ describe('terminal pi-ai login interaction', () => {
     await expect(interaction.prompt(prompt)).resolves.toBe('browser')
   })
 
+  it('trims non-empty selection input for compatible numeric and exact text matching', async () => {
+    const numericReader = new QueuePromptReader([' 1 '])
+    const numericInteraction = createTerminalLoginInteraction({
+      io: captureIo().io,
+      reader: numericReader,
+    })
+    await expect(numericInteraction.prompt({
+      type: 'select',
+      message: 'Select login method',
+      options: [
+        { id: 'browser', label: 'Browser login' },
+        { id: 'device', label: 'Device code login' },
+      ],
+    })).resolves.toBe('browser')
+
+    const labelReader = new QueuePromptReader(['  Browser login  '])
+    const labelInteraction = createTerminalLoginInteraction({
+      io: captureIo().io,
+      reader: labelReader,
+    })
+    await expect(labelInteraction.prompt({
+      type: 'select',
+      message: 'Select login method',
+      options: [
+        { id: 'browser', label: 'Browser login' },
+        { id: 'device', label: 'Device code login' },
+      ],
+    })).resolves.toBe('browser')
+  })
+
+  it('does not treat whitespace-only input as default Enter', async () => {
+    const reader = new QueuePromptReader(['   ', 'device'])
+    const capture = captureIo()
+    const interaction = createTerminalLoginInteraction({ io: capture.io, reader })
+
+    await expect(interaction.prompt({
+      type: 'select',
+      message: 'Select login method',
+      options: [
+        { id: 'browser', label: 'Browser login (default)' },
+        { id: 'device', label: 'Device code login' },
+      ],
+    })).resolves.toBe('device')
+    expect(capture.stdout()).toContain('Enter one of the listed numbers.\n')
+  })
+
+  it('retries whitespace-only input when no default exists', async () => {
+    const reader = new QueuePromptReader(['   ', 'device'])
+    const interaction = createTerminalLoginInteraction({ io: captureIo().io, reader })
+
+    await expect(interaction.prompt({
+      type: 'select',
+      message: 'Select login method',
+      options: [
+        { id: 'browser', label: 'Browser login' },
+        { id: 'device', label: 'Device code login' },
+      ],
+    })).resolves.toBe('device')
+  })
+
   it('rejects a cross-category exact id/label collision and retries', async () => {
     const reader = new QueuePromptReader(['shared', 'browser'])
     const capture = captureIo()

@@ -121,6 +121,8 @@ describe('safe browser opener', () => {
     await expect(opener.open('https://auth.example.test/authorize', controller.signal))
       .rejects.toMatchObject({ name: 'AbortError' })
     expect(process.killCalls).toEqual(['SIGTERM'])
+    process.emit('error', new Error('abort-before-enoent sentinel'))
+    process.emit('close', null, 'SIGTERM')
     expect(process.listenerCount('error')).toBe(0)
     expect(process.listenerCount('exit')).toBe(0)
     expect(process.listenerCount('close')).toBe(0)
@@ -135,16 +137,12 @@ describe('safe browser opener', () => {
     controller.abort()
     await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
     expect(fixture.process.killCalls).toEqual(['SIGTERM'])
+    fixture.process.emit('error', new Error('late error sentinel'))
+    fixture.process.emit('close', 0, null)
+    expect(fixture.process.killCalls).toEqual(['SIGTERM'])
     expect(fixture.process.listenerCount('error')).toBe(0)
     expect(fixture.process.listenerCount('exit')).toBe(0)
     expect(fixture.process.listenerCount('close')).toBe(0)
-
-    const lateError = (): void => undefined
-    fixture.process.on('error', lateError)
-    fixture.process.emit('error', new Error('late error sentinel'))
-    fixture.process.removeListener('error', lateError)
-    fixture.process.emit('close', 0, null)
-    expect(fixture.process.killCalls).toEqual(['SIGTERM'])
   })
 
   it('applies the bounded timeout and kills a hung process', async () => {
@@ -157,6 +155,8 @@ describe('safe browser opener', () => {
 
     await expect(opener.open('https://auth.example.test/authorize')).resolves.toBe(false)
     expect(fixture.process.killCalls).toEqual(['SIGTERM'])
+    fixture.process.emit('error', new Error('timeout-enoent sentinel'))
+    fixture.process.emit('close', null, 'SIGTERM')
     expect(fixture.process.listenerCount('error')).toBe(0)
     expect(fixture.process.listenerCount('exit')).toBe(0)
     expect(fixture.process.listenerCount('close')).toBe(0)
@@ -172,11 +172,8 @@ describe('safe browser opener', () => {
     const pending = opener.open('https://auth.example.test/authorize')
     await expect(pending).resolves.toBe(false)
 
-    fixture.process.emit('close', 0, null)
-    const lateError = (): void => undefined
-    fixture.process.on('error', lateError)
     fixture.process.emit('error', new Error('late error sentinel'))
-    fixture.process.removeListener('error', lateError)
+    fixture.process.emit('close', 0, null)
     expect(fixture.process.listenerCount('error')).toBe(0)
     expect(fixture.process.listenerCount('exit')).toBe(0)
     expect(fixture.process.listenerCount('close')).toBe(0)
