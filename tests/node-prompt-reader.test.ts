@@ -132,6 +132,7 @@ describe('NodePromptReader', () => {
     expect(terminal.input.listenerCount('data')).toBe(0)
     expect(terminal.input.listenerCount('end')).toBe(0)
     expect(terminal.input.listenerCount('error')).toBe(0)
+    expect(terminal.input.listenerCount('close')).toBe(0)
     expect(terminal.input.rawModeCalls).toEqual(baseline.raw)
     expect(terminal.input.resumeCalls).toBe(baseline.resume)
     expect(terminal.input.pauseCalls).toBe(baseline.pause)
@@ -150,6 +151,25 @@ describe('NodePromptReader', () => {
     expect(terminal.input.listenerCount('data')).toBe(0)
     expect(terminal.input.listenerCount('end')).toBe(0)
     expect(terminal.input.listenerCount('error')).toBe(0)
+    expect(terminal.input.listenerCount('close')).toBe(0)
+    expect(terminal.input.rawModeCalls).toEqual([true, false])
+  })
+
+  it('maps a hidden close event to EOF and rolls back terminal side effects', async () => {
+    const terminal = ttyStreams()
+    const reader = new NodePromptReader(terminal.input, terminal.output)
+    const pending = reader.read('Secret: ', { hidden: true })
+    terminal.input.emit('close')
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(terminal.capturedOutput()).toBe('Secret: \n')
+    expect(terminal.input.listenerCount('data')).toBe(0)
+    expect(terminal.input.listenerCount('end')).toBe(0)
+    expect(terminal.input.listenerCount('error')).toBe(0)
+    expect(terminal.input.listenerCount('close')).toBe(0)
     expect(terminal.input.rawModeCalls).toEqual([true, false])
   })
 
@@ -202,6 +222,82 @@ describe('NodePromptReader', () => {
       safeDetails: { reason: 'eof' },
     })
     expect(unreadable.capturedOutput()).toBe('')
+    expect(destroyed.input.listenerCount('close')).toBe(0)
+    expect(unreadable.input.listenerCount('close')).toBe(0)
+  })
+
+  it('fails a visible pre-destroyed or unreadable input before prompt side effects', async () => {
+    const destroyed = ttyStreams()
+    destroyed.input.destroy()
+    const destroyedReader = new NodePromptReader(destroyed.input, destroyed.output)
+    await expect(destroyedReader.read('Name: ', { hidden: false })).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(destroyed.capturedOutput()).toBe('')
+    expect(destroyed.input.rawModeCalls).toEqual([])
+    expect(destroyed.input.resumeCalls).toBe(0)
+    expect(destroyed.input.listenerCount('close')).toBe(0)
+
+    const unreadable = ttyStreams()
+    Object.defineProperty(unreadable.input, 'readable', { value: false, configurable: true })
+    const unreadableReader = new NodePromptReader(unreadable.input, unreadable.output)
+    await expect(unreadableReader.read('Name: ', { hidden: false })).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(unreadable.capturedOutput()).toBe('')
+    expect(unreadable.input.rawModeCalls).toEqual([])
+    expect(unreadable.input.resumeCalls).toBe(0)
+    expect(unreadable.input.listenerCount('close')).toBe(0)
+  })
+
+  it('maps a pending visible close to EOF and removes the close listener', async () => {
+    const terminal = streams()
+    const reader = new NodePromptReader(terminal.input, terminal.output)
+    const pending = reader.read('Name: ', { hidden: false })
+    terminal.input.emit('close')
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(terminal.input.listenerCount('data')).toBe(0)
+    expect(terminal.input.listenerCount('end')).toBe(0)
+    expect(terminal.input.listenerCount('error')).toBe(0)
+    expect(terminal.input.listenerCount('close')).toBe(0)
+  })
+
+  it('maps pending visible and hidden destruction to EOF', async () => {
+    const visible = streams()
+    const visibleReader = new NodePromptReader(visible.input, visible.output)
+    const visiblePending = visibleReader.read('Name: ', { hidden: false })
+    visible.input.destroy()
+    await expect(visiblePending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(visible.input.listenerCount('close')).toBe(0)
+
+    const hidden = streams()
+    const hiddenReader = new NodePromptReader(hidden.input, hidden.output)
+    const hiddenPending = hiddenReader.read('Secret: ', { hidden: true })
+    hidden.input.destroy()
+    await expect(hiddenPending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(hidden.input.listenerCount('close')).toBe(0)
+  })
+
+  it('preserves a complete visible line when close follows its terminator', async () => {
+    const terminal = streams()
+    const reader = new NodePromptReader(terminal.input, terminal.output)
+    const pending = reader.read('Name: ', { hidden: false })
+    terminal.input.write('complete\n')
+    terminal.input.emit('close')
+
+    await expect(pending).resolves.toBe('complete')
   })
 
   it('keeps external cancellation and EOF as the first hidden cause', async () => {
@@ -362,6 +458,58 @@ describe('NodePromptReader', () => {
     await expect(streamErrorPending).rejects.toMatchObject({ name: 'AbortError' })
   })
 
+  it('keeps the first cause when external abort and close race in both orders', async () => {
+    const abortFirst = streams()
+    const abortFirstController = new AbortController()
+    abortFirstController.signal.addEventListener('abort', () => abortFirst.input.emit('close'))
+    const abortFirstReader = new NodePromptReader(abortFirst.input, abortFirst.output)
+    const abortFirstPending = abortFirstReader.read('Name: ', {
+      hidden: false,
+      signal: abortFirstController.signal,
+    })
+    abortFirstController.abort()
+    await expect(abortFirstPending).rejects.toMatchObject({ name: 'AbortError' })
+
+    const closeFirst = streams()
+    const closeFirstController = new AbortController()
+    const closeFirstReader = new NodePromptReader(closeFirst.input, closeFirst.output)
+    const closeFirstPending = closeFirstReader.read('Name: ', {
+      hidden: false,
+      signal: closeFirstController.signal,
+    })
+    closeFirst.input.once('close', () => closeFirstController.abort())
+    closeFirst.input.emit('close')
+    await expect(closeFirstPending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+
+    const hiddenAbortFirst = streams()
+    const hiddenAbortFirstController = new AbortController()
+    hiddenAbortFirstController.signal.addEventListener('abort', () => hiddenAbortFirst.input.emit('close'))
+    const hiddenAbortFirstReader = new NodePromptReader(hiddenAbortFirst.input, hiddenAbortFirst.output)
+    const hiddenAbortFirstPending = hiddenAbortFirstReader.read('Secret: ', {
+      hidden: true,
+      signal: hiddenAbortFirstController.signal,
+    })
+    hiddenAbortFirstController.abort()
+    await expect(hiddenAbortFirstPending).rejects.toMatchObject({ name: 'AbortError' })
+
+    const hiddenCloseFirst = streams()
+    const hiddenCloseFirstController = new AbortController()
+    const hiddenCloseFirstReader = new NodePromptReader(hiddenCloseFirst.input, hiddenCloseFirst.output)
+    const hiddenCloseFirstPending = hiddenCloseFirstReader.read('Secret: ', {
+      hidden: true,
+      signal: hiddenCloseFirstController.signal,
+    })
+    hiddenCloseFirst.input.once('close', () => hiddenCloseFirstController.abort())
+    hiddenCloseFirst.input.emit('close')
+    await expect(hiddenCloseFirstPending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+  })
+
   it('keeps internal EOF or stream error first when external cancellation follows synchronously', async () => {
     const eof = streams()
     const eofController = new AbortController()
@@ -399,6 +547,7 @@ describe('NodePromptReader', () => {
       data: success.input.listenerCount('data'),
       end: success.input.listenerCount('end'),
       error: success.input.listenerCount('error'),
+      close: success.input.listenerCount('close'),
     }
     const successPending = successReader.read('Name: ', { hidden: false })
     success.input.end('ok\n')
@@ -406,6 +555,7 @@ describe('NodePromptReader', () => {
     expect(success.input.listenerCount('data')).toBe(successBaseline.data)
     expect(success.input.listenerCount('end')).toBe(successBaseline.end)
     expect(success.input.listenerCount('error')).toBe(successBaseline.error)
+    expect(success.input.listenerCount('close')).toBe(successBaseline.close)
 
     const failure = streams()
     const failureReader = new NodePromptReader(failure.input, failure.output)
@@ -415,6 +565,7 @@ describe('NodePromptReader', () => {
     expect(failure.input.listenerCount('data')).toBe(0)
     expect(failure.input.listenerCount('end')).toBe(0)
     expect(failure.input.listenerCount('error')).toBe(0)
+    expect(failure.input.listenerCount('close')).toBe(0)
 
     const abort = streams()
     const abortReader = new NodePromptReader(abort.input, abort.output)
@@ -428,6 +579,7 @@ describe('NodePromptReader', () => {
     expect(abort.input.listenerCount('data')).toBe(0)
     expect(abort.input.listenerCount('end')).toBe(0)
     expect(abort.input.listenerCount('error')).toBe(0)
+    expect(abort.input.listenerCount('close')).toBe(0)
   })
 
   it('fails before reading when production requires an interactive terminal', async () => {

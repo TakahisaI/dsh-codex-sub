@@ -82,7 +82,7 @@ export class NodePromptReader implements PromptReader {
       return this.#readHidden(prompt, options.signal)
     }
 
-    if (this.#input.readableEnded === true) {
+    if (inputUnavailable(this.#input)) {
       throw inputFailure('eof')
     }
 
@@ -91,6 +91,7 @@ export class NodePromptReader implements PromptReader {
       ? AbortSignal.any([this.#lifetime.signal, internalAbort.signal])
       : AbortSignal.any([this.#lifetime.signal, options.signal, internalAbort.signal])
     let ended = false
+    let closed = false
     let lineCompleted = false
     let sawControlD = false
     let settled = false
@@ -130,6 +131,12 @@ export class NodePromptReader implements PromptReader {
         abortInternal(INTERNAL_EOF_REASON)
       }
     }
+    const observeClose = (): void => {
+      closed = true
+      if (!lineCompleted) {
+        abortInternal(INTERNAL_EOF_REASON)
+      }
+    }
     const observeError = (): void => {
       if (!lineCompleted) {
         abortInternal(INTERNAL_STREAM_ERROR_REASON)
@@ -146,10 +153,11 @@ export class NodePromptReader implements PromptReader {
     this.#input.on('data', observeInput)
     this.#input.once('end', observeEnd)
     this.#input.once('error', observeError)
+    this.#input.once('close', observeClose)
     let readline: ReturnType<typeof createInterface> | undefined
 
     try {
-      if (this.#input.readableEnded) {
+      if (inputUnavailable(this.#input)) {
         abortInternal(INTERNAL_EOF_REASON)
       }
       if (signal.aborted) {
@@ -164,7 +172,7 @@ export class NodePromptReader implements PromptReader {
       // sink so a stream failure cannot become an uncaught EventEmitter error.
       readline.on('error', observeReadlineError)
       const result = await readline.question(prompt, { signal })
-      if (sawControlD || (ended && !lineCompleted)) {
+      if (sawControlD || ((ended || closed) && !lineCompleted)) {
         throw inputFailure('eof')
       }
       if (result.length > MAX_PROMPT_INPUT_LENGTH) {
@@ -188,6 +196,7 @@ export class NodePromptReader implements PromptReader {
       this.#input.removeListener('data', observeInput)
       this.#input.removeListener('end', observeEnd)
       this.#input.removeListener('error', observeError)
+      this.#input.removeListener('close', observeClose)
       readline?.removeListener('error', observeReadlineError)
       readline?.close()
     }
@@ -238,6 +247,7 @@ export class NodePromptReader implements PromptReader {
         this.#input.removeListener('data', onData)
         this.#input.removeListener('end', onEnd)
         this.#input.removeListener('error', onError)
+        this.#input.removeListener('close', onClose)
         signal.removeEventListener('abort', onAbort)
         if (rawModeChanged && this.#input.isTTY === true && this.#input.setRawMode !== undefined) {
           this.#input.setRawMode(wasRaw)
@@ -302,6 +312,11 @@ export class NodePromptReader implements PromptReader {
       const onError = (): void => {
         abortInternal(INTERNAL_STREAM_ERROR_REASON)
       }
+      const onClose = (): void => {
+        if (!settled) {
+          abortInternal(INTERNAL_EOF_REASON)
+        }
+      }
       const onAbort = (): void => {
         fail(failureForSignal(signal.reason))
       }
@@ -311,6 +326,7 @@ export class NodePromptReader implements PromptReader {
       this.#input.on('data', onData)
       this.#input.once('end', onEnd)
       this.#input.once('error', onError)
+      this.#input.once('close', onClose)
       signal.addEventListener('abort', onAbort, { once: true })
 
       if (inputUnavailable(this.#input)) {
