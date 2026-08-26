@@ -244,26 +244,70 @@ export class NodePromptReader implements PromptReader {
       }
 
       const cleanup = (): void => {
-        this.#input.removeListener('data', onData)
-        this.#input.removeListener('end', onEnd)
-        this.#input.removeListener('error', onError)
-        this.#input.removeListener('close', onClose)
-        signal.removeEventListener('abort', onAbort)
-        if (rawModeChanged && this.#input.isTTY === true && this.#input.setRawMode !== undefined) {
-          this.#input.setRawMode(wasRaw)
+        const bestEffort = (effect: () => void): void => {
+          try {
+            effect()
+          } catch {
+            // Cleanup is deliberately best effort. The original prompt result
+            // remains authoritative even when a terminal hook is broken.
+          }
         }
-        if (resumed && wasPaused) {
-          this.#input.pause()
-        }
+
+        bestEffort(() => signal.removeEventListener('abort', onAbort))
+        // Keep the input error sink installed while terminal rollback runs:
+        // setRawMode/pause implementations can synchronously emit `error`.
+        bestEffort(() => {
+          if (rawModeChanged && this.#input.isTTY === true && this.#input.setRawMode !== undefined) {
+            this.#input.setRawMode(wasRaw)
+          }
+        })
+        bestEffort(() => {
+          if (resumed && wasPaused) {
+            this.#input.pause()
+          }
+        })
+        bestEffort(() => this.#input.removeListener('data', onData))
+        bestEffort(() => this.#input.removeListener('end', onEnd))
+        bestEffort(() => this.#input.removeListener('close', onClose))
+        bestEffort(() => this.#input.removeListener('error', onError))
       }
       const settle = (operation: () => void): void => {
         if (!settled) {
           settled = true
-          cleanup()
-          if (promptWritten) {
-            this.#output.write('\n')
+          try {
+            cleanup()
+          } finally {
+            if (promptWritten) {
+              const drainOutputError = (): void => undefined
+              let drainInstalled = false
+              try {
+                try {
+                  this.#output.on('error', drainOutputError)
+                  drainInstalled = true
+                } catch {
+                  // A nonstandard output may reject listener installation;
+                  // still make the write attempt and preserve the result.
+                }
+                try {
+                  this.#output.write('\n')
+                } catch {
+                  // Newline rendering is best effort and must not replace the
+                  // original answer, EOF, or caller-abort result.
+                }
+              } finally {
+                if (drainInstalled) {
+                  try {
+                    this.#output.removeListener('error', drainOutputError)
+                  } catch {
+                    // Listener cleanup itself is also best effort.
+                  }
+                }
+              }
+            }
+            // Always invoke the original operation, including after any
+            // terminal or output cleanup failure.
+            operation()
           }
-          operation()
         }
       }
       const finish = (): void => {
@@ -321,38 +365,56 @@ export class NodePromptReader implements PromptReader {
         fail(failureForSignal(signal.reason))
       }
 
-      // Attach every observer before any prompt/raw/resume side effect. This
-      // makes an EOF that arrives in the attach window a clean input failure.
-      this.#input.on('data', onData)
-      this.#input.once('end', onEnd)
-      this.#input.once('error', onError)
-      this.#input.once('close', onClose)
-      signal.addEventListener('abort', onAbort, { once: true })
+      try {
+        // Attach every observer before any prompt/raw/resume side effect. This
+        // makes an EOF that arrives in the attach window a clean input failure.
+        this.#input.on('data', onData)
+        this.#input.once('end', onEnd)
+        // Keep this listener attached until terminal rollback is complete. A
+        // broken raw-mode hook may synchronously emit an `error` event.
+        this.#input.on('error', onError)
+        this.#input.once('close', onClose)
+        signal.addEventListener('abort', onAbort, { once: true })
 
-      if (inputUnavailable(this.#input)) {
-        abortInternal(INTERNAL_EOF_REASON)
-      }
-      if (signal.aborted) {
-        fail(failureForSignal(signal.reason))
-        return
-      }
+        if (inputUnavailable(this.#input)) {
+          abortInternal(INTERNAL_EOF_REASON)
+        }
+        if (signal.aborted) {
+          fail(failureForSignal(signal.reason))
+          return
+        }
 
-      promptWritten = true
-      this.#output.write(prompt)
-      if (signal.aborted || internalAbort.signal.aborted) {
-        fail(failureForSignal(signal.reason))
-        return
+        // Mark the prompt before writing because a custom Writable may write a
+        // prefix and then throw. The trailing newline remains best effort.
+        promptWritten = true
+        this.#output.write(prompt)
+        if (signal.aborted || internalAbort.signal.aborted) {
+          fail(failureForSignal(signal.reason))
+          return
+        }
+        if (this.#input.isTTY === true && this.#input.setRawMode !== undefined) {
+          // Mark before calling the hook: implementations may change state
+          // and then throw, so cleanup must still attempt the rollback.
+          rawModeChanged = true
+          this.#input.setRawMode(true)
+        }
+        if (signal.aborted || internalAbort.signal.aborted) {
+          fail(failureForSignal(signal.reason))
+          return
+        }
+        resumed = true
+        this.#input.resume()
+      } catch (error) {
+        // Setup hooks are outside the prompt protocol and may throw arbitrary
+        // native errors. Convert them to the fixed public failure while
+        // preserving whichever EOF/abort cause already won the race.
+        if (!settled) {
+          fail(signal.aborted ? failureForSignal(signal.reason) : inputFailure('prompt_input'))
+        }
+        // A Promise executor will otherwise reject with the native error after
+        // a synchronous hook throws. The public failure above is authoritative.
+        void error
       }
-      if (this.#input.isTTY === true && this.#input.setRawMode !== undefined) {
-        rawModeChanged = true
-        this.#input.setRawMode(true)
-      }
-      if (signal.aborted || internalAbort.signal.aborted) {
-        fail(failureForSignal(signal.reason))
-        return
-      }
-      resumed = true
-      this.#input.resume()
     })
   }
 }

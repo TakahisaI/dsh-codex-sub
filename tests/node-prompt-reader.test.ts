@@ -1,3 +1,4 @@
+import { EventEmitter } from 'node:events'
 import { randomUUID } from 'node:crypto'
 import { PassThrough } from 'node:stream'
 
@@ -51,6 +52,24 @@ function ttyStreams(): ReturnType<typeof streams> & { readonly input: Instrument
     return originalPause()
   }) as InstrumentedInput['pause']
   return { ...terminal, input }
+}
+
+class ThrowingNewlineOutput extends EventEmitter {
+  write(chunk: string | Buffer): boolean {
+    if (chunk.toString() === '\n') {
+      throw new Error('newline output sentinel')
+    }
+    return true
+  }
+}
+
+class ThrowingPromptOutput extends EventEmitter {
+  write(chunk: string | Buffer): boolean {
+    if (chunk.toString() === 'Secret: ') {
+      throw new Error('prompt output sentinel')
+    }
+    return true
+  }
 }
 
 describe('NodePromptReader', () => {
@@ -340,6 +359,251 @@ describe('NodePromptReader', () => {
     expect(terminal.input.resumeCalls).toBe(1)
     expect(terminal.input.pauseCalls).toBe(baselinePause + 1)
     expect(terminal.capturedOutput()).toBe('Secret: \n')
+  })
+
+  it('keeps the hidden answer when raw restore or pause cleanup throws', async () => {
+    const rawFailure = ttyStreams()
+    const originalSetRawMode = rawFailure.input.setRawMode
+    rawFailure.input.setRawMode = (mode: boolean): void => {
+      if (!mode) {
+        rawFailure.input.isRaw = false
+        throw new Error('raw restore sentinel')
+      }
+      originalSetRawMode(mode)
+    }
+    const rawReader = new NodePromptReader(rawFailure.input, rawFailure.output)
+    const rawPending = rawReader.read('Secret: ', { hidden: true })
+    rawFailure.input.write('answer\n')
+    await expect(rawPending).resolves.toBe('answer')
+    expect(rawFailure.input.listenerCount('data')).toBe(0)
+    expect(rawFailure.input.listenerCount('end')).toBe(0)
+    expect(rawFailure.input.listenerCount('error')).toBe(0)
+    expect(rawFailure.input.listenerCount('close')).toBe(0)
+
+    const pauseFailure = ttyStreams()
+    pauseFailure.input.pause()
+    const originalPauseCalls = pauseFailure.input.pauseCalls
+    pauseFailure.input.pause = (() => {
+      pauseFailure.input.pauseCalls += 1
+      throw new Error('pause cleanup sentinel')
+    }) as InstrumentedInput['pause']
+    const pauseReader = new NodePromptReader(pauseFailure.input, pauseFailure.output)
+    const pausePending = pauseReader.read('Secret: ', { hidden: true })
+    pauseFailure.input.write('answer\n')
+    await expect(pausePending).resolves.toBe('answer')
+    expect(pauseFailure.input.pauseCalls).toBe(originalPauseCalls + 1)
+    expect(pauseFailure.input.listenerCount('error')).toBe(0)
+    expect(pauseFailure.input.listenerCount('close')).toBe(0)
+  })
+
+  it('settles and cleans up when the initial prompt write throws', async () => {
+    const terminal = ttyStreams()
+    const output = new ThrowingPromptOutput()
+    const reader = new NodePromptReader(terminal.input, output as unknown as PassThrough)
+
+    await expect(reader.read('Secret: ', { hidden: true })).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'prompt_input' },
+    })
+    expect(terminal.input.listenerCount('data')).toBe(0)
+    expect(terminal.input.listenerCount('end')).toBe(0)
+    expect(terminal.input.listenerCount('error')).toBe(0)
+    expect(terminal.input.listenerCount('close')).toBe(0)
+    expect(terminal.input.rawModeCalls).toEqual([])
+  })
+
+  it('settles and restores terminal state when raw enable throws and emits error', async () => {
+    const terminal = ttyStreams()
+    terminal.input.setRawMode = (mode: boolean): void => {
+      terminal.input.rawModeCalls.push(mode)
+      if (mode) {
+        terminal.input.isRaw = true
+        terminal.input.emit('error', new Error('raw enable sentinel'))
+        throw new Error('raw enable throw sentinel')
+      }
+      terminal.input.isRaw = false
+    }
+    const reader = new NodePromptReader(terminal.input, terminal.output)
+
+    await expect(reader.read('Secret: ', { hidden: true })).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'prompt_input' },
+    })
+    expect(terminal.input.rawModeCalls).toEqual([true, false])
+    expect(terminal.input.isRaw).toBe(false)
+    expect(terminal.input.listenerCount('data')).toBe(0)
+    expect(terminal.input.listenerCount('end')).toBe(0)
+    expect(terminal.input.listenerCount('error')).toBe(0)
+    expect(terminal.input.listenerCount('close')).toBe(0)
+  })
+
+  it('settles and cleans up when resume throws and pause rollback also throws', async () => {
+    const terminal = ttyStreams()
+    terminal.input.pause()
+    const originalResume = terminal.input.resume.bind(terminal.input)
+    terminal.input.resume = (() => {
+      originalResume()
+      throw new Error('resume sentinel')
+    }) as InstrumentedInput['resume']
+    terminal.input.pause = (() => {
+      terminal.input.pauseCalls += 1
+      throw new Error('pause rollback sentinel')
+    }) as InstrumentedInput['pause']
+    const reader = new NodePromptReader(terminal.input, terminal.output)
+
+    await expect(reader.read('Secret: ', { hidden: true })).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'prompt_input' },
+    })
+    expect(terminal.input.listenerCount('data')).toBe(0)
+    expect(terminal.input.listenerCount('end')).toBe(0)
+    expect(terminal.input.listenerCount('error')).toBe(0)
+    expect(terminal.input.listenerCount('close')).toBe(0)
+  })
+
+  it('preserves EOF while every hidden cleanup side effect fails', async () => {
+    const terminal = ttyStreams()
+    terminal.input.pause()
+    const originalSetRawMode = terminal.input.setRawMode
+    terminal.input.setRawMode = (mode: boolean): void => {
+      terminal.input.rawModeCalls.push(mode)
+      if (!mode) {
+        terminal.input.emit('error', new Error('raw restore EOF sentinel'))
+        throw new Error('raw restore EOF throw sentinel')
+      }
+      originalSetRawMode(mode)
+    }
+    terminal.input.pause = (() => {
+      terminal.input.pauseCalls += 1
+      throw new Error('pause EOF throw sentinel')
+    }) as InstrumentedInput['pause']
+    const output = new ThrowingNewlineOutput()
+    const reader = new NodePromptReader(terminal.input, output as unknown as PassThrough)
+    const pending = reader.read('Secret: ', { hidden: true })
+    terminal.input.end()
+
+    await expect(pending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(terminal.input.listenerCount('data')).toBe(0)
+    expect(terminal.input.listenerCount('end')).toBe(0)
+    expect(terminal.input.listenerCount('error')).toBe(0)
+    expect(terminal.input.listenerCount('close')).toBe(0)
+  })
+
+  it('preserves a successful answer while every hidden cleanup side effect fails', async () => {
+    const terminal = ttyStreams()
+    terminal.input.pause()
+    terminal.input.setRawMode = (mode: boolean): void => {
+      terminal.input.rawModeCalls.push(mode)
+      if (!mode) {
+        terminal.input.emit('error', new Error('raw restore success sentinel'))
+        throw new Error('raw restore success throw sentinel')
+      }
+      terminal.input.isRaw = true
+    }
+    terminal.input.pause = (() => {
+      terminal.input.pauseCalls += 1
+      throw new Error('pause success throw sentinel')
+    }) as InstrumentedInput['pause']
+    const output = new ThrowingNewlineOutput()
+    const reader = new NodePromptReader(terminal.input, output as unknown as PassThrough)
+    const pending = reader.read('Secret: ', { hidden: true })
+    terminal.input.write('answer\n')
+
+    await expect(pending).resolves.toBe('answer')
+    expect(terminal.input.listenerCount('data')).toBe(0)
+    expect(terminal.input.listenerCount('end')).toBe(0)
+    expect(terminal.input.listenerCount('error')).toBe(0)
+    expect(terminal.input.listenerCount('close')).toBe(0)
+  })
+
+  it('preserves caller abort while every hidden cleanup side effect fails', async () => {
+    const terminal = ttyStreams()
+    terminal.input.pause()
+    const originalSetRawMode = terminal.input.setRawMode
+    terminal.input.setRawMode = (mode: boolean): void => {
+      terminal.input.rawModeCalls.push(mode)
+      if (!mode) {
+        terminal.input.emit('error', new Error('raw restore abort sentinel'))
+        throw new Error('raw restore abort throw sentinel')
+      }
+      originalSetRawMode(mode)
+    }
+    terminal.input.pause = (() => {
+      terminal.input.pauseCalls += 1
+      throw new Error('pause abort throw sentinel')
+    }) as InstrumentedInput['pause']
+    const output = new ThrowingNewlineOutput()
+    const reader = new NodePromptReader(terminal.input, output as unknown as PassThrough)
+    const controller = new AbortController()
+    const pending = reader.read('Secret: ', {
+      hidden: true,
+      signal: controller.signal,
+    })
+    controller.abort()
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(terminal.input.listenerCount('data')).toBe(0)
+    expect(terminal.input.listenerCount('end')).toBe(0)
+    expect(terminal.input.listenerCount('error')).toBe(0)
+    expect(terminal.input.listenerCount('close')).toBe(0)
+  })
+
+  it('drains synchronous raw-restore errors and preserves EOF/abort causes', async () => {
+    const eof = ttyStreams()
+    const originalSetRawMode = eof.input.setRawMode
+    eof.input.setRawMode = (mode: boolean): void => {
+      if (!mode) {
+        eof.input.emit('error', new Error('raw EOF sentinel'))
+        throw new Error('raw EOF restore sentinel')
+      }
+      originalSetRawMode(mode)
+    }
+    const eofReader = new NodePromptReader(eof.input, eof.output)
+    const eofPending = eofReader.read('Secret: ', { hidden: true })
+    eof.input.end()
+    await expect(eofPending).rejects.toMatchObject({
+      code: 'CODEX_AUTH_LOGIN_FAILED',
+      safeDetails: { reason: 'eof' },
+    })
+    expect(eof.input.listenerCount('error')).toBe(0)
+    expect(eof.input.listenerCount('close')).toBe(0)
+
+    const abort = ttyStreams()
+    const originalAbortSetRawMode = abort.input.setRawMode
+    abort.input.setRawMode = (mode: boolean): void => {
+      if (!mode) {
+        abort.input.emit('error', new Error('raw abort sentinel'))
+        throw new Error('raw abort restore sentinel')
+      }
+      originalAbortSetRawMode(mode)
+    }
+    const abortReader = new NodePromptReader(abort.input, abort.output)
+    const controller = new AbortController()
+    const abortPending = abortReader.read('Secret: ', {
+      hidden: true,
+      signal: controller.signal,
+    })
+    controller.abort()
+    await expect(abortPending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(abort.input.listenerCount('error')).toBe(0)
+    expect(abort.input.listenerCount('close')).toBe(0)
+  })
+
+  it('keeps the hidden result when final newline output throws', async () => {
+    const terminal = ttyStreams()
+    const output = new ThrowingNewlineOutput()
+    const reader = new NodePromptReader(terminal.input, output as unknown as PassThrough)
+    const pending = reader.read('Secret: ', { hidden: true })
+    terminal.input.write('answer\n')
+
+    await expect(pending).resolves.toBe('answer')
+    expect(terminal.input.listenerCount('data')).toBe(0)
+    expect(terminal.input.listenerCount('end')).toBe(0)
+    expect(terminal.input.listenerCount('error')).toBe(0)
+    expect(terminal.input.listenerCount('close')).toBe(0)
   })
 
   it('maps visible empty EOF and partial lines to a safe EOF failure', async () => {
