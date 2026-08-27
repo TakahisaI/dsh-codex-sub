@@ -10,21 +10,38 @@ permissions:
   contents: read
 
 jobs:
-  check:
-    name: Node ${{ matrix.node }}
+  check-node-22-19:
+    name: Node 22.19.0
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        node:
-          - 22.19.0
-          - 24
-          - 26
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22.19.0
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+
+  check-node-24:
+    name: Node 24
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm run check
+
+  check-node-26:
+    name: Node 26
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - run: pnpm run check
@@ -87,31 +104,15 @@ jobs:
           --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
           --expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"
 
-  exact-artifact-lane:
-    name: Exact workflow artifact (${{ matrix.os }}, Node ${{ matrix.node }})
+  exact-artifact-ubuntu-22-19:
+    name: Exact workflow artifact (ubuntu-latest, Node 22.19.0)
     needs: candidate
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            node: 22.19.0
-          - os: ubuntu-latest
-            node: 24
-          - os: ubuntu-latest
-            node: 26
-          - os: macos-latest
-            node: 22.19.0
-          - os: macos-latest
-            node: 24
-          - os: macos-latest
-            node: 26
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 22.19.0
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -130,31 +131,270 @@ jobs:
           --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
           --expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"
 
-  packed-install:
-    name: Packed install (${{ matrix.os }}, Node ${{ matrix.node }})
+  exact-artifact-ubuntu-24:
+    name: Exact workflow artifact (ubuntu-latest, Node 24)
     needs: candidate
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - os: ubuntu-latest
-            node: 22.19.0
-          - os: ubuntu-latest
-            node: 24
-          - os: ubuntu-latest
-            node: 26
-          - os: macos-latest
-            node: 22.19.0
-          - os: macos-latest
-            node: 24
-          - os: macos-latest
-            node: 26
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: ${{ matrix.node }}
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:exact-artifact-lane --
+          --host-graph-mode locked-no-overrides
+          --probe-scope request-contracts
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
+          --expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"
+
+  exact-artifact-ubuntu-26:
+    name: Exact workflow artifact (ubuntu-latest, Node 26)
+    needs: candidate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:exact-artifact-lane --
+          --host-graph-mode locked-no-overrides
+          --probe-scope request-contracts
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
+          --expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"
+
+  exact-artifact-macos-22-19:
+    name: Exact workflow artifact (macos-latest, Node 22.19.0)
+    needs: candidate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:exact-artifact-lane --
+          --host-graph-mode locked-no-overrides
+          --probe-scope request-contracts
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
+          --expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"
+
+  exact-artifact-macos-24:
+    name: Exact workflow artifact (macos-latest, Node 24)
+    needs: candidate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:exact-artifact-lane --
+          --host-graph-mode locked-no-overrides
+          --probe-scope request-contracts
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
+          --expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"
+
+  exact-artifact-macos-26:
+    name: Exact workflow artifact (macos-latest, Node 26)
+    needs: candidate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:exact-artifact-lane --
+          --host-graph-mode locked-no-overrides
+          --probe-scope request-contracts
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
+          --expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"
+
+  packed-install-ubuntu-22-19:
+    name: Packed install (ubuntu-latest, Node 22.19.0)
+    needs: candidate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:packed-install --
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
+
+  packed-install-ubuntu-24:
+    name: Packed install (ubuntu-latest, Node 24)
+    needs: candidate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:packed-install --
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
+
+  packed-install-ubuntu-26:
+    name: Packed install (ubuntu-latest, Node 26)
+    needs: candidate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:packed-install --
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
+
+  packed-install-macos-22-19:
+    name: Packed install (macos-latest, Node 22.19.0)
+    needs: candidate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.19.0
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:packed-install --
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
+
+  packed-install-macos-24:
+    name: Packed install (macos-latest, Node 24)
+    needs: candidate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: dsh-codex-sub-unpublished
+          path: ${{ runner.temp }}/release-artifact
+      - id: release-artifact
+        run: >-
+          node scripts/release-artifact.mjs verify
+          --directory "$RUNNER_TEMP/release-artifact"
+          --github-output
+      - run: >-
+          pnpm run test:packed-install --
+          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"
+
+  packed-install-macos-26:
+    name: Packed install (macos-latest, Node 26)
+    needs: candidate
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 26
       - run: corepack enable
       - run: pnpm install --frozen-lockfile
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
@@ -183,12 +423,24 @@ jobs:
     name: Required CI gate
     if: ${{ always() }}
     needs:
-      - check
+      - check-node-22-19
+      - check-node-24
+      - check-node-26
       - candidate
       - candidate-lane
       - packed-candidate-lane
-      - exact-artifact-lane
-      - packed-install
+      - exact-artifact-ubuntu-22-19
+      - exact-artifact-ubuntu-24
+      - exact-artifact-ubuntu-26
+      - exact-artifact-macos-22-19
+      - exact-artifact-macos-24
+      - exact-artifact-macos-26
+      - packed-install-ubuntu-22-19
+      - packed-install-ubuntu-24
+      - packed-install-ubuntu-26
+      - packed-install-macos-22-19
+      - packed-install-macos-24
+      - packed-install-macos-26
       - dependency-review
     runs-on: ubuntu-latest
     permissions: {}
@@ -196,22 +448,46 @@ jobs:
       - name: Evaluate required CI results
         shell: bash
         env:
-          CHECK_RESULT: ${{ needs.check.result }}
+          CHECK_NODE_22_19_RESULT: ${{ needs.check-node-22-19.result }}
+          CHECK_NODE_24_RESULT: ${{ needs.check-node-24.result }}
+          CHECK_NODE_26_RESULT: ${{ needs.check-node-26.result }}
           CANDIDATE_RESULT: ${{ needs.candidate.result }}
           CANDIDATE_LANE_RESULT: ${{ needs.candidate-lane.result }}
           PACKED_CANDIDATE_LANE_RESULT: ${{ needs.packed-candidate-lane.result }}
-          EXACT_ARTIFACT_LANE_RESULT: ${{ needs.exact-artifact-lane.result }}
-          PACKED_INSTALL_RESULT: ${{ needs.packed-install.result }}
+          EXACT_ARTIFACT_UBUNTU_22_19_RESULT: ${{ needs.exact-artifact-ubuntu-22-19.result }}
+          EXACT_ARTIFACT_UBUNTU_24_RESULT: ${{ needs.exact-artifact-ubuntu-24.result }}
+          EXACT_ARTIFACT_UBUNTU_26_RESULT: ${{ needs.exact-artifact-ubuntu-26.result }}
+          EXACT_ARTIFACT_MACOS_22_19_RESULT: ${{ needs.exact-artifact-macos-22-19.result }}
+          EXACT_ARTIFACT_MACOS_24_RESULT: ${{ needs.exact-artifact-macos-24.result }}
+          EXACT_ARTIFACT_MACOS_26_RESULT: ${{ needs.exact-artifact-macos-26.result }}
+          PACKED_INSTALL_UBUNTU_22_19_RESULT: ${{ needs.packed-install-ubuntu-22-19.result }}
+          PACKED_INSTALL_UBUNTU_24_RESULT: ${{ needs.packed-install-ubuntu-24.result }}
+          PACKED_INSTALL_UBUNTU_26_RESULT: ${{ needs.packed-install-ubuntu-26.result }}
+          PACKED_INSTALL_MACOS_22_19_RESULT: ${{ needs.packed-install-macos-22-19.result }}
+          PACKED_INSTALL_MACOS_24_RESULT: ${{ needs.packed-install-macos-24.result }}
+          PACKED_INSTALL_MACOS_26_RESULT: ${{ needs.packed-install-macos-26.result }}
           DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency-review.result }}
           EVENT_NAME: ${{ github.event_name }}
         run: |
           set -euo pipefail
-          if [ "$CHECK_RESULT" != "success" ] \
+          if [ "$CHECK_NODE_22_19_RESULT" != "success" ] \
+            || [ "$CHECK_NODE_24_RESULT" != "success" ] \
+            || [ "$CHECK_NODE_26_RESULT" != "success" ] \
             || [ "$CANDIDATE_RESULT" != "success" ] \
             || [ "$CANDIDATE_LANE_RESULT" != "success" ] \
             || [ "$PACKED_CANDIDATE_LANE_RESULT" != "success" ] \
-            || [ "$EXACT_ARTIFACT_LANE_RESULT" != "success" ] \
-            || [ "$PACKED_INSTALL_RESULT" != "success" ]; then
+            || [ "$EXACT_ARTIFACT_UBUNTU_22_19_RESULT" != "success" ] \
+            || [ "$EXACT_ARTIFACT_UBUNTU_24_RESULT" != "success" ] \
+            || [ "$EXACT_ARTIFACT_UBUNTU_26_RESULT" != "success" ] \
+            || [ "$EXACT_ARTIFACT_MACOS_22_19_RESULT" != "success" ] \
+            || [ "$EXACT_ARTIFACT_MACOS_24_RESULT" != "success" ] \
+            || [ "$EXACT_ARTIFACT_MACOS_26_RESULT" != "success" ] \
+            || [ "$PACKED_INSTALL_UBUNTU_22_19_RESULT" != "success" ] \
+            || [ "$PACKED_INSTALL_UBUNTU_24_RESULT" != "success" ] \
+            || [ "$PACKED_INSTALL_UBUNTU_26_RESULT" != "success" ] \
+            || [ "$PACKED_INSTALL_MACOS_22_19_RESULT" != "success" ] \
+            || [ "$PACKED_INSTALL_MACOS_24_RESULT" != "success" ] \
+            || [ "$PACKED_INSTALL_MACOS_26_RESULT" != "success" ]; then
             echo "A required CI job did not succeed." >&2
             exit 1
           fi

@@ -35,6 +35,7 @@ import {
 } from '../scripts/release-artifact-contract.mjs'
 import { validateReleaseState } from '../scripts/release-state-contract.mjs'
 import {
+  evaluateRequiredCiResults,
   PINNED_ACTIONS,
   validateWorkflowContracts,
 } from '../scripts/workflow-contract.mjs'
@@ -97,6 +98,16 @@ function mutateCiJob(workflow, jobName, mutator) {
   const nextJob = workflow.slice(bodyStart).search(/^  [a-z][a-z0-9-]*:\s*$/mu)
   const end = nextJob < 0 ? workflow.length : bodyStart + nextJob
   return workflow.slice(0, bodyStart) + mutator(workflow.slice(bodyStart, end)) + workflow.slice(end)
+}
+
+function removeCiJob(workflow, jobName) {
+  const marker = `\n  ${jobName}:\n`
+  const start = workflow.indexOf(marker)
+  expect(start).toBeGreaterThanOrEqual(0)
+  const bodyStart = start + marker.length
+  const nextJob = workflow.slice(bodyStart).search(/^  [a-z][a-z0-9-]*:\s*$/mu)
+  const end = nextJob < 0 ? workflow.length : bodyStart + nextJob
+  return workflow.slice(0, start + 1) + workflow.slice(end)
 }
 
 describe('package tarball fail-closed validation', () => {
@@ -303,7 +314,7 @@ describe('workflow release evidence', () => {
 
   it('pins artifact actions to the reviewed v8 and v7 commit SHAs', async () => {
     const inputs = await repositoryInputs()
-    expect(inputs.ciWorkflow.match(/actions\/download-artifact@/gu)).toHaveLength(3)
+    expect(inputs.ciWorkflow.match(/actions\/download-artifact@/gu)).toHaveLength(13)
     expect(inputs.releaseWorkflow.match(/actions\/download-artifact@/gu)).toHaveLength(4)
     expect(inputs.ciWorkflow.match(/actions\/upload-artifact@/gu)).toHaveLength(1)
     expect(inputs.releaseWorkflow.match(/actions\/upload-artifact@/gu)).toHaveLength(1)
@@ -327,12 +338,24 @@ describe('workflow release evidence', () => {
   it('requires the aggregate gate to cover every other CI job', async () => {
     const inputs = await repositoryInputs()
     const gateNeeds = [
-      '      - check\n',
+      '      - check-node-22-19\n',
+      '      - check-node-24\n',
+      '      - check-node-26\n',
       '      - candidate\n',
       '      - candidate-lane\n',
       '      - packed-candidate-lane\n',
-      '      - exact-artifact-lane\n',
-      '      - packed-install\n',
+      '      - exact-artifact-ubuntu-22-19\n',
+      '      - exact-artifact-ubuntu-24\n',
+      '      - exact-artifact-ubuntu-26\n',
+      '      - exact-artifact-macos-22-19\n',
+      '      - exact-artifact-macos-24\n',
+      '      - exact-artifact-macos-26\n',
+      '      - packed-install-ubuntu-22-19\n',
+      '      - packed-install-ubuntu-24\n',
+      '      - packed-install-ubuntu-26\n',
+      '      - packed-install-macos-22-19\n',
+      '      - packed-install-macos-24\n',
+      '      - packed-install-macos-26\n',
       '      - dependency-review\n',
     ]
     for (const need of gateNeeds) {
@@ -344,8 +367,8 @@ describe('workflow release evidence', () => {
     }
 
     const duplicate = inputs.ciWorkflow.replace(
-      '      - check\n      - candidate\n',
-      '      - check\n      - check\n      - candidate\n',
+      '      - check-node-22-19\n      - check-node-24\n',
+      '      - check-node-22-19\n      - check-node-22-19\n      - check-node-24\n',
     )
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: duplicate })).toThrow(
       'CI required-ci-gate job needs must not contain duplicate job IDs.',
@@ -369,6 +392,151 @@ describe('workflow release evidence', () => {
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
       'CI workflow job set did not match the reviewed contract.',
     )
+  })
+
+  it('requires every explicit CI cell to keep its reviewed identity and topology', async () => {
+    const inputs = await repositoryInputs()
+    const cells = [
+      ['check-node-22-19', 'Node 22.19.0', 'ubuntu-latest', '22.19.0'],
+      ['check-node-24', 'Node 24', 'ubuntu-latest', '24'],
+      ['check-node-26', 'Node 26', 'ubuntu-latest', '26'],
+      ['exact-artifact-ubuntu-22-19', 'Exact workflow artifact (ubuntu-latest, Node 22.19.0)', 'ubuntu-latest', '22.19.0'],
+      ['exact-artifact-ubuntu-24', 'Exact workflow artifact (ubuntu-latest, Node 24)', 'ubuntu-latest', '24'],
+      ['exact-artifact-ubuntu-26', 'Exact workflow artifact (ubuntu-latest, Node 26)', 'ubuntu-latest', '26'],
+      ['exact-artifact-macos-22-19', 'Exact workflow artifact (macos-latest, Node 22.19.0)', 'macos-latest', '22.19.0'],
+      ['exact-artifact-macos-24', 'Exact workflow artifact (macos-latest, Node 24)', 'macos-latest', '24'],
+      ['exact-artifact-macos-26', 'Exact workflow artifact (macos-latest, Node 26)', 'macos-latest', '26'],
+      ['packed-install-ubuntu-22-19', 'Packed install (ubuntu-latest, Node 22.19.0)', 'ubuntu-latest', '22.19.0'],
+      ['packed-install-ubuntu-24', 'Packed install (ubuntu-latest, Node 24)', 'ubuntu-latest', '24'],
+      ['packed-install-ubuntu-26', 'Packed install (ubuntu-latest, Node 26)', 'ubuntu-latest', '26'],
+      ['packed-install-macos-22-19', 'Packed install (macos-latest, Node 22.19.0)', 'macos-latest', '22.19.0'],
+      ['packed-install-macos-24', 'Packed install (macos-latest, Node 24)', 'macos-latest', '24'],
+      ['packed-install-macos-26', 'Packed install (macos-latest, Node 26)', 'macos-latest', '26'],
+    ]
+    for (const [jobName, displayName, runner, node] of cells) {
+      const removed = removeCiJob(inputs.ciWorkflow, jobName)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: removed })).toThrow(
+        'CI workflow job set did not match the reviewed contract.',
+      )
+
+      const renamed = inputs.ciWorkflow.replace(`\n  ${jobName}:\n`, `\n  ${jobName}-renamed:\n`)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: renamed })).toThrow(
+        'CI workflow job set did not match the reviewed contract.',
+      )
+
+      const wrongDisplay = mutateCiJob(inputs.ciWorkflow, jobName, (job) => job.replace(
+        `    name: ${displayName}\n`,
+        '    name: Unreviewed CI cell\n',
+      ))
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongDisplay })).toThrow(
+        `CI ${jobName} job must use the reviewed display name exactly once.`,
+      )
+
+      const wrongRunner = mutateCiJob(inputs.ciWorkflow, jobName, (job) => job.replace(
+        `    runs-on: ${runner}\n`,
+        `    runs-on: ${runner === 'ubuntu-latest' ? 'macos-latest' : 'ubuntu-latest'}\n`,
+      ))
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongRunner })).toThrow(
+        `CI ${jobName} job must use the reviewed runner exactly once.`,
+      )
+
+      const wrongNode = mutateCiJob(inputs.ciWorkflow, jobName, (job) => job.replace(
+        `          node-version: ${node}\n`,
+        `          node-version: ${node === '24' ? '26' : '24'}\n`,
+      ))
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongNode })).toThrow(
+        `CI ${jobName} job must use the reviewed Node version exactly once.`,
+      )
+
+      if (jobName.startsWith('exact-artifact-')) {
+        const wrongMode = mutateCiJob(inputs.ciWorkflow, jobName, (job) => job.replace(
+          '          --host-graph-mode locked-no-overrides\n',
+          '          --host-graph-mode override-pinned\n',
+        ))
+        expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongMode })).toThrow(
+          `CI ${jobName} job must pass --host-graph-mode locked-no-overrides exactly once.`,
+        )
+      } else if (jobName.startsWith('packed-install-')) {
+        const wrongMode = mutateCiJob(inputs.ciWorkflow, jobName, (job) => job.replace(
+          '          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"\n',
+          '          --host-graph-mode locked-no-overrides\n'
+            + '          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"\n',
+        ))
+        expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongMode })).toThrow(
+          `CI ${jobName} job must not use an exact-artifact probe mode.`,
+        )
+      } else {
+        const wrongMode = mutateCiJob(inputs.ciWorkflow, jobName, (job) => job.replace(
+          '      - run: pnpm run check\n',
+          '      - run: pnpm run check -- --host-graph-mode locked-no-overrides\n',
+        ))
+        expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongMode })).toThrow(
+          `CI ${jobName} job must not use an artifact probe mode.`,
+        )
+      }
+    }
+  })
+
+  it('rejects duplicate explicit job IDs and any reintroduced CI matrix strategy', async () => {
+    const inputs = await repositoryInputs()
+    const duplicate = inputs.ciWorkflow.replace(
+      '\n  check-node-24:\n',
+      '\n  check-node-24:\n    name: Node 24\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n\n  check-node-24:\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: duplicate })).toThrow()
+
+    const strategy = mutateCiJob(inputs.ciWorkflow, 'check-node-24', (job) => job.replace(
+      '    runs-on: ubuntu-latest\n',
+      '    strategy:\n      matrix:\n        node: [24]\n    runs-on: ubuntu-latest\n',
+    ))
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: strategy })).toThrow(
+      'CI check-node-24 job must not use a matrix strategy in the active CI workflow.',
+    )
+  })
+
+  it('evaluates every explicit result independently and fails closed', () => {
+    const jobs = [
+      'check-node-22-19',
+      'check-node-24',
+      'check-node-26',
+      'candidate',
+      'candidate-lane',
+      'packed-candidate-lane',
+      'exact-artifact-ubuntu-22-19',
+      'exact-artifact-ubuntu-24',
+      'exact-artifact-ubuntu-26',
+      'exact-artifact-macos-22-19',
+      'exact-artifact-macos-24',
+      'exact-artifact-macos-26',
+      'packed-install-ubuntu-22-19',
+      'packed-install-ubuntu-24',
+      'packed-install-ubuntu-26',
+      'packed-install-macos-22-19',
+      'packed-install-macos-24',
+      'packed-install-macos-26',
+      'dependency-review',
+    ]
+    const results = Object.fromEntries(jobs.map((job) => [job, 'success']))
+    expect(evaluateRequiredCiResults(results, 'pull_request')).toBe(true)
+    expect(evaluateRequiredCiResults({ ...results, 'dependency-review': 'skipped' }, 'push')).toBe(true)
+
+    for (const job of jobs) {
+      const failed = { ...results, [job]: 'failure' }
+      expect(evaluateRequiredCiResults(failed, 'pull_request')).toBe(false)
+    }
+
+    const partialRerun = {
+      ...results,
+      'exact-artifact-ubuntu-22-19': 'failure',
+      'exact-artifact-ubuntu-24': 'success',
+    }
+    expect(evaluateRequiredCiResults(partialRerun, 'pull_request')).toBe(false)
+
+    for (const status of ['cancelled', 'skipped', 'neutral', '', 'unknown', undefined, null]) {
+      expect(evaluateRequiredCiResults({ ...results, 'packed-install-macos-26': status }, 'pull_request')).toBe(false)
+    }
+    expect(evaluateRequiredCiResults(results, 'workflow_dispatch')).toBe(false)
+    expect(evaluateRequiredCiResults(null, 'pull_request')).toBe(false)
   })
 
   it('requires the aggregate gate to use the fixed always, permissions, and action-free topology', async () => {
@@ -412,10 +580,10 @@ describe('workflow release evidence', () => {
     const mappings = [
       [
         '          CANDIDATE_RESULT: ${{ needs.candidate.result }}\n',
-        '          CANDIDATE_RESULT: ${{ needs.check.result }}\n',
+        '          CANDIDATE_RESULT: ${{ needs.check-node-24.result }}\n',
       ],
       [
-        '          PACKED_INSTALL_RESULT: ${{ needs.packed-install.result }}\n',
+        '          PACKED_INSTALL_MACOS_26_RESULT: ${{ needs.packed-install-macos-26.result }}\n',
         '',
       ],
       [
@@ -437,9 +605,9 @@ describe('workflow release evidence', () => {
     const inputs = await repositoryInputs()
     const cases = [
       [
-        '[ "$CHECK_RESULT" != "success" ]',
-        '[ "$CHECK_RESULT" == "success" ]',
-        'CI required-ci-gate job must require CHECK_RESULT to be success.',
+        '[ "$CHECK_NODE_22_19_RESULT" != "success" ]',
+        '[ "$CHECK_NODE_22_19_RESULT" == "success" ]',
+        'CI required-ci-gate job must require CHECK_NODE_22_19_RESULT to be success.',
       ],
       [
         'set -euo pipefail',
@@ -711,44 +879,51 @@ describe('workflow release evidence', () => {
     )
   })
 
-  it('requires the exact-artifact and compatibility-release six-cell matrix with explicit modes', async () => {
+  it('requires six explicit exact-artifact and packed-install CI cells while keeping the release matrix', async () => {
     const inputs = await repositoryInputs()
-    const exactCells = [
-      '          - os: ubuntu-latest\n            node: 22.19.0',
-      '          - os: ubuntu-latest\n            node: 24',
-      '          - os: ubuntu-latest\n            node: 26',
-      '          - os: macos-latest\n            node: 22.19.0',
-      '          - os: macos-latest\n            node: 24',
-      '          - os: macos-latest\n            node: 26',
+    const explicitCells = [
+      '  exact-artifact-ubuntu-22-19:\n',
+      '  exact-artifact-ubuntu-24:\n',
+      '  exact-artifact-ubuntu-26:\n',
+      '  exact-artifact-macos-22-19:\n',
+      '  exact-artifact-macos-24:\n',
+      '  exact-artifact-macos-26:\n',
+      '  packed-install-ubuntu-22-19:\n',
+      '  packed-install-ubuntu-24:\n',
+      '  packed-install-ubuntu-26:\n',
+      '  packed-install-macos-22-19:\n',
+      '  packed-install-macos-24:\n',
+      '  packed-install-macos-26:\n',
     ]
-    expect(inputs.ciWorkflow.match(/--host-graph-mode locked-no-overrides/gu)).toHaveLength(1)
+    for (const cell of explicitCells) {
+      expect(inputs.ciWorkflow).toContain(cell)
+    }
+    expect(inputs.ciWorkflow.match(/--host-graph-mode locked-no-overrides/gu)).toHaveLength(6)
     expect(inputs.ciWorkflow.match(/--host-graph-mode override-pinned/gu)).toHaveLength(1)
     expect(inputs.releaseWorkflow.match(/--host-graph-mode locked-no-overrides/gu)).toHaveLength(1)
     expect(inputs.releaseWorkflow).toContain('  compatibility-release:')
     expect(inputs.releaseWorkflow).toContain(
       '      - candidate-install\n      - compatibility-release\n',
     )
-    for (const cell of exactCells) {
-      expect(inputs.ciWorkflow).toContain(cell)
-      expect(inputs.releaseWorkflow).toContain(cell)
-    }
+    expect(inputs.ciWorkflow).not.toContain('strategy:\n')
+    expect(inputs.releaseWorkflow).toContain('strategy:\n')
   })
 
-  it('rejects a missing exact-artifact cell or a mode omission', async () => {
+  it('rejects a missing explicit artifact cell or a mode omission', async () => {
     const inputs = await repositoryInputs()
-    const missingCell = inputs.ciWorkflow.replace(
-      '          - os: macos-latest\n            node: 26\n',
-      '',
-    )
+    const missingCell = inputs.ciWorkflow.replace('  exact-artifact-macos-26:\n', '  exact-artifact-macos-26-removed:\n')
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: missingCell })).toThrow(
-      'CI exact-artifact-lane packed-install matrix did not match compatibility.json.',
+      'CI workflow job set did not match the reviewed contract.',
     )
-    const missingMode = inputs.ciWorkflow.replace(
+    const macos26ModeStart = inputs.ciWorkflow.indexOf('  exact-artifact-macos-26:\n')
+    const macos26ModeEnd = inputs.ciWorkflow.indexOf(
       '          --host-graph-mode locked-no-overrides\n',
-      '',
+      macos26ModeStart,
     )
-    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: missingMode })).toThrow(
-      'CI exact-artifact-lane must pass --host-graph-mode locked-no-overrides exactly once.',
+    const missingMacos26Mode = inputs.ciWorkflow.slice(0, macos26ModeEnd)
+      + inputs.ciWorkflow.slice(macos26ModeEnd + '          --host-graph-mode locked-no-overrides\n'.length)
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: missingMacos26Mode })).toThrow(
+      'CI exact-artifact-macos-26 job must pass --host-graph-mode locked-no-overrides exactly once.',
     )
   })
 
@@ -764,7 +939,7 @@ describe('workflow release evidence', () => {
       '          --probe-scope request-contracts\n',
     )
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: swapped })).toThrow(
-      'CI workflow must invoke the request-contracts scope exactly once.',
+      'CI workflow must invoke the request-contracts scope exactly once per exact-artifact job.',
     )
 
     const duplicate = inputs.ciWorkflow.replace(
@@ -772,7 +947,7 @@ describe('workflow release evidence', () => {
       '          --probe-scope request-contracts\n          --probe-scope request-contracts\n',
     )
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: duplicate })).toThrow(
-      'CI workflow must invoke the request-contracts scope exactly once.',
+      'CI workflow must invoke the request-contracts scope exactly once per exact-artifact job.',
     )
   })
 

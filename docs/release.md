@@ -86,9 +86,10 @@ candidate through staging. The workflow contract rejects a missing, renamed, dup
 flow-style, or cancellation-enabled concurrency declaration.
 
 Protected `main` should require the fixed CI `Required CI gate` check as the branch-protection
-boundary. That aggregate waits for every expanded CI job and fails closed on failure, cancellation,
-skip, or an unsupported event; the workflow contract requires its `needs` set to match every other
-CI job. The manually dispatched release workflow intentionally has no aggregate gate: its existing
+boundary. That aggregate directly needs every explicit CI job and fails closed on failure,
+cancellation, skip, or an unsupported event; the workflow contract requires its direct `needs` set
+to match every other CI job. Explicit job IDs prevent a partial matrix rerun from replacing an
+unresolved sibling with an aggregate matrix result. The manually dispatched release workflow intentionally has no aggregate gate: its existing
 `release-ref`, source-check, matrix, `candidate-ready`, and staging dependency chain remains the
 release-specific boundary.
 
