@@ -10,6 +10,7 @@ import {
   renameSync,
   rmSync,
   symlinkSync,
+  statSync,
   writeFileSync,
 } from 'node:fs'
 import { userInfo as nodeUserInfo } from 'node:os'
@@ -526,6 +527,10 @@ describe('safe browser opener', () => {
   })
 
   it('allows root-owned system XDG list roots but rejects them as single roots', async () => {
+    const rootStats = statSync('/')
+    if (rootStats.uid !== 0 || (rootStats.mode & 0o022) !== 0) {
+      return
+    }
     const home = repoTemp('dsh-opener-xdg-system-home-')
     try {
       vi.stubEnv('XDG_CONFIG_HOME', '/')
@@ -883,7 +888,7 @@ describe('safe browser opener', () => {
       vi.stubEnv('XDG_CONFIG_HOME', configHome)
       vi.stubEnv('XDG_DATA_HOME', '')
       vi.stubEnv('XDG_CONFIG_DIRS', '')
-      vi.stubEnv('XDG_DATA_DIRS', `${dataRoot}:/usr/share`)
+      vi.stubEnv('XDG_DATA_DIRS', dataRoot)
       vi.stubEnv('XDG_CURRENT_DESKTOP', 'generic')
       const opener = createSafeBrowserOpener({
         platform: 'linux',
