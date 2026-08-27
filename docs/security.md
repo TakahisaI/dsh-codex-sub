@@ -163,8 +163,12 @@ Mitigation:
 - dependency review and provenance checks;
 - packed-install tests that verify Host dependency identity and block provider `fetch` while signed
   out;
-- scheduled non-publishing canaries;
 - fail closed on unsupported runtime combinations.
+
+Planned follow-up (not yet implemented):
+
+- upstream public-contract drift canary ([Issue #36](https://github.com/TakahisaI/dsh-codex-sub/issues/36)) for DSH/pi-ai upstream compatibility; it is planned as a scheduled or manually triggered, non-publishing check outside blocking CI and release-approval gates;
+- published npm Alpha integrity canary ([Issue #38](https://github.com/TakahisaI/dsh-codex-sub/issues/38)) for registry, checksum, and clean-install integrity; it is planned as a scheduled or manually triggered, non-publishing check outside blocking CI and release-approval gates.
 
 ## 4. Threats outside the security boundary
 

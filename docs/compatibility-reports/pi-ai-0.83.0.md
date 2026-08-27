@@ -203,5 +203,6 @@ boundary already blocks a release, and the temporary packed experiment found no 
 question that justified using a real credential.
 
 No Alpha is justified from this spike, and no implementation/release issue should be opened until
-DSH publishes a compatible integration. When that happens, the scheduled public-contract drift
-detector should report the new DSH candidate.
+DSH publishes a compatible integration. When that happens, the non-blocking public-contract drift
+detector planned in [Issue #36](https://github.com/TakahisaI/dsh-codex-sub/issues/36) should report
+the new DSH candidate.
