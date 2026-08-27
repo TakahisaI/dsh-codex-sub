@@ -442,6 +442,109 @@ describe('safe browser opener', () => {
     }
   })
 
+  it('accepts a single trailing slash on XDG roots and emits canonical paths', async () => {
+    const home = repoTemp('dsh-opener-xdg-trailing-slash-home-')
+    const configHome = join(home, 'config-home')
+    const dataHome = join(home, 'data-home')
+    const configDirA = join(home, 'config-dir-a')
+    const configDirB = join(home, 'config-dir-b')
+    const configDirs = [configDirA, configDirB]
+    const dataDirA = join(home, 'data-dir-a')
+    const dataDirB = join(home, 'data-dir-b')
+    const dataDirs = [dataDirA, dataDirB]
+    const roots = [configHome, dataHome, ...configDirs, ...dataDirs]
+    for (const path of roots) {
+      mkdirSync(path, { mode: 0o700 })
+      chmodSync(path, 0o700)
+    }
+    chmodSync(home, 0o700)
+    try {
+      vi.stubEnv('XDG_CONFIG_HOME', `${configHome}/`)
+      vi.stubEnv('XDG_DATA_HOME', `${dataHome}/`)
+      vi.stubEnv('XDG_CONFIG_DIRS', `${configDirA}/:${configDirB}/`)
+      vi.stubEnv('XDG_DATA_DIRS', `${dataDirA}/:${dataDirB}/`)
+      const fixture = spawnFixture()
+      const pending = createSafeBrowserOpener({
+        platform: 'linux',
+        spawn: fixture.spawn,
+        userInfo: () => ({ uid: currentUid(), homedir: home }),
+      }).open('https://auth.example.test/authorize')
+      const call = fixture.calls[0]
+      if (call === undefined) {
+        throw new Error('browser spawn call missing')
+      }
+      const canonical = realpathSync.native
+      const environment = browserEnvironment(call)
+      expect(environment).toMatchObject({
+        XDG_CONFIG_HOME: canonical(configHome),
+        XDG_DATA_HOME: canonical(dataHome),
+        XDG_CONFIG_DIRS: `${canonical(configDirA)}:${canonical(configDirB)}`,
+        XDG_DATA_DIRS: `${canonical(dataDirA)}:${canonical(dataDirB)}`,
+      })
+      for (const name of ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CONFIG_DIRS', 'XDG_DATA_DIRS']) {
+        expect(environment[name]).not.toMatch(/\/$/u)
+      }
+      fixture.process.emit('close', 0, null)
+      await expect(pending).resolves.toBe(true)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('accepts the specification trailing-slash XDG_DATA_DIRS default when trusted', async () => {
+    if (process.platform !== 'linux') {
+      return
+    }
+    const systemDataRoots = ['/usr/local/share', '/usr/share']
+    if (!systemDataRoots.every((path) => {
+      try {
+        const stats = statSync(path)
+        return stats.isDirectory() && stats.uid === 0 && (stats.mode & 0o022) === 0
+      } catch {
+        return false
+      }
+    })) {
+      return
+    }
+
+    const home = repoTemp('dsh-opener-xdg-system-trailing-slash-home-')
+    const configHome = join(home, 'config-home')
+    const dataHome = join(home, 'data-home')
+    const configDirA = join(home, 'config-dir-a')
+    const configDirB = join(home, 'config-dir-b')
+    for (const path of [home, configHome, dataHome, configDirA, configDirB]) {
+      mkdirSync(path, { recursive: true, mode: 0o700 })
+      chmodSync(path, 0o700)
+    }
+    try {
+      vi.stubEnv('XDG_CONFIG_HOME', `${configHome}/`)
+      vi.stubEnv('XDG_DATA_HOME', `${dataHome}/`)
+      vi.stubEnv('XDG_CONFIG_DIRS', `${configDirA}/:${configDirB}/`)
+      vi.stubEnv('XDG_DATA_DIRS', '/usr/local/share/:/usr/share/')
+      const fixture = spawnFixture()
+      const pending = createSafeBrowserOpener({
+        platform: 'linux',
+        spawn: fixture.spawn,
+        userInfo: () => ({ uid: currentUid(), homedir: home }),
+      }).open('https://auth.example.test/authorize')
+      const call = fixture.calls[0]
+      if (call === undefined) {
+        throw new Error('browser spawn call missing')
+      }
+      const environment = browserEnvironment(call)
+      expect(environment).toMatchObject({
+        XDG_CONFIG_HOME: realpathSync.native(configHome),
+        XDG_DATA_HOME: realpathSync.native(dataHome),
+        XDG_CONFIG_DIRS: `${realpathSync.native(configDirA)}:${realpathSync.native(configDirB)}`,
+        XDG_DATA_DIRS: '/usr/local/share:/usr/share',
+      })
+      fixture.process.emit('close', 0, null)
+      await expect(pending).resolves.toBe(true)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   it('rejects ASCII-colon XDG single roots before spawning', async () => {
     const home = repoTemp('dsh-opener-xdg-colon-home-')
     const configHome = join(home, 'config:home')
@@ -515,6 +618,10 @@ describe('safe browser opener', () => {
         'relative/path',
         ' ',
         `${home}/has\ncontrol`,
+        `${home}/middle//separator`,
+        `${home}/trailing//`,
+        `${home}/dot/.`,
+        `${home}/parent/..`,
         `/${'a'.repeat(4_096)}`,
         file,
         join(home, 'does-not-exist'),

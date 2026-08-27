@@ -234,13 +234,8 @@ function safeXdgDirectoryEntry(value: string, maximumBytes: number): Validated<s
     return invalid()
   }
 
-  // XDG paths are allowed to contain non-ASCII UTF-8 names, but the lexical
-  // form must not contain empty, dot, or dot-dot components. The normalized
-  // comparison above rejects dot components, and this explicit check rejects
-  // repeated or trailing separators without imposing an ASCII-only policy.
-  if (value !== '/' && value.split('/').slice(1).some((segment) => segment.length === 0)) {
-    return invalid()
-  }
+  // The normalized comparison rejects dot components, repeated separators, and
+  // multiple trailing separators while preserving one trailing slash.
   return accepted(value)
 }
 
