@@ -850,13 +850,14 @@ describe('safe browser opener', () => {
       return
     }
     accessSync('/usr/bin/xdg-open', fsConstants.X_OK)
-    accessSync('/usr/bin/touch', fsConstants.X_OK)
+    accessSync('/bin/sh', fsConstants.X_OK)
     const home = repoTemp('dsh-opener-xdg-integration-home-')
     const configHome = join(home, 'custom-config')
     const dataRoot = join(home, 'custom-data-root')
     const defaultDataHome = join(home, '.local', 'share')
     const customApplications = join(dataRoot, 'applications')
     const fallbackApplications = join(defaultDataHome, 'applications')
+    const handlerScript = join(home, 'custom-handler.sh')
     const customMarker = join(home, 'custom-handler.marker')
     const fallbackMarker = join(home, 'fallback-handler.marker')
     mkdirSync(configHome, { mode: 0o700 })
@@ -865,6 +866,8 @@ describe('safe browser opener', () => {
     for (const path of [home, configHome, dataRoot, customApplications, defaultDataHome, fallbackApplications]) {
       chmodSync(path, 0o700)
     }
+    writeFileSync(handlerScript, '#!/bin/sh\n/usr/bin/touch "$1"\n')
+    chmodSync(handlerScript, 0o700)
     writeFileSync(join(configHome, 'mimeapps.list'), [
       '[Default Applications]',
       'x-scheme-handler/https=custom-dsh-handler.desktop;',
@@ -874,7 +877,9 @@ describe('safe browser opener', () => {
       '[Desktop Entry]',
       'Type=Application',
       'Name=DSH custom handler',
-      `Exec=/usr/bin/touch ${customMarker}`,
+      // xdg-open appends the URL to Exec. The helper deliberately consumes
+      // only the marker argument and ignores that appended URL.
+      `Exec=/bin/sh ${handlerScript} ${customMarker}`,
       '',
     ].join('\n'))
     writeFileSync(join(fallbackApplications, 'fallback-dsh-handler.desktop'), [
