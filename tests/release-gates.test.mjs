@@ -89,6 +89,16 @@ async function readReleaseWorkflow() {
   throw new Error('Release workflow was missing.')
 }
 
+function mutateCiJob(workflow, jobName, mutator) {
+  const marker = `\n  ${jobName}:\n`
+  const start = workflow.indexOf(marker)
+  expect(start).toBeGreaterThanOrEqual(0)
+  const bodyStart = start + marker.length
+  const nextJob = workflow.slice(bodyStart).search(/^  [a-z][a-z0-9-]*:\s*$/mu)
+  const end = nextJob < 0 ? workflow.length : bodyStart + nextJob
+  return workflow.slice(0, bodyStart) + mutator(workflow.slice(bodyStart, end)) + workflow.slice(end)
+}
+
 describe('package tarball fail-closed validation', () => {
   it('rejects relative paths before reading the filesystem', async () => {
     await expect(validatePackageTarball('candidate.tgz')).rejects.toThrow(
@@ -454,6 +464,93 @@ describe('workflow release evidence', () => {
     }
   })
 
+  it('requires the aggregate gate shell to match the reviewed script exactly', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      [
+        'if false wrapper',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '          set -euo pipefail\n',
+          '          set -euo pipefail\n          if false; then\n',
+        )),
+        'CI required-ci-gate job must use the reviewed fail-closed script exactly.',
+      ],
+      [
+        'exit immediately',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '          set -euo pipefail\n',
+          '          set -euo pipefail\n          exit 0\n',
+        )),
+        'CI required-ci-gate job shell must not mask a failed result.',
+      ],
+      [
+        'mask an error',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '            echo "A required CI job did not succeed." >&2\n',
+          '            echo "A required CI job did not succeed." >&2 || true\n',
+        )),
+        'CI required-ci-gate job shell must not mask a failed result.',
+      ],
+      [
+        'override exit function',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '          set -euo pipefail\n',
+          '          set -euo pipefail\n          exit() { :; }\n',
+        )),
+        'CI required-ci-gate job must use the reviewed fail-closed script exactly.',
+      ],
+      [
+        'disable errexit',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '          set -euo pipefail\n',
+          '          set -euo pipefail\n          set +e\n',
+        )),
+        'CI required-ci-gate job must use the reviewed fail-closed script exactly.',
+      ],
+      [
+        'extra command',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '          esac\n',
+          '          esac\n          echo unexpected\n',
+        )),
+        'CI required-ci-gate job must use the reviewed fail-closed script exactly.',
+      ],
+      [
+        'trailing whitespace',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '          set -euo pipefail\n',
+          '          set -euo pipefail \n',
+        )),
+        'CI required-ci-gate job must use the reviewed fail-closed script exactly.',
+      ],
+    ]
+    for (const [label, mutate, expected] of cases) {
+      const ciWorkflow = mutate(inputs.ciWorkflow)
+      expect(ciWorkflow, label).not.toBe(inputs.ciWorkflow)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(expected)
+    }
+  })
+
+  it('accepts only the reviewed gate script with LF or CRLF and one optional final newline', async () => {
+    const inputs = await repositoryInputs()
+    const withoutFinalNewline = inputs.ciWorkflow.replace(/\n$/u, '')
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: withoutFinalNewline })).not.toThrow()
+
+    const crlf = inputs.ciWorkflow.replace(/\n/gu, '\r\n')
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: crlf })).not.toThrow()
+
+    const crlfWithoutFinalNewline = crlf.replace(/\r\n$/u, '')
+    expect(() => validateWorkflowContracts({
+      ...inputs,
+      ciWorkflow: crlfWithoutFinalNewline,
+    })).not.toThrow()
+
+    expect(() => validateWorkflowContracts({
+      ...inputs,
+      ciWorkflow: `${inputs.ciWorkflow}\n`,
+    })).toThrow('CI required-ci-gate job must use the reviewed fail-closed script exactly.')
+  })
+
   it('keeps dependency review conditional only on pull requests and forbids ignored checks', async () => {
     const inputs = await repositoryInputs()
     const wrongCondition = inputs.ciWorkflow.replace(
@@ -478,6 +575,139 @@ describe('workflow release evidence', () => {
     )
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: conditional })).toThrow(
       'CI candidate job must not have a job-level condition.',
+    )
+  })
+
+  it('rejects quoted job and step skip or ignore controls semantically', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      [
+        'gate job continue-on-error',
+        'required-ci-gate',
+        (job) => job.replace(
+          '    name: Required CI gate\n',
+          '    \'continue-on-error\': true\n    name: Required CI gate\n',
+        ),
+        'CI required-ci-gate job must not ignore a failed check.',
+      ],
+      [
+        'gate step continue-on-error',
+        'required-ci-gate',
+        (job) => job.replace(
+          '      - name: Evaluate required CI results\n',
+          '      - name: Evaluate required CI results\n        "continue-on-error": true\n',
+        ),
+        'CI required-ci-gate job steps must not skip or ignore a failed check.',
+      ],
+      [
+        'gate step if',
+        'required-ci-gate',
+        (job) => job.replace(
+          '      - name: Evaluate required CI results\n',
+          '      - name: Evaluate required CI results\n        \'if\': false\n',
+        ),
+        'CI required-ci-gate job steps must not skip or ignore a failed check.',
+      ],
+      [
+        'candidate job if',
+        'candidate',
+        (job) => job.replace(
+          '    name: Build candidate artifact\n',
+          '    "if": always()\n    name: Build candidate artifact\n',
+        ),
+        'CI candidate job must not have a job-level condition.',
+      ],
+      [
+        'candidate job continue-on-error',
+        'candidate',
+        (job) => job.replace(
+          '    name: Build candidate artifact\n',
+          '    \'continue-on-error\': true\n    name: Build candidate artifact\n',
+        ),
+        'CI candidate job must not ignore a failed check.',
+      ],
+      [
+        'candidate step if',
+        'candidate',
+        (job) => job.replace(
+          '      - run: corepack enable\n',
+          '      - run: corepack enable\n        "if": false\n',
+        ),
+        'CI candidate job steps must not skip or ignore a failed check.',
+      ],
+      [
+        'candidate step continue-on-error',
+        'candidate',
+        (job) => job.replace(
+          '      - run: corepack enable\n',
+          '      - run: corepack enable\n        \'continue-on-error\': true\n',
+        ),
+        'CI candidate job steps must not skip or ignore a failed check.',
+      ],
+      [
+        'dependency-review step if',
+        'dependency-review',
+        (job) => job.replace(
+          `      - uses: ${PINNED_ACTIONS.checkout} # v7.0.1\n`,
+          `      - uses: ${PINNED_ACTIONS.checkout} # v7.0.1\n        "if": false\n`,
+        ),
+        'CI dependency-review job steps must not skip or ignore a failed check.',
+      ],
+      [
+        'dependency-review step continue-on-error',
+        'dependency-review',
+        (job) => job.replace(
+          `      - uses: ${PINNED_ACTIONS.checkout} # v7.0.1\n`,
+          `      - uses: ${PINNED_ACTIONS.checkout} # v7.0.1\n        'continue-on-error': true\n`,
+        ),
+        'CI dependency-review job steps must not skip or ignore a failed check.',
+      ],
+    ]
+    for (const [label, jobName, mutateJob, expected] of cases) {
+      const ciWorkflow = mutateCiJob(inputs.ciWorkflow, jobName, mutateJob)
+      expect(ciWorkflow, label).not.toBe(inputs.ciWorkflow)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(expected)
+    }
+  })
+
+  it('ignores comments and scalar content while enforcing the gate scalar exactly', async () => {
+    const inputs = await repositoryInputs()
+    const comment = mutateCiJob(inputs.ciWorkflow, 'candidate', (job) => job.replace(
+      '    name: Build candidate artifact\n',
+      '    # if: always()\n    name: Build candidate artifact\n',
+    ))
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: comment })).not.toThrow()
+
+    const scalar = mutateCiJob(inputs.ciWorkflow, 'candidate', (job) => job.replace(
+      '      - run: corepack enable\n',
+      '      - name: "if: always() continue-on-error: true"\n        run: corepack enable\n',
+    ))
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: scalar })).not.toThrow()
+
+    const gateScalar = mutateCiJob(inputs.ciWorkflow, 'required-ci-gate', (job) => job.replace(
+      '          set -euo pipefail\n',
+      '          set -euo pipefail\n          echo "if: always()"\n',
+    ))
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: gateScalar })).toThrow(
+      'CI required-ci-gate job must use the reviewed fail-closed script exactly.',
+    )
+  })
+
+  it('fails closed for duplicate keys and aliases in the CI workflow YAML', async () => {
+    const inputs = await repositoryInputs()
+    const duplicate = mutateCiJob(inputs.ciWorkflow, 'candidate', (job) => job.replace(
+      '      - run: corepack enable\n',
+      '      - run: corepack enable\n        name: first\n        name: second\n',
+    ))
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: duplicate })).toThrow(
+      'CI workflow YAML could not be parsed.',
+    )
+
+    const alias = inputs.ciWorkflow
+      .replace('    name: Build candidate artifact\n', '    name: &candidate-name Build candidate artifact\n')
+      .replace('    name: DSH rc.1 candidate lane\n', '    name: *candidate-name\n')
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: alias })).toThrow(
+      'CI workflow YAML could not be parsed.',
     )
   })
 

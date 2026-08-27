@@ -1,3 +1,5 @@
+import { parseDocument } from 'yaml'
+
 const PLATFORM_RUNNERS = Object.freeze({
   darwin: 'macos-latest',
   linux: 'ubuntu-latest',
@@ -21,6 +23,36 @@ const REQUIRED_CI_GATE_ENV = Object.freeze([
   ['PACKED_INSTALL_RESULT', '${{ needs.packed-install.result }}'],
   ['DEPENDENCY_REVIEW_RESULT', '${{ needs.dependency-review.result }}'],
   ['EVENT_NAME', '${{ github.event_name }}'],
+])
+const REQUIRED_CI_GATE_SCRIPT_LINES = Object.freeze([
+  'set -euo pipefail',
+  'if [ "$CHECK_RESULT" != "success" ] \\',
+  '  || [ "$CANDIDATE_RESULT" != "success" ] \\',
+  '  || [ "$CANDIDATE_LANE_RESULT" != "success" ] \\',
+  '  || [ "$PACKED_CANDIDATE_LANE_RESULT" != "success" ] \\',
+  '  || [ "$EXACT_ARTIFACT_LANE_RESULT" != "success" ] \\',
+  '  || [ "$PACKED_INSTALL_RESULT" != "success" ]; then',
+  '  echo "A required CI job did not succeed." >&2',
+  '  exit 1',
+  'fi',
+  'case "$EVENT_NAME" in',
+  '  pull_request)',
+  '    if [ "$DEPENDENCY_REVIEW_RESULT" != "success" ]; then',
+  '      echo "Dependency review did not succeed on a pull request." >&2',
+  '      exit 1',
+  '    fi',
+  '    ;;',
+  '  push)',
+  '    if [ "$DEPENDENCY_REVIEW_RESULT" != "skipped" ]; then',
+  '      echo "Dependency review must be skipped on a push." >&2',
+  '      exit 1',
+  '    fi',
+  '    ;;',
+  '  *)',
+  '    echo "Unsupported CI event." >&2',
+  '    exit 1',
+  '    ;;',
+  'esac',
 ])
 export const PINNED_ACTIONS = Object.freeze({
   checkout: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
@@ -58,14 +90,14 @@ export function expectedPackedInstallMatrix(compatibility) {
 }
 
 function jobBody(workflow, jobName) {
-  const marker = `\n  ${jobName}:\n`
-  const start = workflow.indexOf(marker)
-  invariant(start >= 0, `Workflow job was missing: ${jobName}.`)
-  const bodyStart = start + marker.length
-  const nextJob = workflow.slice(bodyStart).search(/^  [a-z][a-z0-9-]*:\s*$/mu)
-  return nextJob < 0
-    ? workflow.slice(bodyStart)
-    : workflow.slice(bodyStart, bodyStart + nextJob)
+  const lines = workflow.split(/\r?\n/u)
+  const jobIndex = lines.findIndex((line) => line === `  ${jobName}:`)
+  invariant(jobIndex >= 0, `Workflow job was missing: ${jobName}.`)
+  const nextJob = lines.slice(jobIndex + 1)
+    .findIndex((line) => /^  [a-z][a-z0-9-]*:\s*$/u.test(line))
+  const bodyEnd = nextJob < 0 ? lines.length : jobIndex + 1 + nextJob
+  const body = lines.slice(jobIndex + 1, bodyEnd).join('\n')
+  return nextJob < 0 ? body : `${body}\n`
 }
 
 function workflowJobs(workflow) {
@@ -98,10 +130,10 @@ function assertExactJobSet(workflow, expected, label) {
 }
 
 function workflowJobsBody(workflow) {
-  const marker = '\njobs:\n'
-  const start = workflow.indexOf(marker)
-  invariant(start >= 0, 'Workflow jobs were missing.')
-  return workflow.slice(start + marker.length)
+  const lines = workflow.split(/\r?\n/u)
+  const jobsIndex = lines.findIndex((line) => line === 'jobs:')
+  invariant(jobsIndex >= 0, 'Workflow jobs were missing.')
+  return lines.slice(jobsIndex + 1).join('\n')
 }
 
 function matrixCells(job) {
@@ -572,10 +604,56 @@ function parseGateEnvironment(job, label) {
 
 function gateShellBody(job, label) {
   const lines = job.split(/\r?\n/u)
-  const runIndex = lines.findIndex((line) => line === '        run: |')
-  invariant(runIndex >= 0, `${label} must contain one literal bash script.`)
+  if (lines.at(-1) === '') {
+    lines.pop()
+  }
+  const runIndexes = lines
+    .map((line, index) => ({ index, line }))
+    .filter(({ line }) => line === '        run: |')
+    .map(({ index }) => index)
+  const exactError = `${label} must use the reviewed fail-closed script exactly.`
+  invariant(runIndexes.length === 1, exactError)
+  const runIndex = runIndexes[0]
+  invariant(runIndex !== undefined, exactError)
   const runEnd = blockEnd(lines, runIndex + 1, 8)
-  return lines.slice(runIndex + 1, runEnd).map((line) => line.trim()).join('\n')
+  const payload = lines.slice(runIndex + 1, runEnd)
+  invariant(payload.every((line) => /^ {10}/u.test(line)), exactError)
+  return payload.map((line) => line.slice(10))
+}
+
+function isMapping(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function parseCiWorkflowTopology(workflow) {
+  let document
+  try {
+    document = parseDocument(workflow, { uniqueKeys: true })
+  } catch {
+    throw new Error('CI workflow YAML could not be parsed.')
+  }
+  invariant(document.errors.length === 0, 'CI workflow YAML could not be parsed.')
+
+  let value
+  try {
+    value = document.toJS({ maxAliasCount: 0 })
+  } catch {
+    throw new Error('CI workflow YAML could not be parsed.')
+  }
+  invariant(isMapping(value), 'CI workflow YAML root must be a mapping.')
+  const jobs = Object.hasOwn(value, 'jobs') ? value.jobs : undefined
+  invariant(isMapping(jobs), 'CI workflow jobs must be a mapping.')
+  for (const [name, job] of Object.entries(jobs)) {
+    invariant(isMapping(job), `CI ${name} job must be a mapping.`)
+    invariant(
+      Object.hasOwn(job, 'steps') && Array.isArray(job.steps),
+      `CI ${name} job steps must be a sequence.`,
+    )
+    for (const step of job.steps) {
+      invariant(isMapping(step), `CI ${name} job steps must be mappings.`)
+    }
+  }
+  return jobs
 }
 
 function assertRequiredCiGateJob(job, expectedNeeds) {
@@ -626,7 +704,8 @@ function assertRequiredCiGateJob(job, expectedNeeds) {
   invariant(stepLines.length === 1, `${label} must contain exactly one step.`)
   parseGateEnvironment(job, label)
 
-  const shell = gateShellBody(job, label)
+  const shellLines = gateShellBody(job, label)
+  const shell = shellLines.join('\n')
   invariant(
     count(shell, 'set -euo pipefail') === 1,
     `${label} must enable strict shell failure handling.`,
@@ -651,20 +730,31 @@ function assertRequiredCiGateJob(job, expectedNeeds) {
     !shell.includes('|| true') && !shell.includes('exit 0') && !shell.includes('continue'),
     `${label} shell must not mask a failed result.`,
   )
+  invariant(
+    JSON.stringify(shellLines) === JSON.stringify(REQUIRED_CI_GATE_SCRIPT_LINES),
+    `${label} must use the reviewed fail-closed script exactly.`,
+  )
 }
 
 function assertCiJobTopology(workflow) {
-  for (const job of workflowJobs(workflow)) {
-    const label = `CI ${job.name} job`
+  const jobs = parseCiWorkflowTopology(workflow)
+  for (const [name, job] of Object.entries(jobs)) {
+    const label = `CI ${name} job`
     invariant(
-      !/^\s+continue-on-error\s*:/mu.test(job.body),
+      !Object.hasOwn(job, 'continue-on-error'),
       `${label} must not ignore a failed check.`,
     )
-    if (job.name === REQUIRED_CI_GATE_JOB) {
+    for (const step of job.steps) {
+      invariant(
+        !Object.hasOwn(step, 'if') && !Object.hasOwn(step, 'continue-on-error'),
+        `${label} steps must not skip or ignore a failed check.`,
+      )
+    }
+    if (name === REQUIRED_CI_GATE_JOB) {
       continue
     }
-    if (job.name === 'dependency-review') {
-      const directIfLines = job.body.split(/\r?\n/u)
+    if (name === 'dependency-review') {
+      const directIfLines = jobBody(workflow, name).split(/\r?\n/u)
         .filter((line) => /^    if\s*:/u.test(line))
       invariant(
         directIfLines.length === 1
@@ -674,7 +764,7 @@ function assertCiJobTopology(workflow) {
       continue
     }
     invariant(
-      !/^    if\s*:/mu.test(job.body),
+      !Object.hasOwn(job, 'if'),
       `${label} must not have a job-level condition.`,
     )
   }
