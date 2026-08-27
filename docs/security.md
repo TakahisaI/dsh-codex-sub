@@ -125,10 +125,14 @@ Mitigation during CLI login:
 - open a validated authorization destination only after an explicit Enter confirmation;
 - use only the absolute `/usr/bin/open` (macOS) or `/usr/bin/xdg-open` (Linux) opener with
   `shell: false`, ignored stdio, a bounded timeout, and cancellation cleanup. Linux receives exactly
-  `PATH=/usr/bin:/bin`; `HOME` and XDG config/data roots are derived from the canonical home
-  returned by `os.userInfo()` only after matching real/effective UIDs, owner, permissions, and
-  trusted ancestor checks pass. Ambient `HOME`, XDG roots, `BROWSER`, loader variables, shell
-  startup files, Node injection, and all other ambient values are omitted. `XDG_RUNTIME_DIR` is
+  `PATH=/usr/bin:/bin`; `HOME` is derived from the canonical home returned by `os.userInfo()` only
+  after matching real/effective UIDs, owner, permissions, and trusted ancestor checks pass. XDG
+  config/data roots use the specification defaults only when their ambient value is unset or exactly
+  empty; every non-empty single or list is canonicalized and checked for UTF-8/path/list bounds,
+  directory type, owner, mode, and trusted ancestors, with any invalid list entry rejecting the
+  whole opener. Only these validated canonical roots are passed to the child. Ambient `HOME`,
+  unvalidated XDG roots, `BROWSER`, loader variables, shell startup files, Node injection, and all
+  other ambient values are omitted. `XDG_RUNTIME_DIR` is
   copied only when its absolute source path passes lexical checks, its final component is not a
   symlink, and its canonical `realpath` is a current-user-owned `0700` directory whose ancestor
   chain is root/current-user-owned and not group/world writable. Local `DISPLAY` must match

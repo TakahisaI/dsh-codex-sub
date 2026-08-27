@@ -9,12 +9,22 @@ const BROWSER_OPEN_TIMEOUT_MS = 5_000
 const LATE_ERROR_DRAIN_MS = 5_000
 const FIXED_BROWSER_PATH = '/usr/bin:/bin'
 const MAX_RUNTIME_DIRECTORY_LENGTH = 4_096
+const MAX_XDG_PATH_LENGTH = 4_096
+const MAX_XDG_LIST_LENGTH = 16_384
+const MAX_XDG_LIST_ENTRIES = 32
 const MAX_WAYLAND_DISPLAY_LENGTH = 128
 const MAX_DISPLAY_LENGTH = 64
 const DESKTOP_NAME_PATTERN = /^[A-Za-z0-9_.:-]{1,128}$/u
 const WAYLAND_DISPLAY_PATTERN = /^wayland-[0-9]+$/u
 const DISPLAY_PATTERN = /^:[0-9]+(?:\.[0-9]+)?$/u
 const UNIX_PATH_SEGMENT_PATTERN = /^[A-Za-z0-9_.-]+$/u
+
+type Validated<T> =
+  | { readonly ok: true; readonly value: T }
+  | { readonly ok: false }
+
+const invalid = <T>(): Validated<T> => ({ ok: false })
+const accepted = <T>(value: T): Validated<T> => ({ ok: true, value })
 
 interface BrowserUserInfo {
   readonly uid: number
@@ -212,6 +222,212 @@ function privateHomeDirectory(value: string | undefined, uid: number): string | 
   return canonicalPrivateDirectory(value, uid, false)
 }
 
+function safeXdgPath(value: string, maximumBytes: number): Validated<string> {
+  if (
+    value.length === 0
+    || Buffer.byteLength(value, 'utf8') > maximumBytes
+    || !value.startsWith('/')
+    || hasControlCharacters(value)
+    || posixPath.normalize(value) !== value
+  ) {
+    return invalid()
+  }
+
+  // XDG paths are allowed to contain non-ASCII UTF-8 names, but the lexical
+  // form must not contain empty, dot, or dot-dot components. The normalized
+  // comparison above rejects dot components, and this explicit check rejects
+  // repeated or trailing separators without imposing an ASCII-only policy.
+  if (value !== '/' && value.split('/').slice(1).some((segment) => segment.length === 0)) {
+    return invalid()
+  }
+  return accepted(value)
+}
+
+function isPathWithin(path: string, directory: string): boolean {
+  return path === directory || path.startsWith(`${directory}/`)
+}
+
+function canonicalXdgDirectory(
+  value: string,
+  uid: number,
+  home: string,
+  policy: 'single' | 'list',
+): Validated<string> {
+  const lexical = safeXdgPath(value, MAX_XDG_PATH_LENGTH)
+  if (!lexical.ok) {
+    return invalid()
+  }
+
+  try {
+    // A source symlink is permitted for XDG roots, but only the resolved
+    // canonical path is ever passed to xdg-open. All trust checks therefore
+    // operate on the resolved target and its ancestors.
+    const canonical = realpathSync.native(lexical.value)
+    const canonicalPath = safeXdgPath(canonical, MAX_XDG_PATH_LENGTH)
+    if (!canonicalPath.ok) {
+      return invalid()
+    }
+    const stats = lstatSync(canonicalPath.value)
+    if (
+      !stats.isDirectory()
+      || stats.isSymbolicLink()
+      || (stats.mode & 0o022) !== 0
+    ) {
+      return invalid()
+    }
+
+    if (policy === 'single') {
+      if (stats.uid !== uid || !isPathWithin(canonicalPath.value, home)) {
+        return invalid()
+      }
+      return trustedAncestors(canonicalPath.value, uid)
+        ? accepted(canonicalPath.value)
+        : invalid()
+    }
+
+    if (stats.uid === 0) {
+      // A root-owned XDG list entry is a system root. Its entire canonical
+      // ancestor chain must remain root-owned, so a user-owned parent cannot
+      // smuggle a root-owned target into the child environment.
+      return trustedRootAncestors(canonicalPath.value)
+        ? accepted(canonicalPath.value)
+        : invalid()
+    }
+    if (stats.uid !== uid || !isPathWithin(canonicalPath.value, home)) {
+      return invalid()
+    }
+    return trustedAncestors(canonicalPath.value, uid)
+      ? accepted(canonicalPath.value)
+      : invalid()
+  } catch {
+    return invalid()
+  }
+}
+
+function trustedRootAncestors(path: string): boolean {
+  let current = path
+  while (true) {
+    let stats
+    try {
+      stats = lstatSync(current)
+    } catch {
+      return false
+    }
+    if (
+      stats.isSymbolicLink()
+      || !stats.isDirectory()
+      || stats.uid !== 0
+      || (stats.mode & 0o022) !== 0
+    ) {
+      return false
+    }
+    const parent = posixPath.dirname(current)
+    if (parent === current) {
+      return true
+    }
+    current = parent
+  }
+}
+
+function validatedXdgSingle(
+  value: string | undefined,
+  defaultValue: string,
+  uid: number,
+  home: string,
+): Validated<string> {
+  if (value === undefined || value === '') {
+    return safeXdgPath(defaultValue, MAX_XDG_PATH_LENGTH)
+  }
+  return canonicalXdgDirectory(value, uid, home, 'single')
+}
+
+function validatedXdgList(
+  value: string | undefined,
+  defaultValue: string,
+  uid: number,
+  home: string,
+): Validated<string> {
+  if (value === undefined || value === '') {
+    return safeXdgPath(defaultValue, MAX_XDG_LIST_LENGTH)
+  }
+  if (Buffer.byteLength(value, 'utf8') > MAX_XDG_LIST_LENGTH) {
+    return invalid()
+  }
+
+  const entries = value.split(':')
+  if (
+    entries.length === 0
+    || entries.length > MAX_XDG_LIST_ENTRIES
+    || entries.some((entry) => entry.length === 0)
+  ) {
+    return invalid()
+  }
+
+  const canonicalEntries: string[] = []
+  const seen = new Set<string>()
+  for (const entry of entries) {
+    const canonical = canonicalXdgDirectory(entry, uid, home, 'list')
+    if (!canonical.ok) {
+      return invalid()
+    }
+    if (!seen.has(canonical.value)) {
+      seen.add(canonical.value)
+      canonicalEntries.push(canonical.value)
+    }
+  }
+
+  const joined = canonicalEntries.join(':')
+  return Buffer.byteLength(joined, 'utf8') <= MAX_XDG_LIST_LENGTH
+    ? accepted(joined)
+    : invalid()
+}
+
+interface ValidatedXdgEnvironment {
+  readonly XDG_CONFIG_HOME: string
+  readonly XDG_DATA_HOME: string
+  readonly XDG_CONFIG_DIRS: string
+  readonly XDG_DATA_DIRS: string
+}
+
+function validatedXdgEnvironment(
+  home: string,
+  uid: number,
+): Validated<ValidatedXdgEnvironment> {
+  const configHome = validatedXdgSingle(
+    process.env['XDG_CONFIG_HOME'],
+    posixPath.join(home, '.config'),
+    uid,
+    home,
+  )
+  const dataHome = validatedXdgSingle(
+    process.env['XDG_DATA_HOME'],
+    posixPath.join(home, '.local', 'share'),
+    uid,
+    home,
+  )
+  const configDirs = validatedXdgList(
+    process.env['XDG_CONFIG_DIRS'],
+    '/etc/xdg',
+    uid,
+    home,
+  )
+  const dataDirs = validatedXdgList(
+    process.env['XDG_DATA_DIRS'],
+    '/usr/local/share:/usr/share',
+    uid,
+    home,
+  )
+  if (!configHome.ok || !dataHome.ok || !configDirs.ok || !dataDirs.ok) {
+    return invalid()
+  }
+  return accepted({
+    XDG_CONFIG_HOME: configHome.value,
+    XDG_DATA_HOME: dataHome.value,
+    XDG_CONFIG_DIRS: configDirs.value,
+    XDG_DATA_DIRS: dataDirs.value,
+  })
+}
+
 function privateRuntimeSocket(runtime: string, name: string, uid: number): string | undefined {
   const socketPath = safeUnixPath(posixPath.join(runtime, name))
   if (socketPath === undefined) {
@@ -263,10 +479,11 @@ function browserEnvironment(
     return undefined
   }
   environment['HOME'] = home
-  environment['XDG_CONFIG_HOME'] = posixPath.join(home, '.config')
-  environment['XDG_DATA_HOME'] = posixPath.join(home, '.local', 'share')
-  environment['XDG_CONFIG_DIRS'] = '/etc/xdg'
-  environment['XDG_DATA_DIRS'] = '/usr/local/share:/usr/share'
+  const xdg = validatedXdgEnvironment(home, user.uid)
+  if (!xdg.ok) {
+    return undefined
+  }
+  Object.assign(environment, xdg.value)
 
   const runtime = privateRuntimeDirectory(process.env['XDG_RUNTIME_DIR'], user.uid)
   const display = process.env['DISPLAY']

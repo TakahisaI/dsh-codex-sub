@@ -252,9 +252,12 @@ ADR 0016.
 no user information, keeps a destination only for the next manual-code prompt, and asks for an
 explicit empty Enter before invoking the fixed shell-free macOS/Linux default-browser opener.
 The opener uses absolute `/usr/bin/open` or `/usr/bin/xdg-open` paths and a sanitized environment
-(`PATH=/usr/bin:/bin`, a canonical trusted OS-account home and fixed XDG roots, plus only validated
-local Linux desktop/session values; constructed DBus paths use normalized ASCII-safe runtime
-segments). Unsupported,
+(`PATH=/usr/bin:/bin`, a canonical trusted OS-account home, and XDG roots where only unset or
+exactly empty values receive specification defaults; every non-empty single or list is validated,
+canonicalized, and checked for path/list bounds, directory type, owner, mode, and trusted ancestors
+before being passed only in canonical form, plus only validated local Linux desktop/session values;
+constructed DBus paths use normalized ASCII-safe runtime segments). Any invalid XDG value rejects the
+opener and uses the manual fallback. Unsupported,
 route-less, or failed launches fall back to manual opening without native error details. The
 native child is unrefed immediately; its five-second wait remains referenced until settlement and
 SIGTERM is the only termination attempt. The explicit Enter confirmation authorizes disclosure of

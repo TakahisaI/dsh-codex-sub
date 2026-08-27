@@ -62,9 +62,13 @@ instructions. The detached child is unrefed immediately, while the bounded open 
 referenced until settlement and only SIGTERM is attempted.
 
 On Linux, the environment also uses the canonical, trusted home directory reported by the OS
-account (`os.userInfo()`), with fixed XDG config/data roots; ambient `HOME` and XDG roots are not
-trusted. Real and effective UIDs must match, runtime/home ancestors must not be group/world
-writable, and the runtime directory itself must be a current-user-owned `0700` directory. The
+account (`os.userInfo()`). XDG config/data roots use specification defaults only when their values
+are unset or exactly empty; every non-empty single or list is canonicalized and checked for path and
+list bounds, directory type, owner, mode, and trusted ancestors, and one invalid list entry rejects
+the entire opener. Only validated canonical roots are passed to the child; ambient `HOME` and
+unvalidated XDG roots are not trusted. Real and effective UIDs must match, runtime/home ancestors
+must not be group/world writable, and the runtime directory itself must be a current-user-owned
+`0700` directory. The
 validated authorization URL is intentionally disclosed to that OS account's configured default
 `.desktop` handler through the fixed opener. This is an explicit user-visible handoff; the opener
 only requests the eventual default-handler action and does not claim to monitor or guarantee a
