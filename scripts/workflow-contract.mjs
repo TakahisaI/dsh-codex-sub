@@ -31,7 +31,7 @@ const REQUIRED_CI_JOBS = Object.freeze([
   'dependency-review',
   REQUIRED_CI_GATE_JOB,
 ])
-const CI_EXPLICIT_JOB_SPECS = Object.freeze([
+export const CI_EXPLICIT_JOB_SPECS = Object.freeze([
   { name: 'check-node-22-19', displayName: 'Node 22.19.0', runner: 'ubuntu-latest', node: '22.19.0', kind: 'check' },
   { name: 'check-node-24', displayName: 'Node 24', runner: 'ubuntu-latest', node: '24', kind: 'check' },
   { name: 'check-node-26', displayName: 'Node 26', runner: 'ubuntu-latest', node: '26', kind: 'check' },
@@ -140,6 +140,43 @@ export function expectedPackedInstallMatrix(compatibility) {
     invariant(runner !== undefined, `Unsupported CI platform identifier: ${String(platform)}.`)
     return nodes.map((node) => `${runner}|${node}`)
   })
+}
+
+function assertExactValues(actual, expected, message) {
+  const actualSet = new Set(actual)
+  const expectedSet = new Set(expected)
+  const sortedActual = [...actual].sort()
+  const sortedExpected = [...expected].sort()
+  invariant(
+    actual.length === expected.length
+      && actualSet.size === actual.length
+      && expectedSet.size === expected.length
+      && JSON.stringify(sortedActual) === JSON.stringify(sortedExpected),
+    message,
+  )
+}
+
+export function assertCiExplicitJobCompatibility(compatibility, specs = CI_EXPLICIT_JOB_SPECS) {
+  const expectedNodes = nodeMatrixValues(compatibility.node)
+  const checkNodes = specs
+    .filter((spec) => spec.kind === 'check')
+    .map((spec) => spec.node)
+  assertExactValues(
+    checkNodes,
+    expectedNodes,
+    'CI Node checks did not match compatibility.json.',
+  )
+
+  const expectedCells = expectedPackedInstallMatrix(compatibility)
+  for (const [kind, label] of [
+    ['exact-artifact', 'CI exact artifact cells did not match compatibility.json.'],
+    ['packed-install', 'CI packed install cells did not match compatibility.json.'],
+  ]) {
+    const cells = specs
+      .filter((spec) => spec.kind === kind)
+      .map((spec) => `${spec.runner}|${spec.node}`)
+    assertExactValues(cells, expectedCells, label)
+  }
 }
 
 function jobBody(workflow, jobName) {
@@ -1203,6 +1240,7 @@ export function validateWorkflowContracts({
     REQUIRED_CI_JOBS,
     'CI workflow',
   )
+  assertCiExplicitJobCompatibility(compatibility)
   invariant(
     count(ciWorkflow, '--probe-scope request-contracts') === 6,
     'CI workflow must invoke the request-contracts scope exactly once per exact-artifact job.',

@@ -35,7 +35,9 @@ import {
 } from '../scripts/release-artifact-contract.mjs'
 import { validateReleaseState } from '../scripts/release-state-contract.mjs'
 import {
+  assertCiExplicitJobCompatibility,
   evaluateRequiredCiResults,
+  CI_EXPLICIT_JOB_SPECS,
   PINNED_ACTIONS,
   validateWorkflowContracts,
 } from '../scripts/workflow-contract.mjs'
@@ -310,6 +312,75 @@ describe('workflow release evidence', () => {
   it('requires both workflows to distribute one candidate across the exact supported matrix', async () => {
     const inputs = await repositoryInputs()
     expect(() => validateWorkflowContracts(inputs)).not.toThrow()
+  })
+
+  it('binds explicit CI cells to the compatibility Node and platform matrix', async () => {
+    const inputs = await repositoryInputs()
+    const compatibility = {
+      ...inputs.compatibility,
+      node: `${inputs.compatibility.node} || ^28.0.0`,
+    }
+    const releaseWorkflow = inputs.releaseWorkflow
+      .replaceAll(
+        '          - os: ubuntu-latest\n            node: 26\n',
+        '          - os: ubuntu-latest\n            node: 26\n'
+          + '          - os: ubuntu-latest\n            node: 28\n',
+      )
+      .replaceAll(
+        '          - os: macos-latest\n            node: 26\n',
+        '          - os: macos-latest\n            node: 26\n'
+          + '          - os: macos-latest\n            node: 28\n',
+      )
+    expect(() => validateWorkflowContracts({
+      ...inputs,
+      compatibility,
+      releaseWorkflow,
+    })).toThrow('CI Node checks did not match compatibility.json.')
+  })
+
+  it('rejects missing, extra, or duplicate explicit CI cells', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      [
+        'missing exact-artifact cell',
+        CI_EXPLICIT_JOB_SPECS.filter((spec) => spec.name !== 'exact-artifact-ubuntu-26'),
+        'CI exact artifact cells did not match compatibility.json.',
+      ],
+      [
+        'missing packed-install cell',
+        CI_EXPLICIT_JOB_SPECS.filter((spec) => spec.name !== 'packed-install-ubuntu-26'),
+        'CI packed install cells did not match compatibility.json.',
+      ],
+      [
+        'extra exact-artifact cell',
+        [...CI_EXPLICIT_JOB_SPECS, {
+          name: 'exact-artifact-ubuntu-28',
+          displayName: 'Exact workflow artifact (ubuntu-latest, Node 28)',
+          runner: 'ubuntu-latest',
+          node: '28',
+          kind: 'exact-artifact',
+        }],
+        'CI exact artifact cells did not match compatibility.json.',
+      ],
+      [
+        'duplicate exact-artifact cell',
+        [...CI_EXPLICIT_JOB_SPECS, { ...CI_EXPLICIT_JOB_SPECS.find((spec) => spec.name === 'exact-artifact-macos-26') }],
+        'CI exact artifact cells did not match compatibility.json.',
+      ],
+      [
+        'duplicate packed-install cell',
+        [...CI_EXPLICIT_JOB_SPECS, { ...CI_EXPLICIT_JOB_SPECS.find((spec) => spec.name === 'packed-install-macos-26') }],
+        'CI packed install cells did not match compatibility.json.',
+      ],
+      [
+        'missing Node check',
+        CI_EXPLICIT_JOB_SPECS.filter((spec) => spec.name !== 'check-node-26'),
+        'CI Node checks did not match compatibility.json.',
+      ],
+    ]
+    for (const [label, specs, message] of cases) {
+      expect(() => assertCiExplicitJobCompatibility(inputs.compatibility, specs), label).toThrow(message)
+    }
   })
 
   it('pins artifact actions to the reviewed v8 and v7 commit SHAs', async () => {
