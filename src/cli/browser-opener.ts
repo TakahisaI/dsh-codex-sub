@@ -222,11 +222,12 @@ function privateHomeDirectory(value: string | undefined, uid: number): string | 
   return canonicalPrivateDirectory(value, uid, false)
 }
 
-function safeXdgPath(value: string, maximumBytes: number): Validated<string> {
+function safeXdgDirectoryEntry(value: string, maximumBytes: number): Validated<string> {
   if (
     value.length === 0
     || Buffer.byteLength(value, 'utf8') > maximumBytes
     || !value.startsWith('/')
+    || value.includes(':')
     || hasControlCharacters(value)
     || posixPath.normalize(value) !== value
   ) {
@@ -253,7 +254,7 @@ function canonicalXdgDirectory(
   home: string,
   policy: 'single' | 'list',
 ): Validated<string> {
-  const lexical = safeXdgPath(value, MAX_XDG_PATH_LENGTH)
+  const lexical = safeXdgDirectoryEntry(value, MAX_XDG_PATH_LENGTH)
   if (!lexical.ok) {
     return invalid()
   }
@@ -263,7 +264,7 @@ function canonicalXdgDirectory(
     // canonical path is ever passed to xdg-open. All trust checks therefore
     // operate on the resolved target and its ancestors.
     const canonical = realpathSync.native(lexical.value)
-    const canonicalPath = safeXdgPath(canonical, MAX_XDG_PATH_LENGTH)
+    const canonicalPath = safeXdgDirectoryEntry(canonical, MAX_XDG_PATH_LENGTH)
     if (!canonicalPath.ok) {
       return invalid()
     }
@@ -336,47 +337,62 @@ function validatedXdgSingle(
   home: string,
 ): Validated<string> {
   if (value === undefined || value === '') {
-    return safeXdgPath(defaultValue, MAX_XDG_PATH_LENGTH)
+    return safeXdgDirectoryEntry(defaultValue, MAX_XDG_PATH_LENGTH)
   }
   return canonicalXdgDirectory(value, uid, home, 'single')
 }
 
 function validatedXdgList(
   value: string | undefined,
-  defaultValue: string,
+  defaultValue: readonly string[],
   uid: number,
   home: string,
 ): Validated<string> {
+  const entries: string[] = []
   if (value === undefined || value === '') {
-    return safeXdgPath(defaultValue, MAX_XDG_LIST_LENGTH)
-  }
-  if (Buffer.byteLength(value, 'utf8') > MAX_XDG_LIST_LENGTH) {
-    return invalid()
-  }
-
-  const entries = value.split(':')
-  if (
-    entries.length === 0
-    || entries.length > MAX_XDG_LIST_ENTRIES
-    || entries.some((entry) => entry.length === 0)
-  ) {
-    return invalid()
-  }
-
-  const canonicalEntries: string[] = []
-  const seen = new Set<string>()
-  for (const entry of entries) {
-    const canonical = canonicalXdgDirectory(entry, uid, home, 'list')
-    if (!canonical.ok) {
+    for (const entry of defaultValue) {
+      const lexical = safeXdgDirectoryEntry(entry, MAX_XDG_PATH_LENGTH)
+      if (!lexical.ok) {
+        return invalid()
+      }
+      entries.push(lexical.value)
+    }
+  } else {
+    if (Buffer.byteLength(value, 'utf8') > MAX_XDG_LIST_LENGTH) {
       return invalid()
     }
-    if (!seen.has(canonical.value)) {
-      seen.add(canonical.value)
-      canonicalEntries.push(canonical.value)
+
+    const rawEntries = value.split(':')
+    if (
+      rawEntries.length === 0
+      || rawEntries.length > MAX_XDG_LIST_ENTRIES
+      || rawEntries.some((entry) => entry.length === 0)
+    ) {
+      return invalid()
+    }
+
+    for (const entry of rawEntries) {
+      const canonical = canonicalXdgDirectory(entry, uid, home, 'list')
+      if (!canonical.ok) {
+        return invalid()
+      }
+      entries.push(canonical.value)
     }
   }
 
-  const joined = canonicalEntries.join(':')
+  if (entries.length === 0 || entries.length > MAX_XDG_LIST_ENTRIES) {
+    return invalid()
+  }
+  const deduplicatedEntries: string[] = []
+  const seen = new Set<string>()
+  for (const entry of entries) {
+    if (!seen.has(entry)) {
+      seen.add(entry)
+      deduplicatedEntries.push(entry)
+    }
+  }
+
+  const joined = deduplicatedEntries.join(':')
   return Buffer.byteLength(joined, 'utf8') <= MAX_XDG_LIST_LENGTH
     ? accepted(joined)
     : invalid()
@@ -407,13 +423,13 @@ function validatedXdgEnvironment(
   )
   const configDirs = validatedXdgList(
     process.env['XDG_CONFIG_DIRS'],
-    '/etc/xdg',
+    ['/etc/xdg'],
     uid,
     home,
   )
   const dataDirs = validatedXdgList(
     process.env['XDG_DATA_DIRS'],
-    '/usr/local/share:/usr/share',
+    ['/usr/local/share', '/usr/share'],
     uid,
     home,
   )

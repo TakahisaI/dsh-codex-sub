@@ -130,7 +130,9 @@ Mitigation during CLI login:
   config/data roots use the specification defaults only when their ambient value is unset or exactly
   empty; every non-empty single or list is canonicalized and checked for UTF-8/path/list bounds,
   directory type, owner, mode, and trusted ancestors, with any invalid list entry rejecting the
-  whole opener. Only these validated canonical roots are passed to the child. Ambient `HOME`,
+  whole opener. Individual XDG directory entries reject ASCII `:` in both source and canonical
+  forms, so xdg-utils cannot split a validated path into an unvalidated root. Only these validated
+  canonical roots are passed to the child. Ambient `HOME`,
   unvalidated XDG roots, `BROWSER`, loader variables, shell startup files, Node injection, and all
   other ambient values are omitted. `XDG_RUNTIME_DIR` is
   copied only when its absolute source path passes lexical checks, its final component is not a

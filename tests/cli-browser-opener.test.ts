@@ -442,6 +442,63 @@ describe('safe browser opener', () => {
     }
   })
 
+  it('rejects ASCII-colon XDG single roots before spawning', async () => {
+    const home = repoTemp('dsh-opener-xdg-colon-home-')
+    const configHome = join(home, 'config:home')
+    const dataHome = join(home, 'data:home')
+    mkdirSync(configHome, { mode: 0o700 })
+    mkdirSync(dataHome, { mode: 0o700 })
+    chmodSync(configHome, 0o700)
+    chmodSync(dataHome, 0o700)
+    try {
+      for (const [name, value] of [
+        ['XDG_CONFIG_HOME', configHome],
+        ['XDG_DATA_HOME', dataHome],
+      ] as const) {
+        for (const variable of ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CONFIG_DIRS', 'XDG_DATA_DIRS']) {
+          vi.stubEnv(variable, '')
+        }
+        vi.stubEnv(name, value)
+        const fixture = spawnFixture()
+        await expect(createSafeBrowserOpener({
+          platform: 'linux',
+          spawn: fixture.spawn,
+          userInfo: () => ({ uid: currentUid(), homedir: home }),
+        }).open('https://auth.example.test/authorize')).resolves.toBe(false)
+        expect(fixture.calls).toHaveLength(0)
+      }
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects XDG roots whose canonical target contains an ASCII colon', async () => {
+    const home = repoTemp('dsh-opener-xdg-colon-target-home-')
+    const target = join(home, 'canonical:colon')
+    const link = join(home, 'canonical-link')
+    mkdirSync(target, { mode: 0o700 })
+    chmodSync(target, 0o700)
+    symlinkSync(target, link)
+    try {
+      for (const name of ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CONFIG_DIRS', 'XDG_DATA_DIRS']) {
+        for (const variable of ['XDG_CONFIG_HOME', 'XDG_DATA_HOME', 'XDG_CONFIG_DIRS', 'XDG_DATA_DIRS']) {
+          vi.stubEnv(variable, '')
+        }
+        vi.stubEnv(name, link)
+        const fixture = spawnFixture()
+        await expect(createSafeBrowserOpener({
+          platform: 'linux',
+          spawn: fixture.spawn,
+          userInfo: () => ({ uid: currentUid(), homedir: home }),
+        }).open('https://auth.example.test/authorize')).resolves.toBe(false)
+        expect(fixture.calls).toHaveLength(0)
+      }
+    } finally {
+      rmSync(link, { force: true })
+      rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   it('rejects invalid or unsafe custom XDG roots before spawning', async () => {
     const home = repoTemp('dsh-opener-xdg-invalid-home-')
     const outside = repoTemp('dsh-opener-xdg-outside-')
@@ -905,6 +962,84 @@ describe('safe browser opener', () => {
       expect(existsSync(fallbackMarker)).toBe(false)
     } finally {
       rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a single XDG root that xdg-utils would split into an outside handler root', async () => {
+    if (process.platform !== 'linux') {
+      return
+    }
+    try {
+      accessSync('/usr/bin/xdg-mime', fsConstants.X_OK)
+    } catch {
+      return
+    }
+
+    const home = repoTemp('dsh-opener-xdg-colon-integration-home-')
+    const outside = repoTemp('dsh-opener-xdg-colon-integration-outside-')
+    const outsideConfig = join(outside, 'config')
+    const outsideData = join(outside, 'data')
+    const outsideApplications = join(outsideData, 'applications')
+    const combinedConfig = `${home}/nominal-config:${outsideConfig}`
+    const combinedData = `${home}/nominal-data:${outsideData}`
+    const handlerName = 'dsh-colon-outside-handler.desktop'
+    const marker = join(outside, 'handler.marker')
+    mkdirSync(combinedConfig, { recursive: true, mode: 0o700 })
+    mkdirSync(combinedData, { recursive: true, mode: 0o700 })
+    mkdirSync(outsideConfig, { recursive: true, mode: 0o700 })
+    mkdirSync(outsideApplications, { recursive: true, mode: 0o700 })
+    for (const path of [home, outside, outsideConfig, outsideData, outsideApplications]) {
+      chmodSync(path, 0o700)
+    }
+    writeFileSync(join(outsideConfig, 'mimeapps.list'), [
+      '[Default Applications]',
+      `x-scheme-handler/https=${handlerName};`,
+      '',
+    ].join('\n'))
+    writeFileSync(join(outsideApplications, handlerName), [
+      '[Desktop Entry]',
+      'Type=Application',
+      'Name=DSH colon outside handler',
+      `Exec=/usr/bin/touch ${marker}`,
+      '',
+    ].join('\n'))
+    try {
+      const query = nodeSpawnSync('/usr/bin/xdg-mime', [
+        'query',
+        'default',
+        'x-scheme-handler/https',
+      ], {
+        shell: false,
+        env: {
+          PATH: '/usr/bin:/bin',
+          HOME: realpathSync.native(home),
+          XDG_CONFIG_HOME: combinedConfig,
+          XDG_DATA_HOME: combinedData,
+          XDG_CONFIG_DIRS: '',
+          XDG_DATA_DIRS: '',
+        },
+        encoding: 'utf8',
+      })
+      expect(query.status, query.stderr).toBe(0)
+      expect(query.stdout.trim()).toBe(handlerName)
+
+      for (const variable of ['XDG_CONFIG_DIRS', 'XDG_DATA_DIRS']) {
+        vi.stubEnv(variable, '')
+      }
+      vi.stubEnv('XDG_CONFIG_HOME', combinedConfig)
+      vi.stubEnv('XDG_DATA_HOME', combinedData)
+      vi.stubEnv('XDG_CURRENT_DESKTOP', 'generic')
+      const fixture = spawnFixture()
+      await expect(createSafeBrowserOpener({
+        platform: 'linux',
+        spawn: fixture.spawn,
+        userInfo: () => ({ uid: currentUid(), homedir: home }),
+      }).open('https://auth.example.test/authorize')).resolves.toBe(false)
+      expect(fixture.calls).toHaveLength(0)
+      expect(existsSync(marker)).toBe(false)
+    } finally {
+      rmSync(home, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
     }
   })
 
