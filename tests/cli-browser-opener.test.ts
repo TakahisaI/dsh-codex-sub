@@ -526,12 +526,9 @@ describe('safe browser opener', () => {
   })
 
   it('allows root-owned system XDG list roots but rejects them as single roots', async () => {
-    if (!existsSync('/usr/share')) {
-      return
-    }
     const home = repoTemp('dsh-opener-xdg-system-home-')
     try {
-      vi.stubEnv('XDG_CONFIG_HOME', '/usr/share')
+      vi.stubEnv('XDG_CONFIG_HOME', '/')
       const singleFixture = spawnFixture()
       await expect(createSafeBrowserOpener({
         platform: 'linux',
@@ -541,7 +538,7 @@ describe('safe browser opener', () => {
       expect(singleFixture.calls).toHaveLength(0)
 
       vi.stubEnv('XDG_CONFIG_HOME', '')
-      vi.stubEnv('XDG_CONFIG_DIRS', '/usr/share')
+      vi.stubEnv('XDG_CONFIG_DIRS', '/')
       const listFixture = spawnFixture()
       const pending = createSafeBrowserOpener({
         platform: 'linux',
@@ -552,7 +549,7 @@ describe('safe browser opener', () => {
       if (call === undefined) {
         throw new Error('browser spawn call missing')
       }
-      expect(browserEnvironment(call)['XDG_CONFIG_DIRS']).toBe('/usr/share')
+      expect(browserEnvironment(call)['XDG_CONFIG_DIRS']).toBe('/')
       listFixture.process.emit('close', 0, null)
       await expect(pending).resolves.toBe(true)
     } finally {
@@ -886,7 +883,7 @@ describe('safe browser opener', () => {
       vi.stubEnv('XDG_CONFIG_HOME', configHome)
       vi.stubEnv('XDG_DATA_HOME', '')
       vi.stubEnv('XDG_CONFIG_DIRS', '')
-      vi.stubEnv('XDG_DATA_DIRS', `${dataRoot}:/usr/local/share:/usr/share`)
+      vi.stubEnv('XDG_DATA_DIRS', `${dataRoot}:/usr/share`)
       vi.stubEnv('XDG_CURRENT_DESKTOP', 'generic')
       const opener = createSafeBrowserOpener({
         platform: 'linux',
