@@ -3,6 +3,25 @@ const PLATFORM_RUNNERS = Object.freeze({
   linux: 'ubuntu-latest',
 })
 const RELEASE_ARTIFACT_NAME = 'dsh-codex-sub-unpublished'
+const REQUIRED_CI_GATE_JOB = 'required-ci-gate'
+const REQUIRED_CI_BLOCKING_JOBS = Object.freeze([
+  'check',
+  'candidate',
+  'candidate-lane',
+  'packed-candidate-lane',
+  'exact-artifact-lane',
+  'packed-install',
+])
+const REQUIRED_CI_GATE_ENV = Object.freeze([
+  ['CHECK_RESULT', '${{ needs.check.result }}'],
+  ['CANDIDATE_RESULT', '${{ needs.candidate.result }}'],
+  ['CANDIDATE_LANE_RESULT', '${{ needs.candidate-lane.result }}'],
+  ['PACKED_CANDIDATE_LANE_RESULT', '${{ needs.packed-candidate-lane.result }}'],
+  ['EXACT_ARTIFACT_LANE_RESULT', '${{ needs.exact-artifact-lane.result }}'],
+  ['PACKED_INSTALL_RESULT', '${{ needs.packed-install.result }}'],
+  ['DEPENDENCY_REVIEW_RESULT', '${{ needs.dependency-review.result }}'],
+  ['EVENT_NAME', '${{ github.event_name }}'],
+])
 export const PINNED_ACTIONS = Object.freeze({
   checkout: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
   dependencyReview: 'actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294',
@@ -504,6 +523,163 @@ function assertArtifactFinalizer(job, label) {
   assertNoArtifactMutation(job, label)
 }
 
+function parseJobNeeds(job, label) {
+  const lines = job.split(/\r?\n/u)
+  const needsIndex = lines.findIndex((line) => line === '    needs:')
+  invariant(needsIndex >= 0, `${label} needs block was missing.`)
+  const entriesEnd = blockEnd(lines, needsIndex + 1, 4)
+  const entries = lines.slice(needsIndex + 1, entriesEnd).filter(isContent)
+  invariant(entries.length > 0, `${label} needs block was empty.`)
+  const names = entries.map((line) => {
+    invariant(
+      indentation(line) === 6 && /^      - [a-z][a-z0-9-]*$/u.test(line),
+      `${label} needs must use a block list of job IDs.`,
+    )
+    return line.slice('      - '.length)
+  })
+  return names
+}
+
+function assertExactStringSet(actual, expected, message) {
+  const sortedActual = [...actual].sort()
+  const sortedExpected = [...expected].sort()
+  invariant(JSON.stringify(sortedActual) === JSON.stringify(sortedExpected), message)
+}
+
+function parseGateEnvironment(job, label) {
+  const lines = job.split(/\r?\n/u)
+  const envIndex = lines.findIndex((line) => line === '        env:')
+  invariant(envIndex >= 0, `${label} environment mapping was missing.`)
+  const envEnd = blockEnd(lines, envIndex + 1, 8)
+  const entries = lines.slice(envIndex + 1, envEnd).filter(isContent)
+  invariant(
+    entries.length === REQUIRED_CI_GATE_ENV.length,
+    `${label} environment mapping did not match the required results.`,
+  )
+  const actual = entries.map((line) => {
+    invariant(indentation(line) === 10, `${label} environment mapping indentation was invalid.`)
+    const match = /^\s{10}([A-Z][A-Z0-9_]*)\s*:\s*(.+)$/u.exec(line)
+    invariant(match !== null, `${label} environment mapping syntax was invalid.`)
+    const [, name, value] = match
+    invariant(name !== undefined && value !== undefined, `${label} environment mapping was incomplete.`)
+    return [name, value]
+  })
+  invariant(
+    JSON.stringify(actual) === JSON.stringify(REQUIRED_CI_GATE_ENV),
+    `${label} environment mapping did not match the required results.`,
+  )
+}
+
+function gateShellBody(job, label) {
+  const lines = job.split(/\r?\n/u)
+  const runIndex = lines.findIndex((line) => line === '        run: |')
+  invariant(runIndex >= 0, `${label} must contain one literal bash script.`)
+  const runEnd = blockEnd(lines, runIndex + 1, 8)
+  return lines.slice(runIndex + 1, runEnd).map((line) => line.trim()).join('\n')
+}
+
+function assertRequiredCiGateJob(job, expectedNeeds) {
+  const label = 'CI required-ci-gate job'
+  const directIfLines = job.split(/\r?\n/u).filter((line) => /^    if\s*:/u.test(line))
+  invariant(
+    count(job, '    name: Required CI gate') === 1,
+    `${label} must use the reviewed name exactly once.`,
+  )
+  invariant(
+    directIfLines.length === 1 && directIfLines[0] === '    if: ${{ always() }}',
+    `${label} must execute with always() exactly once.`,
+  )
+  const needs = parseJobNeeds(job, label)
+  invariant(
+    new Set(needs).size === needs.length,
+    `${label} needs must not contain duplicate job IDs.`,
+  )
+  assertExactStringSet(
+    needs,
+    expectedNeeds,
+    `${label} needs must contain every other CI job exactly once.`,
+  )
+  invariant(
+    count(job, '    runs-on: ubuntu-latest') === 1,
+    `${label} must use the reviewed Linux runner exactly once.`,
+  )
+  invariant(
+    count(job, '    permissions: {}') === 1,
+    `${label} must disable all job permissions exactly once.`,
+  )
+  invariant(
+    count(job, '    steps:') === 1
+      && count(job, '      - name: Evaluate required CI results') === 1
+      && count(job, '        shell: bash') === 1
+      && count(job, '        run: |') === 1,
+    `${label} must contain exactly one bash step.`,
+  )
+  invariant(
+    !/^\s*-\s+uses\s*:/mu.test(job) && !/\buses\s*:/u.test(job),
+    `${label} must not use an Action.`,
+  )
+  const stepLinesSource = job.split(/\r?\n/u)
+  const stepsIndex = stepLinesSource.findIndex((line) => line === '    steps:')
+  const stepsEnd = blockEnd(stepLinesSource, stepsIndex + 1, 4)
+  const stepLines = stepLinesSource.slice(stepsIndex + 1, stepsEnd)
+    .filter((line) => /^      -\s+/u.test(line))
+  invariant(stepLines.length === 1, `${label} must contain exactly one step.`)
+  parseGateEnvironment(job, label)
+
+  const shell = gateShellBody(job, label)
+  invariant(
+    count(shell, 'set -euo pipefail') === 1,
+    `${label} must enable strict shell failure handling.`,
+  )
+  for (const [name] of REQUIRED_CI_GATE_ENV.slice(0, REQUIRED_CI_BLOCKING_JOBS.length)) {
+    invariant(
+      count(shell, `[ "$${name}" != "success" ]`) === 1,
+      `${label} must require ${name} to be success.`,
+    )
+  }
+  invariant(
+    shell.includes('case "$EVENT_NAME" in')
+      && shell.includes('pull_request)')
+      && shell.includes('if [ "$DEPENDENCY_REVIEW_RESULT" != "success" ]')
+      && shell.includes('push)')
+      && shell.includes('if [ "$DEPENDENCY_REVIEW_RESULT" != "skipped" ]')
+      && shell.includes('*)')
+      && count(shell, 'exit 1') >= 3,
+    `${label} must fail closed for dependency review and unknown events.`,
+  )
+  invariant(
+    !shell.includes('|| true') && !shell.includes('exit 0') && !shell.includes('continue'),
+    `${label} shell must not mask a failed result.`,
+  )
+}
+
+function assertCiJobTopology(workflow) {
+  for (const job of workflowJobs(workflow)) {
+    const label = `CI ${job.name} job`
+    invariant(
+      !/^\s+continue-on-error\s*:/mu.test(job.body),
+      `${label} must not ignore a failed check.`,
+    )
+    if (job.name === REQUIRED_CI_GATE_JOB) {
+      continue
+    }
+    if (job.name === 'dependency-review') {
+      const directIfLines = job.body.split(/\r?\n/u)
+        .filter((line) => /^    if\s*:/u.test(line))
+      invariant(
+        directIfLines.length === 1
+          && directIfLines[0] === "    if: github.event_name == 'pull_request'",
+        `${label} must run only on pull_request events.`,
+      )
+      continue
+    }
+    invariant(
+      !/^    if\s*:/mu.test(job.body),
+      `${label} must not have a job-level condition.`,
+    )
+  }
+}
+
 function permissionDeclarations(workflow) {
   return workflow.split(/\r?\n/u)
     .map((line, index) => ({ index, line }))
@@ -601,7 +777,7 @@ function assertReleaseCandidateDependencies(job) {
   )
 }
 
-function assertReadOnlyWorkflowPermissions(workflow, label) {
+function assertReadOnlyWorkflowPermissions(workflow, label, options = {}) {
   const declarations = permissionDeclarations(workflow)
   const workflowDeclarations = declarations.filter(({ line }) => indentation(line) === 0)
   invariant(
@@ -609,7 +785,22 @@ function assertReadOnlyWorkflowPermissions(workflow, label) {
     `${label} must declare exactly one workflow-level permissions block.`,
   )
 
+  const emptyJobDeclarations = declarations.filter(({ line }) => line.trim() === 'permissions: {}')
+  if (options.allowEmptyJob !== undefined) {
+    invariant(
+      emptyJobDeclarations.length === 1
+        && indentation(emptyJobDeclarations[0]?.line ?? '') === 4
+        && jobBody(workflow, options.allowEmptyJob).includes('\n    permissions: {}\n'),
+      `${label} must contain exactly one empty permission block for ${options.allowEmptyJob}.`,
+    )
+  } else {
+    invariant(emptyJobDeclarations.length === 0, `${label} contained an unexpected empty permission block.`)
+  }
+
   for (const declaration of declarations) {
+    if (options.allowEmptyJob !== undefined && declaration.line.trim() === 'permissions: {}') {
+      continue
+    }
     try {
       assertPermissionBlock(workflow, declaration, ['contents: read'], label)
     } catch {
@@ -750,10 +941,10 @@ function assertNoRegistryCredentials(workflow) {
   )
 }
 
-function assertNonPublishingWorkflow(workflow, label) {
+function assertNonPublishingWorkflow(workflow, label, options = {}) {
   const jobs = workflowJobsBody(workflow)
   invariant(!/\bpublish\b/u.test(jobs), `${label} must not contain a publish operation.`)
-  assertReadOnlyWorkflowPermissions(workflow, label)
+  assertReadOnlyWorkflowPermissions(workflow, label, options)
 }
 
 function assertStagedPublishingWorkflow(workflow, stageJob) {
@@ -805,9 +996,16 @@ export function validateWorkflowContracts({
       'exact-artifact-lane',
       'packed-candidate-lane',
       'packed-install',
+      REQUIRED_CI_GATE_JOB,
     ],
     'CI workflow',
   )
+  const ciJobNames = workflowJobs(ciWorkflow).map((job) => job.name)
+  assertRequiredCiGateJob(
+    jobBody(ciWorkflow, REQUIRED_CI_GATE_JOB),
+    ciJobNames.filter((name) => name !== REQUIRED_CI_GATE_JOB),
+  )
+  assertCiJobTopology(ciWorkflow)
   assertCandidateLaneJob(jobBody(ciWorkflow, 'candidate-lane'), 'CI')
   assertPackedCandidateLaneJob(jobBody(ciWorkflow, 'packed-candidate-lane'), 'CI')
   assertExactArtifactLaneJob(jobBody(ciWorkflow, 'exact-artifact-lane'), expected, 'CI')
@@ -829,7 +1027,7 @@ export function validateWorkflowContracts({
   assertArtifactProducer(jobBody(ciWorkflow, 'candidate'), 'CI candidate job')
   assertArtifactConsumer(jobBody(ciWorkflow, 'packed-install'), expected, 'CI')
   assertOnlyProducerMutatesArtifact(ciWorkflow, 'candidate', 'CI')
-  assertNonPublishingWorkflow(ciWorkflow, 'CI workflow')
+  assertNonPublishingWorkflow(ciWorkflow, 'CI workflow', { allowEmptyJob: REQUIRED_CI_GATE_JOB })
   assertReleaseRefGuard(jobBody(releaseWorkflow, 'release-ref'))
   const releaseCandidate = jobBody(releaseWorkflow, 'candidate')
   assertReleaseCandidateDependencies(releaseCandidate)

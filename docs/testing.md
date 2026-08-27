@@ -290,6 +290,16 @@ Blocking CI:
 - the supported DSH release;
 - the exact supported pi-ai release.
 
+The expanded CI workflow has 19 matrix and single-job check contexts, plus one fixed
+`Required CI gate` job. The gate waits for `check`, `candidate`, `candidate-lane`,
+`packed-candidate-lane`, `exact-artifact-lane`, `packed-install`, and `dependency-review` with
+`always()`. It requires every non-dependency-review result to be exactly `success`; on
+`pull_request`, dependency review must also be `success`, while on `push` it must be `skipped`.
+Any other result or event fails closed. The gate has no repository permissions and uses only one
+strict Bash step. Branch protection should require this fixed aggregate check rather than each
+expanded matrix context, so adding a CI job requires updating both the exact workflow contract and
+the gate's `needs` list before it can merge.
+
 Blocking CI builds one candidate on Ubuntu/Node 24 and uploads its tarball plus `SHA256SUMS` once.
 All six packed-install cells download, checksum, validate, and install those same bytes without a
 package build or repack. The release-state check derives the exact six-cell matrix from
@@ -309,9 +319,12 @@ repacks in artifact-consumer, candidate-ready, and any later jobs. Pure size che
 per-entry, 512 KiB README, 64 KiB manifest, and 8 MiB aggregate limits. Real archive tests also use
 highly compressible fixtures to exceed each of those four extracted-content budgets. Packaged
 README tests reject inline or reference-style relative links whose targets are omitted from the
-tarball. The CI and release contracts allow only the exact expected job set. CI requires canonical
-block-form `contents: read` in every permission block. The release workflow requires one read-only
-workflow default and exactly one job-local block
+tarball. The CI and release contracts allow only the exact expected job set. CI validates the
+fixed `Required CI gate` topology, including its complete `needs` set, exact result environment
+mapping, strict Bash failure handling, and pull-request/push dependency-review behavior. The
+workflow-level and dependency-review permission blocks use canonical block-form `contents: read`;
+the aggregate gate alone uses the exact empty `permissions: {}` block. The release workflow requires
+one read-only workflow default and exactly one job-local block
 containing `contents: read` plus `id-token: write`; that block must belong to the staging job.
 Quoted, flow, inline-comment, workflow-wide OIDC, and `write-all` variants fail closed. The release
 workflow rejects direct publication, automatic staged-package approval or rejection, and npm

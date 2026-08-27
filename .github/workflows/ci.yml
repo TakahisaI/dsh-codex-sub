@@ -178,3 +178,58 @@ jobs:
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+
+  required-ci-gate:
+    name: Required CI gate
+    if: ${{ always() }}
+    needs:
+      - check
+      - candidate
+      - candidate-lane
+      - packed-candidate-lane
+      - exact-artifact-lane
+      - packed-install
+      - dependency-review
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - name: Evaluate required CI results
+        shell: bash
+        env:
+          CHECK_RESULT: ${{ needs.check.result }}
+          CANDIDATE_RESULT: ${{ needs.candidate.result }}
+          CANDIDATE_LANE_RESULT: ${{ needs.candidate-lane.result }}
+          PACKED_CANDIDATE_LANE_RESULT: ${{ needs.packed-candidate-lane.result }}
+          EXACT_ARTIFACT_LANE_RESULT: ${{ needs.exact-artifact-lane.result }}
+          PACKED_INSTALL_RESULT: ${{ needs.packed-install.result }}
+          DEPENDENCY_REVIEW_RESULT: ${{ needs.dependency-review.result }}
+          EVENT_NAME: ${{ github.event_name }}
+        run: |
+          set -euo pipefail
+          if [ "$CHECK_RESULT" != "success" ] \
+            || [ "$CANDIDATE_RESULT" != "success" ] \
+            || [ "$CANDIDATE_LANE_RESULT" != "success" ] \
+            || [ "$PACKED_CANDIDATE_LANE_RESULT" != "success" ] \
+            || [ "$EXACT_ARTIFACT_LANE_RESULT" != "success" ] \
+            || [ "$PACKED_INSTALL_RESULT" != "success" ]; then
+            echo "A required CI job did not succeed." >&2
+            exit 1
+          fi
+          case "$EVENT_NAME" in
+            pull_request)
+              if [ "$DEPENDENCY_REVIEW_RESULT" != "success" ]; then
+                echo "Dependency review did not succeed on a pull request." >&2
+                exit 1
+              fi
+              ;;
+            push)
+              if [ "$DEPENDENCY_REVIEW_RESULT" != "skipped" ]; then
+                echo "Dependency review must be skipped on a push." >&2
+                exit 1
+              fi
+              ;;
+            *)
+              echo "Unsupported CI event." >&2
+              exit 1
+              ;;
+          esac

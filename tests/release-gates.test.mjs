@@ -291,6 +291,196 @@ describe('workflow release evidence', () => {
     expect(() => validateWorkflowContracts(inputs)).not.toThrow()
   })
 
+  it('pins artifact actions to the reviewed v8 and v7 commit SHAs', async () => {
+    const inputs = await repositoryInputs()
+    expect(inputs.ciWorkflow.match(/actions\/download-artifact@/gu)).toHaveLength(3)
+    expect(inputs.releaseWorkflow.match(/actions\/download-artifact@/gu)).toHaveLength(4)
+    expect(inputs.ciWorkflow.match(/actions\/upload-artifact@/gu)).toHaveLength(1)
+    expect(inputs.releaseWorkflow.match(/actions\/upload-artifact@/gu)).toHaveLength(1)
+    for (const [workflowKey, oldPin, tagPin, otherSha] of [
+      ['ciWorkflow', 'actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131', 'actions/download-artifact@v8', 'actions/download-artifact@0000000000000000000000000000000000000000'],
+      ['releaseWorkflow', 'actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f', 'actions/upload-artifact@v7', 'actions/upload-artifact@0000000000000000000000000000000000000000'],
+    ]) {
+      for (const replacement of [oldPin, tagPin, otherSha]) {
+        const workflow = inputs[workflowKey].replace(
+          workflowKey === 'ciWorkflow' ? PINNED_ACTIONS.downloadArtifact : PINNED_ACTIONS.uploadArtifact,
+          replacement,
+        )
+        expect(workflow).not.toBe(inputs[workflowKey])
+        expect(() => validateWorkflowContracts({ ...inputs, [workflowKey]: workflow })).toThrow(
+          `${workflowKey === 'ciWorkflow' ? 'CI' : 'Release'} workflow actions must use reviewed full commit SHAs.`,
+        )
+      }
+    }
+  })
+
+  it('requires the aggregate gate to cover every other CI job', async () => {
+    const inputs = await repositoryInputs()
+    const gateNeeds = [
+      '      - check\n',
+      '      - candidate\n',
+      '      - candidate-lane\n',
+      '      - packed-candidate-lane\n',
+      '      - exact-artifact-lane\n',
+      '      - packed-install\n',
+      '      - dependency-review\n',
+    ]
+    for (const need of gateNeeds) {
+      const ciWorkflow = inputs.ciWorkflow.replace(need, '')
+      expect(ciWorkflow).not.toBe(inputs.ciWorkflow)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
+        'CI required-ci-gate job needs must contain every other CI job exactly once.',
+      )
+    }
+
+    const duplicate = inputs.ciWorkflow.replace(
+      '      - check\n      - candidate\n',
+      '      - check\n      - check\n      - candidate\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: duplicate })).toThrow(
+      'CI required-ci-gate job needs must not contain duplicate job IDs.',
+    )
+
+    const unknown = inputs.ciWorkflow.replace(
+      '      - dependency-review\n    runs-on: ubuntu-latest\n',
+      '      - unknown-job\n    runs-on: ubuntu-latest\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: unknown })).toThrow(
+      'CI required-ci-gate job needs must contain every other CI job exactly once.',
+    )
+  })
+
+  it('rejects a CI job added without extending the reviewed aggregate gate', async () => {
+    const inputs = await repositoryInputs()
+    const ciWorkflow = inputs.ciWorkflow.replace(
+      '\n  required-ci-gate:\n',
+      '\n  unreviewed-job:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n\n  required-ci-gate:\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
+      'CI workflow job set did not match the reviewed contract.',
+    )
+  })
+
+  it('requires the aggregate gate to use the fixed always, permissions, and action-free topology', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      [
+        'if: ${{ always() }}',
+        'if: always()',
+        'CI required-ci-gate job must execute with always() exactly once.',
+      ],
+      [
+        'permissions: {}',
+        'permissions: write-all',
+        'CI required-ci-gate job must disable all job permissions exactly once.',
+      ],
+      [
+        '      - name: Evaluate required CI results',
+        `      - uses: ${PINNED_ACTIONS.checkout}\n      - name: Evaluate required CI results`,
+        'CI required-ci-gate job must not use an Action.',
+      ],
+      [
+        '      - name: Evaluate required CI results',
+        `      - uses: ${PINNED_ACTIONS.downloadArtifact}\n      - name: Evaluate required CI results`,
+        'CI required-ci-gate job must not use an Action.',
+      ],
+      [
+        '      - name: Evaluate required CI results',
+        `      - uses: ${PINNED_ACTIONS.uploadArtifact}\n      - name: Evaluate required CI results`,
+        'CI required-ci-gate job must not use an Action.',
+      ],
+    ]
+    for (const [from, to, expected] of cases) {
+      const ciWorkflow = inputs.ciWorkflow.replace(from, to)
+      expect(ciWorkflow).not.toBe(inputs.ciWorkflow)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(expected)
+    }
+  })
+
+  it('requires the aggregate gate environment to map every need result exactly', async () => {
+    const inputs = await repositoryInputs()
+    const mappings = [
+      [
+        '          CANDIDATE_RESULT: ${{ needs.candidate.result }}\n',
+        '          CANDIDATE_RESULT: ${{ needs.check.result }}\n',
+      ],
+      [
+        '          PACKED_INSTALL_RESULT: ${{ needs.packed-install.result }}\n',
+        '',
+      ],
+      [
+        '          EVENT_NAME: ${{ github.event_name }}\n',
+        '          EXTRA_RESULT: ${{ needs.check.result }}\n'
+          + '          EVENT_NAME: ${{ github.event_name }}\n',
+      ],
+    ]
+    for (const [from, to] of mappings) {
+      const ciWorkflow = inputs.ciWorkflow.replace(from, to)
+      expect(ciWorkflow).not.toBe(inputs.ciWorkflow)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
+        'CI required-ci-gate job environment mapping did not match the required results.',
+      )
+    }
+  })
+
+  it('requires the aggregate gate shell to fail closed for every result and event', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      [
+        '[ "$CHECK_RESULT" != "success" ]',
+        '[ "$CHECK_RESULT" == "success" ]',
+        'CI required-ci-gate job must require CHECK_RESULT to be success.',
+      ],
+      [
+        'set -euo pipefail',
+        'set -e',
+        'CI required-ci-gate job must enable strict shell failure handling.',
+      ],
+      [
+        '            echo "A required CI job did not succeed." >&2\n',
+        '            echo "A required CI job did not succeed." >&2 || true\n',
+        'CI required-ci-gate job shell must not mask a failed result.',
+      ],
+      [
+        '            *)\n',
+        '            pull_request|push)\n',
+        'CI required-ci-gate job must fail closed for dependency review and unknown events.',
+      ],
+    ]
+    for (const [from, to, expected] of cases) {
+      const ciWorkflow = inputs.ciWorkflow.replace(from, to)
+      expect(ciWorkflow).not.toBe(inputs.ciWorkflow)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(expected)
+    }
+  })
+
+  it('keeps dependency review conditional only on pull requests and forbids ignored checks', async () => {
+    const inputs = await repositoryInputs()
+    const wrongCondition = inputs.ciWorkflow.replace(
+      "if: github.event_name == 'pull_request'",
+      'if: always()',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongCondition })).toThrow(
+      'CI dependency-review job must run only on pull_request events.',
+    )
+
+    const ignored = inputs.ciWorkflow.replace(
+      '  candidate:\n',
+      '  candidate:\n    continue-on-error: true\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: ignored })).toThrow(
+      'CI candidate job must not ignore a failed check.',
+    )
+
+    const conditional = inputs.ciWorkflow.replace(
+      '  candidate:\n',
+      '  candidate:\n    if: always()\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: conditional })).toThrow(
+      'CI candidate job must not have a job-level condition.',
+    )
+  })
+
   it('requires the exact-artifact and compatibility-release six-cell matrix with explicit modes', async () => {
     const inputs = await repositoryInputs()
     const exactCells = [
