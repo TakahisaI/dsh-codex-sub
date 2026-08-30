@@ -35,6 +35,9 @@ import {
 } from '../scripts/release-artifact-contract.mjs'
 import { validateReleaseState } from '../scripts/release-state-contract.mjs'
 import {
+  assertCiExplicitJobCompatibility,
+  evaluateRequiredCiResults,
+  CI_EXPLICIT_JOB_SPECS,
   PINNED_ACTIONS,
   validateWorkflowContracts,
 } from '../scripts/workflow-contract.mjs'
@@ -87,6 +90,26 @@ async function readReleaseWorkflow() {
     }
   }
   throw new Error('Release workflow was missing.')
+}
+
+function mutateCiJob(workflow, jobName, mutator) {
+  const marker = `\n  ${jobName}:\n`
+  const start = workflow.indexOf(marker)
+  expect(start).toBeGreaterThanOrEqual(0)
+  const bodyStart = start + marker.length
+  const nextJob = workflow.slice(bodyStart).search(/^  [a-z][a-z0-9-]*:\s*$/mu)
+  const end = nextJob < 0 ? workflow.length : bodyStart + nextJob
+  return workflow.slice(0, bodyStart) + mutator(workflow.slice(bodyStart, end)) + workflow.slice(end)
+}
+
+function removeCiJob(workflow, jobName) {
+  const marker = `\n  ${jobName}:\n`
+  const start = workflow.indexOf(marker)
+  expect(start).toBeGreaterThanOrEqual(0)
+  const bodyStart = start + marker.length
+  const nextJob = workflow.slice(bodyStart).search(/^  [a-z][a-z0-9-]*:\s*$/mu)
+  const end = nextJob < 0 ? workflow.length : bodyStart + nextJob
+  return workflow.slice(0, start + 1) + workflow.slice(end)
 }
 
 describe('package tarball fail-closed validation', () => {
@@ -291,44 +314,687 @@ describe('workflow release evidence', () => {
     expect(() => validateWorkflowContracts(inputs)).not.toThrow()
   })
 
-  it('requires the exact-artifact and compatibility-release six-cell matrix with explicit modes', async () => {
+  it('binds explicit CI cells to the compatibility Node and platform matrix', async () => {
     const inputs = await repositoryInputs()
-    const exactCells = [
-      '          - os: ubuntu-latest\n            node: 22.19.0',
-      '          - os: ubuntu-latest\n            node: 24',
-      '          - os: ubuntu-latest\n            node: 26',
-      '          - os: macos-latest\n            node: 22.19.0',
-      '          - os: macos-latest\n            node: 24',
-      '          - os: macos-latest\n            node: 26',
+    const compatibility = {
+      ...inputs.compatibility,
+      node: `${inputs.compatibility.node} || ^28.0.0`,
+    }
+    const releaseWorkflow = inputs.releaseWorkflow
+      .replaceAll(
+        '          - os: ubuntu-latest\n            node: 26\n',
+        '          - os: ubuntu-latest\n            node: 26\n'
+          + '          - os: ubuntu-latest\n            node: 28\n',
+      )
+      .replaceAll(
+        '          - os: macos-latest\n            node: 26\n',
+        '          - os: macos-latest\n            node: 26\n'
+          + '          - os: macos-latest\n            node: 28\n',
+      )
+    expect(() => validateWorkflowContracts({
+      ...inputs,
+      compatibility,
+      releaseWorkflow,
+    })).toThrow('CI Node checks did not match compatibility.json.')
+  })
+
+  it('rejects missing, extra, or duplicate explicit CI cells', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      [
+        'missing exact-artifact cell',
+        CI_EXPLICIT_JOB_SPECS.filter((spec) => spec.name !== 'exact-artifact-ubuntu-26'),
+        'CI exact artifact cells did not match compatibility.json.',
+      ],
+      [
+        'missing packed-install cell',
+        CI_EXPLICIT_JOB_SPECS.filter((spec) => spec.name !== 'packed-install-ubuntu-26'),
+        'CI packed install cells did not match compatibility.json.',
+      ],
+      [
+        'extra exact-artifact cell',
+        [...CI_EXPLICIT_JOB_SPECS, {
+          name: 'exact-artifact-ubuntu-28',
+          displayName: 'Exact workflow artifact (ubuntu-latest, Node 28)',
+          runner: 'ubuntu-latest',
+          node: '28',
+          kind: 'exact-artifact',
+        }],
+        'CI exact artifact cells did not match compatibility.json.',
+      ],
+      [
+        'duplicate exact-artifact cell',
+        [...CI_EXPLICIT_JOB_SPECS, { ...CI_EXPLICIT_JOB_SPECS.find((spec) => spec.name === 'exact-artifact-macos-26') }],
+        'CI exact artifact cells did not match compatibility.json.',
+      ],
+      [
+        'duplicate packed-install cell',
+        [...CI_EXPLICIT_JOB_SPECS, { ...CI_EXPLICIT_JOB_SPECS.find((spec) => spec.name === 'packed-install-macos-26') }],
+        'CI packed install cells did not match compatibility.json.',
+      ],
+      [
+        'missing Node check',
+        CI_EXPLICIT_JOB_SPECS.filter((spec) => spec.name !== 'check-node-26'),
+        'CI Node checks did not match compatibility.json.',
+      ],
     ]
-    expect(inputs.ciWorkflow.match(/--host-graph-mode locked-no-overrides/gu)).toHaveLength(1)
+    for (const [label, specs, message] of cases) {
+      expect(() => assertCiExplicitJobCompatibility(inputs.compatibility, specs), label).toThrow(message)
+    }
+  })
+
+  it('pins artifact actions to the reviewed v8 and v7 commit SHAs', async () => {
+    const inputs = await repositoryInputs()
+    expect(inputs.ciWorkflow.match(/actions\/download-artifact@/gu)).toHaveLength(13)
+    expect(inputs.releaseWorkflow.match(/actions\/download-artifact@/gu)).toHaveLength(4)
+    expect(inputs.ciWorkflow.match(/actions\/upload-artifact@/gu)).toHaveLength(1)
+    expect(inputs.releaseWorkflow.match(/actions\/upload-artifact@/gu)).toHaveLength(1)
+    for (const [workflowKey, oldPin, tagPin, otherSha] of [
+      ['ciWorkflow', 'actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131', 'actions/download-artifact@v8', 'actions/download-artifact@0000000000000000000000000000000000000000'],
+      ['releaseWorkflow', 'actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f', 'actions/upload-artifact@v7', 'actions/upload-artifact@0000000000000000000000000000000000000000'],
+    ]) {
+      for (const replacement of [oldPin, tagPin, otherSha]) {
+        const workflow = inputs[workflowKey].replace(
+          workflowKey === 'ciWorkflow' ? PINNED_ACTIONS.downloadArtifact : PINNED_ACTIONS.uploadArtifact,
+          replacement,
+        )
+        expect(workflow).not.toBe(inputs[workflowKey])
+        expect(() => validateWorkflowContracts({ ...inputs, [workflowKey]: workflow })).toThrow(
+          `${workflowKey === 'ciWorkflow' ? 'CI' : 'Release'} workflow actions must use reviewed full commit SHAs.`,
+        )
+      }
+    }
+  })
+
+  it('requires the aggregate gate to cover every other CI job', async () => {
+    const inputs = await repositoryInputs()
+    const gateNeeds = [
+      '      - check-node-22-19\n',
+      '      - check-node-24\n',
+      '      - check-node-26\n',
+      '      - candidate\n',
+      '      - candidate-lane\n',
+      '      - packed-candidate-lane\n',
+      '      - exact-artifact-ubuntu-22-19\n',
+      '      - exact-artifact-ubuntu-24\n',
+      '      - exact-artifact-ubuntu-26\n',
+      '      - exact-artifact-macos-22-19\n',
+      '      - exact-artifact-macos-24\n',
+      '      - exact-artifact-macos-26\n',
+      '      - packed-install-ubuntu-22-19\n',
+      '      - packed-install-ubuntu-24\n',
+      '      - packed-install-ubuntu-26\n',
+      '      - packed-install-macos-22-19\n',
+      '      - packed-install-macos-24\n',
+      '      - packed-install-macos-26\n',
+      '      - dependency-review\n',
+    ]
+    for (const need of gateNeeds) {
+      const ciWorkflow = inputs.ciWorkflow.replace(need, '')
+      expect(ciWorkflow).not.toBe(inputs.ciWorkflow)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
+        'CI required-ci-gate job needs must contain every other CI job exactly once.',
+      )
+    }
+
+    const duplicate = inputs.ciWorkflow.replace(
+      '      - check-node-22-19\n      - check-node-24\n',
+      '      - check-node-22-19\n      - check-node-22-19\n      - check-node-24\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: duplicate })).toThrow(
+      'CI required-ci-gate job needs must not contain duplicate job IDs.',
+    )
+
+    const unknown = inputs.ciWorkflow.replace(
+      '      - dependency-review\n    runs-on: ubuntu-latest\n',
+      '      - unknown-job\n    runs-on: ubuntu-latest\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: unknown })).toThrow(
+      'CI required-ci-gate job needs must contain every other CI job exactly once.',
+    )
+  })
+
+  it('rejects a CI job added without extending the reviewed aggregate gate', async () => {
+    const inputs = await repositoryInputs()
+    const ciWorkflow = inputs.ciWorkflow.replace(
+      '\n  required-ci-gate:\n',
+      '\n  unreviewed-job:\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n\n  required-ci-gate:\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
+      'CI workflow job set did not match the reviewed contract.',
+    )
+  })
+
+  it('requires every explicit CI cell to keep its reviewed identity and topology', async () => {
+    const inputs = await repositoryInputs()
+    const cells = [
+      ['check-node-22-19', 'Node 22.19.0', 'ubuntu-latest', '22.19.0'],
+      ['check-node-24', 'Node 24', 'ubuntu-latest', '24'],
+      ['check-node-26', 'Node 26', 'ubuntu-latest', '26'],
+      ['exact-artifact-ubuntu-22-19', 'Exact workflow artifact (ubuntu-latest, Node 22.19.0)', 'ubuntu-latest', '22.19.0'],
+      ['exact-artifact-ubuntu-24', 'Exact workflow artifact (ubuntu-latest, Node 24)', 'ubuntu-latest', '24'],
+      ['exact-artifact-ubuntu-26', 'Exact workflow artifact (ubuntu-latest, Node 26)', 'ubuntu-latest', '26'],
+      ['exact-artifact-macos-22-19', 'Exact workflow artifact (macos-latest, Node 22.19.0)', 'macos-latest', '22.19.0'],
+      ['exact-artifact-macos-24', 'Exact workflow artifact (macos-latest, Node 24)', 'macos-latest', '24'],
+      ['exact-artifact-macos-26', 'Exact workflow artifact (macos-latest, Node 26)', 'macos-latest', '26'],
+      ['packed-install-ubuntu-22-19', 'Packed install (ubuntu-latest, Node 22.19.0)', 'ubuntu-latest', '22.19.0'],
+      ['packed-install-ubuntu-24', 'Packed install (ubuntu-latest, Node 24)', 'ubuntu-latest', '24'],
+      ['packed-install-ubuntu-26', 'Packed install (ubuntu-latest, Node 26)', 'ubuntu-latest', '26'],
+      ['packed-install-macos-22-19', 'Packed install (macos-latest, Node 22.19.0)', 'macos-latest', '22.19.0'],
+      ['packed-install-macos-24', 'Packed install (macos-latest, Node 24)', 'macos-latest', '24'],
+      ['packed-install-macos-26', 'Packed install (macos-latest, Node 26)', 'macos-latest', '26'],
+    ]
+    for (const [jobName, displayName, runner, node] of cells) {
+      const removed = removeCiJob(inputs.ciWorkflow, jobName)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: removed })).toThrow(
+        'CI workflow job set did not match the reviewed contract.',
+      )
+
+      const renamed = inputs.ciWorkflow.replace(`\n  ${jobName}:\n`, `\n  ${jobName}-renamed:\n`)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: renamed })).toThrow(
+        'CI workflow job set did not match the reviewed contract.',
+      )
+
+      const wrongDisplay = mutateCiJob(inputs.ciWorkflow, jobName, (job) => job.replace(
+        `    name: ${displayName}\n`,
+        '    name: Unreviewed CI cell\n',
+      ))
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongDisplay })).toThrow(
+        `CI ${jobName} job must use the reviewed display name exactly once.`,
+      )
+
+      const wrongRunner = mutateCiJob(inputs.ciWorkflow, jobName, (job) => job.replace(
+        `    runs-on: ${runner}\n`,
+        `    runs-on: ${runner === 'ubuntu-latest' ? 'macos-latest' : 'ubuntu-latest'}\n`,
+      ))
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongRunner })).toThrow(
+        `CI ${jobName} job must use the reviewed runner exactly once.`,
+      )
+
+      const wrongNode = mutateCiJob(inputs.ciWorkflow, jobName, (job) => job.replace(
+        `          node-version: ${node}\n`,
+        `          node-version: ${node === '24' ? '26' : '24'}\n`,
+      ))
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongNode })).toThrow(
+        `CI ${jobName} job must use the reviewed Node version exactly once.`,
+      )
+
+      if (jobName.startsWith('exact-artifact-')) {
+        const wrongMode = mutateCiJob(inputs.ciWorkflow, jobName, (job) => job.replace(
+          '          --host-graph-mode locked-no-overrides\n',
+          '          --host-graph-mode override-pinned\n',
+        ))
+        expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongMode })).toThrow(
+          `CI ${jobName} job must pass --host-graph-mode locked-no-overrides exactly once.`,
+        )
+      } else if (jobName.startsWith('packed-install-')) {
+        const wrongMode = mutateCiJob(inputs.ciWorkflow, jobName, (job) => job.replace(
+          '          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"\n',
+          '          --host-graph-mode locked-no-overrides\n'
+            + '          --package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"\n',
+        ))
+        expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongMode })).toThrow(
+          `CI ${jobName} job must not use an exact-artifact probe mode.`,
+        )
+      } else {
+        const wrongMode = mutateCiJob(inputs.ciWorkflow, jobName, (job) => job.replace(
+          '      - run: pnpm run check\n',
+          '      - run: pnpm run check -- --host-graph-mode locked-no-overrides\n',
+        ))
+        expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongMode })).toThrow(
+          `CI ${jobName} job must not use an artifact probe mode.`,
+        )
+      }
+    }
+  })
+
+  it('rejects duplicate explicit job IDs and any reintroduced CI matrix strategy', async () => {
+    const inputs = await repositoryInputs()
+    const duplicate = inputs.ciWorkflow.replace(
+      '\n  check-node-24:\n',
+      '\n  check-node-24:\n    name: Node 24\n    runs-on: ubuntu-latest\n    steps:\n      - run: true\n\n  check-node-24:\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: duplicate })).toThrow()
+
+    const strategy = mutateCiJob(inputs.ciWorkflow, 'check-node-24', (job) => job.replace(
+      '    runs-on: ubuntu-latest\n',
+      '    strategy:\n      matrix:\n        node: [24]\n    runs-on: ubuntu-latest\n',
+    ))
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: strategy })).toThrow(
+      'CI check-node-24 job must not use a matrix strategy in the active CI workflow.',
+    )
+  })
+
+  it('evaluates every explicit result independently and fails closed', () => {
+    const jobs = [
+      'check-node-22-19',
+      'check-node-24',
+      'check-node-26',
+      'candidate',
+      'candidate-lane',
+      'packed-candidate-lane',
+      'exact-artifact-ubuntu-22-19',
+      'exact-artifact-ubuntu-24',
+      'exact-artifact-ubuntu-26',
+      'exact-artifact-macos-22-19',
+      'exact-artifact-macos-24',
+      'exact-artifact-macos-26',
+      'packed-install-ubuntu-22-19',
+      'packed-install-ubuntu-24',
+      'packed-install-ubuntu-26',
+      'packed-install-macos-22-19',
+      'packed-install-macos-24',
+      'packed-install-macos-26',
+      'dependency-review',
+    ]
+    const results = Object.fromEntries(jobs.map((job) => [job, 'success']))
+    expect(evaluateRequiredCiResults(results, 'pull_request')).toBe(true)
+    expect(evaluateRequiredCiResults({ ...results, 'dependency-review': 'skipped' }, 'push')).toBe(true)
+
+    for (const job of jobs) {
+      const failed = { ...results, [job]: 'failure' }
+      expect(evaluateRequiredCiResults(failed, 'pull_request')).toBe(false)
+    }
+
+    const partialRerun = {
+      ...results,
+      'exact-artifact-ubuntu-22-19': 'failure',
+      'exact-artifact-ubuntu-24': 'success',
+    }
+    expect(evaluateRequiredCiResults(partialRerun, 'pull_request')).toBe(false)
+
+    for (const status of ['cancelled', 'skipped', 'neutral', '', 'unknown', undefined, null]) {
+      expect(evaluateRequiredCiResults({ ...results, 'packed-install-macos-26': status }, 'pull_request')).toBe(false)
+    }
+    expect(evaluateRequiredCiResults(results, 'workflow_dispatch')).toBe(false)
+    expect(evaluateRequiredCiResults(null, 'pull_request')).toBe(false)
+  })
+
+  it('requires the aggregate gate to use the fixed always, permissions, and action-free topology', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      [
+        'if: ${{ always() }}',
+        'if: always()',
+        'CI required-ci-gate job must execute with always() exactly once.',
+      ],
+      [
+        'permissions: {}',
+        'permissions: write-all',
+        'CI required-ci-gate job must disable all job permissions exactly once.',
+      ],
+      [
+        '      - name: Evaluate required CI results',
+        `      - uses: ${PINNED_ACTIONS.checkout}\n      - name: Evaluate required CI results`,
+        'CI required-ci-gate job must not use an Action.',
+      ],
+      [
+        '      - name: Evaluate required CI results',
+        `      - uses: ${PINNED_ACTIONS.downloadArtifact}\n      - name: Evaluate required CI results`,
+        'CI required-ci-gate job must not use an Action.',
+      ],
+      [
+        '      - name: Evaluate required CI results',
+        `      - uses: ${PINNED_ACTIONS.uploadArtifact}\n      - name: Evaluate required CI results`,
+        'CI required-ci-gate job must not use an Action.',
+      ],
+    ]
+    for (const [from, to, expected] of cases) {
+      const ciWorkflow = inputs.ciWorkflow.replace(from, to)
+      expect(ciWorkflow).not.toBe(inputs.ciWorkflow)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(expected)
+    }
+  })
+
+  it('requires the aggregate gate environment to map every need result exactly', async () => {
+    const inputs = await repositoryInputs()
+    const mappings = [
+      [
+        '          CANDIDATE_RESULT: ${{ needs.candidate.result }}\n',
+        '          CANDIDATE_RESULT: ${{ needs.check-node-24.result }}\n',
+      ],
+      [
+        '          PACKED_INSTALL_MACOS_26_RESULT: ${{ needs.packed-install-macos-26.result }}\n',
+        '',
+      ],
+      [
+        '          EVENT_NAME: ${{ github.event_name }}\n',
+        '          EXTRA_RESULT: ${{ needs.check.result }}\n'
+          + '          EVENT_NAME: ${{ github.event_name }}\n',
+      ],
+    ]
+    for (const [from, to] of mappings) {
+      const ciWorkflow = inputs.ciWorkflow.replace(from, to)
+      expect(ciWorkflow).not.toBe(inputs.ciWorkflow)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(
+        'CI required-ci-gate job environment mapping did not match the required results.',
+      )
+    }
+  })
+
+  it('requires the aggregate gate shell to fail closed for every result and event', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      [
+        '[ "$CHECK_NODE_22_19_RESULT" != "success" ]',
+        '[ "$CHECK_NODE_22_19_RESULT" == "success" ]',
+        'CI required-ci-gate job must require CHECK_NODE_22_19_RESULT to be success.',
+      ],
+      [
+        'set -euo pipefail',
+        'set -e',
+        'CI required-ci-gate job must enable strict shell failure handling.',
+      ],
+      [
+        '            echo "A required CI job did not succeed." >&2\n',
+        '            echo "A required CI job did not succeed." >&2 || true\n',
+        'CI required-ci-gate job shell must not mask a failed result.',
+      ],
+      [
+        '            *)\n',
+        '            pull_request|push)\n',
+        'CI required-ci-gate job must fail closed for dependency review and unknown events.',
+      ],
+    ]
+    for (const [from, to, expected] of cases) {
+      const ciWorkflow = inputs.ciWorkflow.replace(from, to)
+      expect(ciWorkflow).not.toBe(inputs.ciWorkflow)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(expected)
+    }
+  })
+
+  it('requires the aggregate gate shell to match the reviewed script exactly', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      [
+        'if false wrapper',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '          set -euo pipefail\n',
+          '          set -euo pipefail\n          if false; then\n',
+        )),
+        'CI required-ci-gate job must use the reviewed fail-closed script exactly.',
+      ],
+      [
+        'exit immediately',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '          set -euo pipefail\n',
+          '          set -euo pipefail\n          exit 0\n',
+        )),
+        'CI required-ci-gate job shell must not mask a failed result.',
+      ],
+      [
+        'mask an error',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '            echo "A required CI job did not succeed." >&2\n',
+          '            echo "A required CI job did not succeed." >&2 || true\n',
+        )),
+        'CI required-ci-gate job shell must not mask a failed result.',
+      ],
+      [
+        'override exit function',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '          set -euo pipefail\n',
+          '          set -euo pipefail\n          exit() { :; }\n',
+        )),
+        'CI required-ci-gate job must use the reviewed fail-closed script exactly.',
+      ],
+      [
+        'disable errexit',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '          set -euo pipefail\n',
+          '          set -euo pipefail\n          set +e\n',
+        )),
+        'CI required-ci-gate job must use the reviewed fail-closed script exactly.',
+      ],
+      [
+        'extra command',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '          esac\n',
+          '          esac\n          echo unexpected\n',
+        )),
+        'CI required-ci-gate job must use the reviewed fail-closed script exactly.',
+      ],
+      [
+        'trailing whitespace',
+        (workflow) => mutateCiJob(workflow, 'required-ci-gate', (job) => job.replace(
+          '          set -euo pipefail\n',
+          '          set -euo pipefail \n',
+        )),
+        'CI required-ci-gate job must use the reviewed fail-closed script exactly.',
+      ],
+    ]
+    for (const [label, mutate, expected] of cases) {
+      const ciWorkflow = mutate(inputs.ciWorkflow)
+      expect(ciWorkflow, label).not.toBe(inputs.ciWorkflow)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(expected)
+    }
+  })
+
+  it('accepts only the reviewed gate script with LF or CRLF and one optional final newline', async () => {
+    const inputs = await repositoryInputs()
+    const withoutFinalNewline = inputs.ciWorkflow.replace(/\n$/u, '')
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: withoutFinalNewline })).not.toThrow()
+
+    const crlf = inputs.ciWorkflow.replace(/\n/gu, '\r\n')
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: crlf })).not.toThrow()
+
+    const crlfWithoutFinalNewline = crlf.replace(/\r\n$/u, '')
+    expect(() => validateWorkflowContracts({
+      ...inputs,
+      ciWorkflow: crlfWithoutFinalNewline,
+    })).not.toThrow()
+
+    expect(() => validateWorkflowContracts({
+      ...inputs,
+      ciWorkflow: `${inputs.ciWorkflow}\n`,
+    })).toThrow('CI required-ci-gate job must use the reviewed fail-closed script exactly.')
+  })
+
+  it('keeps dependency review conditional only on pull requests and forbids ignored checks', async () => {
+    const inputs = await repositoryInputs()
+    const wrongCondition = inputs.ciWorkflow.replace(
+      "if: github.event_name == 'pull_request'",
+      'if: always()',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: wrongCondition })).toThrow(
+      'CI dependency-review job must run only on pull_request events.',
+    )
+
+    const ignored = inputs.ciWorkflow.replace(
+      '  candidate:\n',
+      '  candidate:\n    continue-on-error: true\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: ignored })).toThrow(
+      'CI candidate job must not ignore a failed check.',
+    )
+
+    const conditional = inputs.ciWorkflow.replace(
+      '  candidate:\n',
+      '  candidate:\n    if: always()\n',
+    )
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: conditional })).toThrow(
+      'CI candidate job must not have a job-level condition.',
+    )
+  })
+
+  it('rejects quoted job and step skip or ignore controls semantically', async () => {
+    const inputs = await repositoryInputs()
+    const cases = [
+      [
+        'gate job continue-on-error',
+        'required-ci-gate',
+        (job) => job.replace(
+          '    name: Required CI gate\n',
+          '    \'continue-on-error\': true\n    name: Required CI gate\n',
+        ),
+        'CI required-ci-gate job must not ignore a failed check.',
+      ],
+      [
+        'gate step continue-on-error',
+        'required-ci-gate',
+        (job) => job.replace(
+          '      - name: Evaluate required CI results\n',
+          '      - name: Evaluate required CI results\n        "continue-on-error": true\n',
+        ),
+        'CI required-ci-gate job steps must not skip or ignore a failed check.',
+      ],
+      [
+        'gate step if',
+        'required-ci-gate',
+        (job) => job.replace(
+          '      - name: Evaluate required CI results\n',
+          '      - name: Evaluate required CI results\n        \'if\': false\n',
+        ),
+        'CI required-ci-gate job steps must not skip or ignore a failed check.',
+      ],
+      [
+        'candidate job if',
+        'candidate',
+        (job) => job.replace(
+          '    name: Build candidate artifact\n',
+          '    "if": always()\n    name: Build candidate artifact\n',
+        ),
+        'CI candidate job must not have a job-level condition.',
+      ],
+      [
+        'candidate job continue-on-error',
+        'candidate',
+        (job) => job.replace(
+          '    name: Build candidate artifact\n',
+          '    \'continue-on-error\': true\n    name: Build candidate artifact\n',
+        ),
+        'CI candidate job must not ignore a failed check.',
+      ],
+      [
+        'candidate step if',
+        'candidate',
+        (job) => job.replace(
+          '      - run: corepack enable\n',
+          '      - run: corepack enable\n        "if": false\n',
+        ),
+        'CI candidate job steps must not skip or ignore a failed check.',
+      ],
+      [
+        'candidate step continue-on-error',
+        'candidate',
+        (job) => job.replace(
+          '      - run: corepack enable\n',
+          '      - run: corepack enable\n        \'continue-on-error\': true\n',
+        ),
+        'CI candidate job steps must not skip or ignore a failed check.',
+      ],
+      [
+        'dependency-review step if',
+        'dependency-review',
+        (job) => job.replace(
+          `      - uses: ${PINNED_ACTIONS.checkout} # v7.0.1\n`,
+          `      - uses: ${PINNED_ACTIONS.checkout} # v7.0.1\n        "if": false\n`,
+        ),
+        'CI dependency-review job steps must not skip or ignore a failed check.',
+      ],
+      [
+        'dependency-review step continue-on-error',
+        'dependency-review',
+        (job) => job.replace(
+          `      - uses: ${PINNED_ACTIONS.checkout} # v7.0.1\n`,
+          `      - uses: ${PINNED_ACTIONS.checkout} # v7.0.1\n        'continue-on-error': true\n`,
+        ),
+        'CI dependency-review job steps must not skip or ignore a failed check.',
+      ],
+    ]
+    for (const [label, jobName, mutateJob, expected] of cases) {
+      const ciWorkflow = mutateCiJob(inputs.ciWorkflow, jobName, mutateJob)
+      expect(ciWorkflow, label).not.toBe(inputs.ciWorkflow)
+      expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow })).toThrow(expected)
+    }
+  })
+
+  it('ignores comments and scalar content while enforcing the gate scalar exactly', async () => {
+    const inputs = await repositoryInputs()
+    const comment = mutateCiJob(inputs.ciWorkflow, 'candidate', (job) => job.replace(
+      '    name: Build candidate artifact\n',
+      '    # if: always()\n    name: Build candidate artifact\n',
+    ))
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: comment })).not.toThrow()
+
+    const scalar = mutateCiJob(inputs.ciWorkflow, 'candidate', (job) => job.replace(
+      '      - run: corepack enable\n',
+      '      - name: "if: always() continue-on-error: true"\n        run: corepack enable\n',
+    ))
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: scalar })).not.toThrow()
+
+    const gateScalar = mutateCiJob(inputs.ciWorkflow, 'required-ci-gate', (job) => job.replace(
+      '          set -euo pipefail\n',
+      '          set -euo pipefail\n          echo "if: always()"\n',
+    ))
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: gateScalar })).toThrow(
+      'CI required-ci-gate job must use the reviewed fail-closed script exactly.',
+    )
+  })
+
+  it('fails closed for duplicate keys and aliases in the CI workflow YAML', async () => {
+    const inputs = await repositoryInputs()
+    const duplicate = mutateCiJob(inputs.ciWorkflow, 'candidate', (job) => job.replace(
+      '      - run: corepack enable\n',
+      '      - run: corepack enable\n        name: first\n        name: second\n',
+    ))
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: duplicate })).toThrow(
+      'CI workflow YAML could not be parsed.',
+    )
+
+    const alias = inputs.ciWorkflow
+      .replace('    name: Build candidate artifact\n', '    name: &candidate-name Build candidate artifact\n')
+      .replace('    name: DSH rc.1 candidate lane\n', '    name: *candidate-name\n')
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: alias })).toThrow(
+      'CI workflow YAML could not be parsed.',
+    )
+  })
+
+  it('requires six explicit exact-artifact and packed-install CI cells while keeping the release matrix', async () => {
+    const inputs = await repositoryInputs()
+    const explicitCells = [
+      '  exact-artifact-ubuntu-22-19:\n',
+      '  exact-artifact-ubuntu-24:\n',
+      '  exact-artifact-ubuntu-26:\n',
+      '  exact-artifact-macos-22-19:\n',
+      '  exact-artifact-macos-24:\n',
+      '  exact-artifact-macos-26:\n',
+      '  packed-install-ubuntu-22-19:\n',
+      '  packed-install-ubuntu-24:\n',
+      '  packed-install-ubuntu-26:\n',
+      '  packed-install-macos-22-19:\n',
+      '  packed-install-macos-24:\n',
+      '  packed-install-macos-26:\n',
+    ]
+    for (const cell of explicitCells) {
+      expect(inputs.ciWorkflow).toContain(cell)
+    }
+    expect(inputs.ciWorkflow.match(/--host-graph-mode locked-no-overrides/gu)).toHaveLength(6)
     expect(inputs.ciWorkflow.match(/--host-graph-mode override-pinned/gu)).toHaveLength(1)
     expect(inputs.releaseWorkflow.match(/--host-graph-mode locked-no-overrides/gu)).toHaveLength(1)
     expect(inputs.releaseWorkflow).toContain('  compatibility-release:')
     expect(inputs.releaseWorkflow).toContain(
       '      - candidate-install\n      - compatibility-release\n',
     )
-    for (const cell of exactCells) {
-      expect(inputs.ciWorkflow).toContain(cell)
-      expect(inputs.releaseWorkflow).toContain(cell)
-    }
+    expect(inputs.ciWorkflow).not.toContain('strategy:\n')
+    expect(inputs.releaseWorkflow).toContain('strategy:\n')
   })
 
-  it('rejects a missing exact-artifact cell or a mode omission', async () => {
+  it('rejects a missing explicit artifact cell or a mode omission', async () => {
     const inputs = await repositoryInputs()
-    const missingCell = inputs.ciWorkflow.replace(
-      '          - os: macos-latest\n            node: 26\n',
-      '',
-    )
+    const missingCell = inputs.ciWorkflow.replace('  exact-artifact-macos-26:\n', '  exact-artifact-macos-26-removed:\n')
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: missingCell })).toThrow(
-      'CI exact-artifact-lane packed-install matrix did not match compatibility.json.',
+      'CI workflow job set did not match the reviewed contract.',
     )
-    const missingMode = inputs.ciWorkflow.replace(
+    const macos26ModeStart = inputs.ciWorkflow.indexOf('  exact-artifact-macos-26:\n')
+    const macos26ModeEnd = inputs.ciWorkflow.indexOf(
       '          --host-graph-mode locked-no-overrides\n',
-      '',
+      macos26ModeStart,
     )
-    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: missingMode })).toThrow(
-      'CI exact-artifact-lane must pass --host-graph-mode locked-no-overrides exactly once.',
+    const missingMacos26Mode = inputs.ciWorkflow.slice(0, macos26ModeEnd)
+      + inputs.ciWorkflow.slice(macos26ModeEnd + '          --host-graph-mode locked-no-overrides\n'.length)
+    expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: missingMacos26Mode })).toThrow(
+      'CI exact-artifact-macos-26 job must pass --host-graph-mode locked-no-overrides exactly once.',
     )
   })
 
@@ -344,7 +1010,7 @@ describe('workflow release evidence', () => {
       '          --probe-scope request-contracts\n',
     )
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: swapped })).toThrow(
-      'CI workflow must invoke the request-contracts scope exactly once.',
+      'CI workflow must invoke the request-contracts scope exactly once per exact-artifact job.',
     )
 
     const duplicate = inputs.ciWorkflow.replace(
@@ -352,7 +1018,7 @@ describe('workflow release evidence', () => {
       '          --probe-scope request-contracts\n          --probe-scope request-contracts\n',
     )
     expect(() => validateWorkflowContracts({ ...inputs, ciWorkflow: duplicate })).toThrow(
-      'CI workflow must invoke the request-contracts scope exactly once.',
+      'CI workflow must invoke the request-contracts scope exactly once per exact-artifact job.',
     )
   })
 

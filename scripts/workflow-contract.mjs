@@ -1,14 +1,118 @@
+import { parseDocument } from 'yaml'
+
 const PLATFORM_RUNNERS = Object.freeze({
   darwin: 'macos-latest',
   linux: 'ubuntu-latest',
 })
 const RELEASE_ARTIFACT_NAME = 'dsh-codex-sub-unpublished'
+const REQUIRED_CI_GATE_JOB = 'required-ci-gate'
+const REQUIRED_CI_BLOCKING_JOBS = Object.freeze([
+  'check-node-22-19',
+  'check-node-24',
+  'check-node-26',
+  'candidate',
+  'candidate-lane',
+  'packed-candidate-lane',
+  'exact-artifact-ubuntu-22-19',
+  'exact-artifact-ubuntu-24',
+  'exact-artifact-ubuntu-26',
+  'exact-artifact-macos-22-19',
+  'exact-artifact-macos-24',
+  'exact-artifact-macos-26',
+  'packed-install-ubuntu-22-19',
+  'packed-install-ubuntu-24',
+  'packed-install-ubuntu-26',
+  'packed-install-macos-22-19',
+  'packed-install-macos-24',
+  'packed-install-macos-26',
+])
+const REQUIRED_CI_JOBS = Object.freeze([
+  ...REQUIRED_CI_BLOCKING_JOBS,
+  'dependency-review',
+  REQUIRED_CI_GATE_JOB,
+])
+export const CI_EXPLICIT_JOB_SPECS = Object.freeze([
+  { name: 'check-node-22-19', displayName: 'Node 22.19.0', runner: 'ubuntu-latest', node: '22.19.0', kind: 'check' },
+  { name: 'check-node-24', displayName: 'Node 24', runner: 'ubuntu-latest', node: '24', kind: 'check' },
+  { name: 'check-node-26', displayName: 'Node 26', runner: 'ubuntu-latest', node: '26', kind: 'check' },
+  { name: 'exact-artifact-ubuntu-22-19', displayName: 'Exact workflow artifact (ubuntu-latest, Node 22.19.0)', runner: 'ubuntu-latest', node: '22.19.0', kind: 'exact-artifact' },
+  { name: 'exact-artifact-ubuntu-24', displayName: 'Exact workflow artifact (ubuntu-latest, Node 24)', runner: 'ubuntu-latest', node: '24', kind: 'exact-artifact' },
+  { name: 'exact-artifact-ubuntu-26', displayName: 'Exact workflow artifact (ubuntu-latest, Node 26)', runner: 'ubuntu-latest', node: '26', kind: 'exact-artifact' },
+  { name: 'exact-artifact-macos-22-19', displayName: 'Exact workflow artifact (macos-latest, Node 22.19.0)', runner: 'macos-latest', node: '22.19.0', kind: 'exact-artifact' },
+  { name: 'exact-artifact-macos-24', displayName: 'Exact workflow artifact (macos-latest, Node 24)', runner: 'macos-latest', node: '24', kind: 'exact-artifact' },
+  { name: 'exact-artifact-macos-26', displayName: 'Exact workflow artifact (macos-latest, Node 26)', runner: 'macos-latest', node: '26', kind: 'exact-artifact' },
+  { name: 'packed-install-ubuntu-22-19', displayName: 'Packed install (ubuntu-latest, Node 22.19.0)', runner: 'ubuntu-latest', node: '22.19.0', kind: 'packed-install' },
+  { name: 'packed-install-ubuntu-24', displayName: 'Packed install (ubuntu-latest, Node 24)', runner: 'ubuntu-latest', node: '24', kind: 'packed-install' },
+  { name: 'packed-install-ubuntu-26', displayName: 'Packed install (ubuntu-latest, Node 26)', runner: 'ubuntu-latest', node: '26', kind: 'packed-install' },
+  { name: 'packed-install-macos-22-19', displayName: 'Packed install (macos-latest, Node 22.19.0)', runner: 'macos-latest', node: '22.19.0', kind: 'packed-install' },
+  { name: 'packed-install-macos-24', displayName: 'Packed install (macos-latest, Node 24)', runner: 'macos-latest', node: '24', kind: 'packed-install' },
+  { name: 'packed-install-macos-26', displayName: 'Packed install (macos-latest, Node 26)', runner: 'macos-latest', node: '26', kind: 'packed-install' },
+])
+
+function resultEnvironmentName(jobName) {
+  return `${jobName.replaceAll('-', '_').toUpperCase()}_RESULT`
+}
+
+const REQUIRED_CI_GATE_ENV = Object.freeze([
+  ...REQUIRED_CI_BLOCKING_JOBS.map((jobName) => [
+    resultEnvironmentName(jobName),
+    `\${{ needs.${jobName}.result }}`,
+  ]),
+  ['DEPENDENCY_REVIEW_RESULT', '${{ needs.dependency-review.result }}'],
+  ['EVENT_NAME', '${{ github.event_name }}'],
+])
+const REQUIRED_CI_GATE_SCRIPT_LINES = Object.freeze([
+  'set -euo pipefail',
+  ...REQUIRED_CI_BLOCKING_JOBS.map((jobName, index) => {
+    const prefix = index === 0 ? 'if' : '  ||'
+    const suffix = index === REQUIRED_CI_BLOCKING_JOBS.length - 1 ? '; then' : ' \\ '
+    return `${prefix} [ "$${resultEnvironmentName(jobName)}" != "success" ]${suffix.trimEnd()}`
+  }),
+  '  echo "A required CI job did not succeed." >&2',
+  '  exit 1',
+  'fi',
+  'case "$EVENT_NAME" in',
+  '  pull_request)',
+  '    if [ "$DEPENDENCY_REVIEW_RESULT" != "success" ]; then',
+  '      echo "Dependency review did not succeed on a pull request." >&2',
+  '      exit 1',
+  '    fi',
+  '    ;;',
+  '  push)',
+  '    if [ "$DEPENDENCY_REVIEW_RESULT" != "skipped" ]; then',
+  '      echo "Dependency review must be skipped on a push." >&2',
+  '      exit 1',
+  '    fi',
+  '    ;;',
+  '  *)',
+  '    echo "Unsupported CI event." >&2',
+  '    exit 1',
+  '    ;;',
+  'esac',
+])
+
+export function evaluateRequiredCiResults(results, eventName) {
+  if (results === null || typeof results !== 'object' || Array.isArray(results)) {
+    return false
+  }
+  if (!REQUIRED_CI_BLOCKING_JOBS.every((jobName) => results[jobName] === 'success')) {
+    return false
+  }
+  if (eventName === 'pull_request') {
+    return results['dependency-review'] === 'success'
+  }
+  if (eventName === 'push') {
+    return results['dependency-review'] === 'skipped'
+  }
+  return false
+}
+
 export const PINNED_ACTIONS = Object.freeze({
   checkout: 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1',
   dependencyReview: 'actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294',
-  downloadArtifact: 'actions/download-artifact@37930b1c2abaa49bbe596cd826c3c89aef350131',
+  downloadArtifact: 'actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c',
   setupNode: 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020',
-  uploadArtifact: 'actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f',
+  uploadArtifact: 'actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a',
 })
 
 function invariant(condition, message) {
@@ -38,15 +142,52 @@ export function expectedPackedInstallMatrix(compatibility) {
   })
 }
 
+function assertExactValues(actual, expected, message) {
+  const actualSet = new Set(actual)
+  const expectedSet = new Set(expected)
+  const sortedActual = [...actual].sort()
+  const sortedExpected = [...expected].sort()
+  invariant(
+    actual.length === expected.length
+      && actualSet.size === actual.length
+      && expectedSet.size === expected.length
+      && JSON.stringify(sortedActual) === JSON.stringify(sortedExpected),
+    message,
+  )
+}
+
+export function assertCiExplicitJobCompatibility(compatibility, specs = CI_EXPLICIT_JOB_SPECS) {
+  const expectedNodes = nodeMatrixValues(compatibility.node)
+  const checkNodes = specs
+    .filter((spec) => spec.kind === 'check')
+    .map((spec) => spec.node)
+  assertExactValues(
+    checkNodes,
+    expectedNodes,
+    'CI Node checks did not match compatibility.json.',
+  )
+
+  const expectedCells = expectedPackedInstallMatrix(compatibility)
+  for (const [kind, label] of [
+    ['exact-artifact', 'CI exact artifact cells did not match compatibility.json.'],
+    ['packed-install', 'CI packed install cells did not match compatibility.json.'],
+  ]) {
+    const cells = specs
+      .filter((spec) => spec.kind === kind)
+      .map((spec) => `${spec.runner}|${spec.node}`)
+    assertExactValues(cells, expectedCells, label)
+  }
+}
+
 function jobBody(workflow, jobName) {
-  const marker = `\n  ${jobName}:\n`
-  const start = workflow.indexOf(marker)
-  invariant(start >= 0, `Workflow job was missing: ${jobName}.`)
-  const bodyStart = start + marker.length
-  const nextJob = workflow.slice(bodyStart).search(/^  [a-z][a-z0-9-]*:\s*$/mu)
-  return nextJob < 0
-    ? workflow.slice(bodyStart)
-    : workflow.slice(bodyStart, bodyStart + nextJob)
+  const lines = workflow.split(/\r?\n/u)
+  const jobIndex = lines.findIndex((line) => line === `  ${jobName}:`)
+  invariant(jobIndex >= 0, `Workflow job was missing: ${jobName}.`)
+  const nextJob = lines.slice(jobIndex + 1)
+    .findIndex((line) => /^  [a-z][a-z0-9-]*:\s*$/u.test(line))
+  const bodyEnd = nextJob < 0 ? lines.length : jobIndex + 1 + nextJob
+  const body = lines.slice(jobIndex + 1, bodyEnd).join('\n')
+  return nextJob < 0 ? body : `${body}\n`
 }
 
 function workflowJobs(workflow) {
@@ -79,10 +220,10 @@ function assertExactJobSet(workflow, expected, label) {
 }
 
 function workflowJobsBody(workflow) {
-  const marker = '\njobs:\n'
-  const start = workflow.indexOf(marker)
-  invariant(start >= 0, 'Workflow jobs were missing.')
-  return workflow.slice(start + marker.length)
+  const lines = workflow.split(/\r?\n/u)
+  const jobsIndex = lines.findIndex((line) => line === 'jobs:')
+  invariant(jobsIndex >= 0, 'Workflow jobs were missing.')
+  return lines.slice(jobsIndex + 1).join('\n')
 }
 
 function matrixCells(job) {
@@ -372,51 +513,124 @@ function assertPackedCandidateLaneJob(job, label) {
   assertNoArtifactMutation(job, label)
 }
 
-// The exact-artifact lane consumes the same immutable workflow artifact as the
-// packed-candidate lane and installs it into a fresh exact DSH Host.
-function assertExactArtifactLaneJob(job, expected, label) {
+function assertExplicitJobIdentity(job, spec, label) {
   invariant(
-    count(job, 'runs-on: ${{ matrix.os }}') === 1,
-    `${label} exact-artifact-lane job must use the reviewed matrix runner exactly once.`,
+    count(job, `name: ${spec.displayName}`) === 1,
+    `${label} must use the reviewed display name exactly once.`,
   )
   invariant(
-    count(job, 'node-version: ${{ matrix.node }}') === 1,
-    `${label} exact-artifact-lane job must use the reviewed Node matrix exactly once.`,
+    count(job, `runs-on: ${spec.runner}`) === 1,
+    `${label} must use the reviewed runner exactly once.`,
   )
-  assertMatrix(job, expected, `${label} exact-artifact-lane`)
   invariant(
-    count(job, 'pnpm install --frozen-lockfile') === 1,
-    `${label} exact-artifact-lane job must install the locked graph exactly once.`,
+    count(job, `node-version: ${spec.node}`) === 1,
+    `${label} must use the reviewed Node version exactly once.`,
   )
+  invariant(
+    !job.includes('matrix.') && !/\bstrategy\s*:/u.test(job),
+    `${label} must not use a matrix strategy.`,
+  )
+}
+
+function assertExplicitCheckJob(job, spec, label) {
+  assertExplicitJobIdentity(job, spec, label)
+  invariant(
+    !/\bneeds\s*:/u.test(job),
+    `${label} must not depend on another CI job.`,
+  )
+  invariant(
+    count(job, PINNED_ACTIONS.checkout) === 1
+      && count(job, PINNED_ACTIONS.setupNode) === 1
+      && count(job, 'corepack enable') === 1
+      && count(job, 'pnpm install --frozen-lockfile') === 1
+      && count(job, 'pnpm run check') === 1,
+    `${label} must preserve the reviewed check steps exactly once.`,
+  )
+  invariant(
+    count(job, PINNED_ACTIONS.downloadArtifact) === 0
+      && count(job, PINNED_ACTIONS.uploadArtifact) === 0,
+    `${label} must not consume or produce a workflow artifact.`,
+  )
+  invariant(
+    !job.includes('--host-graph-mode') && !job.includes('--probe-scope'),
+    `${label} must not use an artifact probe mode.`,
+  )
+}
+
+// Each explicit exact-artifact job consumes the same immutable workflow artifact
+// and installs it into a fresh exact DSH Host.
+function assertExplicitExactArtifactJob(job, spec, label) {
+  assertExplicitJobIdentity(job, spec, label)
   invariant(
     /^    needs: candidate$/mu.test(job),
-    `${label} exact-artifact-lane job must consume the candidate artifact.`,
+    `${label} must consume the candidate artifact.`,
   )
   invariant(
-    count(job, PINNED_ACTIONS.downloadArtifact) === 1,
-    `${label} exact-artifact-lane job must download the shared artifact exactly once.`,
+    count(job, PINNED_ACTIONS.checkout) === 1
+      && count(job, PINNED_ACTIONS.setupNode) === 1
+      && count(job, PINNED_ACTIONS.downloadArtifact) === 1
+      && count(job, 'corepack enable') === 1
+      && count(job, 'pnpm install --frozen-lockfile') === 1,
+    `${label} must preserve the reviewed artifact handoff steps exactly once.`,
   )
   invariant(
     count(job, `name: ${RELEASE_ARTIFACT_NAME}`) === 1,
-    `${label} exact-artifact-lane job must download the canonical workflow artifact.`,
+    `${label} must download the canonical workflow artifact.`,
   )
   invariant(
     count(job, 'node scripts/release-artifact.mjs verify') === 1,
-    `${label} exact-artifact-lane job must verify the downloaded artifact exactly once.`,
+    `${label} must verify the downloaded candidate exactly once.`,
   )
   invariant(
     count(job, 'pnpm run test:exact-artifact-lane') === 1,
-    `${label} exact-artifact-lane job must execute the reviewed probe exactly once.`,
+    `${label} must execute the reviewed probe exactly once.`,
   )
-  assertProbeScopeInvocation(job, 'request-contracts', `${label} exact-artifact-lane`)
-  assertHostGraphModeInvocation(job, 'locked-no-overrides', `${label} exact-artifact-lane`)
+  assertProbeScopeInvocation(job, 'request-contracts', label)
+  assertHostGraphModeInvocation(job, 'locked-no-overrides', label)
   invariant(
     count(job, '--package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"') === 1,
-    `${label} exact-artifact-lane job must install the verified tarball.`,
+    `${label} must install the verified tarball.`,
   )
   invariant(
     count(job, '--expected-sha256 "${{ steps.release-artifact.outputs.sha256 }}"') === 1,
-    `${label} exact-artifact-lane job must pass the verified SHA-256 to the runner.`,
+    `${label} must pass the verified SHA-256 to the runner.`,
+  )
+  assertNoArtifactMutation(job, label)
+}
+
+function assertExplicitPackedInstallJob(job, spec, label) {
+  assertExplicitJobIdentity(job, spec, label)
+  invariant(
+    /^    needs: candidate$/mu.test(job),
+    `${label} must consume the candidate artifact.`,
+  )
+  invariant(
+    count(job, PINNED_ACTIONS.checkout) === 1
+      && count(job, PINNED_ACTIONS.setupNode) === 1
+      && count(job, PINNED_ACTIONS.downloadArtifact) === 1
+      && count(job, 'corepack enable') === 1
+      && count(job, 'pnpm install --frozen-lockfile') === 1,
+    `${label} must preserve the reviewed artifact handoff steps exactly once.`,
+  )
+  invariant(
+    count(job, `name: ${RELEASE_ARTIFACT_NAME}`) === 1,
+    `${label} must download the canonical workflow artifact.`,
+  )
+  invariant(
+    count(job, 'node scripts/release-artifact.mjs verify') === 1,
+    `${label} must verify the downloaded candidate exactly once.`,
+  )
+  invariant(
+    count(job, 'pnpm run test:packed-install') === 1,
+    `${label} must execute the reviewed packed-install probe exactly once.`,
+  )
+  invariant(
+    !job.includes('--host-graph-mode') && !job.includes('--probe-scope'),
+    `${label} must not use an exact-artifact probe mode.`,
+  )
+  invariant(
+    count(job, '--package-tarball "${{ steps.release-artifact.outputs.package-tarball }}"') === 1,
+    `${label} must install the verified tarball.`,
   )
   assertNoArtifactMutation(job, label)
 }
@@ -502,6 +716,225 @@ function assertArtifactFinalizer(job, label) {
     `${label} must verify the downloaded candidate exactly once.`,
   )
   assertNoArtifactMutation(job, label)
+}
+
+function parseJobNeeds(job, label) {
+  const lines = job.split(/\r?\n/u)
+  const needsIndex = lines.findIndex((line) => line === '    needs:')
+  invariant(needsIndex >= 0, `${label} needs block was missing.`)
+  const entriesEnd = blockEnd(lines, needsIndex + 1, 4)
+  const entries = lines.slice(needsIndex + 1, entriesEnd).filter(isContent)
+  invariant(entries.length > 0, `${label} needs block was empty.`)
+  const names = entries.map((line) => {
+    invariant(
+      indentation(line) === 6 && /^      - [a-z][a-z0-9-]*$/u.test(line),
+      `${label} needs must use a block list of job IDs.`,
+    )
+    return line.slice('      - '.length)
+  })
+  return names
+}
+
+function assertExactStringSet(actual, expected, message) {
+  const sortedActual = [...actual].sort()
+  const sortedExpected = [...expected].sort()
+  invariant(JSON.stringify(sortedActual) === JSON.stringify(sortedExpected), message)
+}
+
+function parseGateEnvironment(job, label) {
+  const lines = job.split(/\r?\n/u)
+  const envIndex = lines.findIndex((line) => line === '        env:')
+  invariant(envIndex >= 0, `${label} environment mapping was missing.`)
+  const envEnd = blockEnd(lines, envIndex + 1, 8)
+  const entries = lines.slice(envIndex + 1, envEnd).filter(isContent)
+  invariant(
+    entries.length === REQUIRED_CI_GATE_ENV.length,
+    `${label} environment mapping did not match the required results.`,
+  )
+  const actual = entries.map((line) => {
+    invariant(indentation(line) === 10, `${label} environment mapping indentation was invalid.`)
+    const match = /^\s{10}([A-Z][A-Z0-9_]*)\s*:\s*(.+)$/u.exec(line)
+    invariant(match !== null, `${label} environment mapping syntax was invalid.`)
+    const [, name, value] = match
+    invariant(name !== undefined && value !== undefined, `${label} environment mapping was incomplete.`)
+    return [name, value]
+  })
+  invariant(
+    JSON.stringify(actual) === JSON.stringify(REQUIRED_CI_GATE_ENV),
+    `${label} environment mapping did not match the required results.`,
+  )
+}
+
+function gateShellBody(job, label) {
+  const lines = job.split(/\r?\n/u)
+  if (lines.at(-1) === '') {
+    lines.pop()
+  }
+  const runIndexes = lines
+    .map((line, index) => ({ index, line }))
+    .filter(({ line }) => line === '        run: |')
+    .map(({ index }) => index)
+  const exactError = `${label} must use the reviewed fail-closed script exactly.`
+  invariant(runIndexes.length === 1, exactError)
+  const runIndex = runIndexes[0]
+  invariant(runIndex !== undefined, exactError)
+  const runEnd = blockEnd(lines, runIndex + 1, 8)
+  const payload = lines.slice(runIndex + 1, runEnd)
+  invariant(payload.every((line) => /^ {10}/u.test(line)), exactError)
+  return payload.map((line) => line.slice(10))
+}
+
+function isMapping(value) {
+  return value !== null && typeof value === 'object' && !Array.isArray(value)
+}
+
+function parseCiWorkflowTopology(workflow) {
+  let document
+  try {
+    document = parseDocument(workflow, { uniqueKeys: true })
+  } catch {
+    throw new Error('CI workflow YAML could not be parsed.')
+  }
+  invariant(document.errors.length === 0, 'CI workflow YAML could not be parsed.')
+
+  let value
+  try {
+    value = document.toJS({ maxAliasCount: 0 })
+  } catch {
+    throw new Error('CI workflow YAML could not be parsed.')
+  }
+  invariant(isMapping(value), 'CI workflow YAML root must be a mapping.')
+  const jobs = Object.hasOwn(value, 'jobs') ? value.jobs : undefined
+  invariant(isMapping(jobs), 'CI workflow jobs must be a mapping.')
+  for (const [name, job] of Object.entries(jobs)) {
+    invariant(isMapping(job), `CI ${name} job must be a mapping.`)
+    invariant(
+      Object.hasOwn(job, 'steps') && Array.isArray(job.steps),
+      `CI ${name} job steps must be a sequence.`,
+    )
+    for (const step of job.steps) {
+      invariant(isMapping(step), `CI ${name} job steps must be mappings.`)
+    }
+  }
+  return jobs
+}
+
+function assertRequiredCiGateJob(job, expectedNeeds) {
+  const label = 'CI required-ci-gate job'
+  const directIfLines = job.split(/\r?\n/u).filter((line) => /^    if\s*:/u.test(line))
+  invariant(
+    count(job, '    name: Required CI gate') === 1,
+    `${label} must use the reviewed name exactly once.`,
+  )
+  invariant(
+    directIfLines.length === 1 && directIfLines[0] === '    if: ${{ always() }}',
+    `${label} must execute with always() exactly once.`,
+  )
+  const needs = parseJobNeeds(job, label)
+  invariant(
+    new Set(needs).size === needs.length,
+    `${label} needs must not contain duplicate job IDs.`,
+  )
+  assertExactStringSet(
+    needs,
+    expectedNeeds,
+    `${label} needs must contain every other CI job exactly once.`,
+  )
+  invariant(
+    count(job, '    runs-on: ubuntu-latest') === 1,
+    `${label} must use the reviewed Linux runner exactly once.`,
+  )
+  invariant(
+    count(job, '    permissions: {}') === 1,
+    `${label} must disable all job permissions exactly once.`,
+  )
+  invariant(
+    count(job, '    steps:') === 1
+      && count(job, '      - name: Evaluate required CI results') === 1
+      && count(job, '        shell: bash') === 1
+      && count(job, '        run: |') === 1,
+    `${label} must contain exactly one bash step.`,
+  )
+  invariant(
+    !/^\s*-\s+uses\s*:/mu.test(job) && !/\buses\s*:/u.test(job),
+    `${label} must not use an Action.`,
+  )
+  const stepLinesSource = job.split(/\r?\n/u)
+  const stepsIndex = stepLinesSource.findIndex((line) => line === '    steps:')
+  const stepsEnd = blockEnd(stepLinesSource, stepsIndex + 1, 4)
+  const stepLines = stepLinesSource.slice(stepsIndex + 1, stepsEnd)
+    .filter((line) => /^      -\s+/u.test(line))
+  invariant(stepLines.length === 1, `${label} must contain exactly one step.`)
+  parseGateEnvironment(job, label)
+
+  const shellLines = gateShellBody(job, label)
+  const shell = shellLines.join('\n')
+  invariant(
+    count(shell, 'set -euo pipefail') === 1,
+    `${label} must enable strict shell failure handling.`,
+  )
+  for (const [name] of REQUIRED_CI_GATE_ENV.slice(0, REQUIRED_CI_BLOCKING_JOBS.length)) {
+    invariant(
+      count(shell, `[ "$${name}" != "success" ]`) === 1,
+      `${label} must require ${name} to be success.`,
+    )
+  }
+  invariant(
+    shell.includes('case "$EVENT_NAME" in')
+      && shell.includes('pull_request)')
+      && shell.includes('if [ "$DEPENDENCY_REVIEW_RESULT" != "success" ]')
+      && shell.includes('push)')
+      && shell.includes('if [ "$DEPENDENCY_REVIEW_RESULT" != "skipped" ]')
+      && shell.includes('*)')
+      && count(shell, 'exit 1') >= 3,
+    `${label} must fail closed for dependency review and unknown events.`,
+  )
+  invariant(
+    !shell.includes('|| true') && !shell.includes('exit 0') && !shell.includes('continue'),
+    `${label} shell must not mask a failed result.`,
+  )
+  invariant(
+    JSON.stringify(shellLines) === JSON.stringify(REQUIRED_CI_GATE_SCRIPT_LINES),
+    `${label} must use the reviewed fail-closed script exactly.`,
+  )
+}
+
+function assertCiJobTopology(workflow) {
+  const jobs = parseCiWorkflowTopology(workflow)
+  for (const [name, job] of Object.entries(jobs)) {
+    const label = `CI ${name} job`
+    invariant(
+      !Object.hasOwn(job, 'strategy'),
+      `${label} must not use a matrix strategy in the active CI workflow.`,
+    )
+    invariant(
+      !Object.hasOwn(job, 'continue-on-error'),
+      `${label} must not ignore a failed check.`,
+    )
+    for (const step of job.steps) {
+      invariant(
+        !Object.hasOwn(step, 'if') && !Object.hasOwn(step, 'continue-on-error'),
+        `${label} steps must not skip or ignore a failed check.`,
+      )
+    }
+    if (name === REQUIRED_CI_GATE_JOB) {
+      continue
+    }
+    if (name === 'dependency-review') {
+      const directIfLines = jobBody(workflow, name).split(/\r?\n/u)
+        .filter((line) => /^    if\s*:/u.test(line))
+      invariant(
+        directIfLines.length === 1
+          && directIfLines[0] === "    if: github.event_name == 'pull_request'",
+        `${label} must run only on pull_request events.`,
+      )
+      continue
+    }
+    invariant(
+      !Object.hasOwn(job, 'if'),
+      `${label} must not have a job-level condition.`,
+    )
+  }
 }
 
 function permissionDeclarations(workflow) {
@@ -601,7 +1034,7 @@ function assertReleaseCandidateDependencies(job) {
   )
 }
 
-function assertReadOnlyWorkflowPermissions(workflow, label) {
+function assertReadOnlyWorkflowPermissions(workflow, label, options = {}) {
   const declarations = permissionDeclarations(workflow)
   const workflowDeclarations = declarations.filter(({ line }) => indentation(line) === 0)
   invariant(
@@ -609,7 +1042,22 @@ function assertReadOnlyWorkflowPermissions(workflow, label) {
     `${label} must declare exactly one workflow-level permissions block.`,
   )
 
+  const emptyJobDeclarations = declarations.filter(({ line }) => line.trim() === 'permissions: {}')
+  if (options.allowEmptyJob !== undefined) {
+    invariant(
+      emptyJobDeclarations.length === 1
+        && indentation(emptyJobDeclarations[0]?.line ?? '') === 4
+        && jobBody(workflow, options.allowEmptyJob).includes('\n    permissions: {}\n'),
+      `${label} must contain exactly one empty permission block for ${options.allowEmptyJob}.`,
+    )
+  } else {
+    invariant(emptyJobDeclarations.length === 0, `${label} contained an unexpected empty permission block.`)
+  }
+
   for (const declaration of declarations) {
+    if (options.allowEmptyJob !== undefined && declaration.line.trim() === 'permissions: {}') {
+      continue
+    }
     try {
       assertPermissionBlock(workflow, declaration, ['contents: read'], label)
     } catch {
@@ -750,10 +1198,10 @@ function assertNoRegistryCredentials(workflow) {
   )
 }
 
-function assertNonPublishingWorkflow(workflow, label) {
+function assertNonPublishingWorkflow(workflow, label, options = {}) {
   const jobs = workflowJobsBody(workflow)
   invariant(!/\bpublish\b/u.test(jobs), `${label} must not contain a publish operation.`)
-  assertReadOnlyWorkflowPermissions(workflow, label)
+  assertReadOnlyWorkflowPermissions(workflow, label, options)
 }
 
 function assertStagedPublishingWorkflow(workflow, stageJob) {
@@ -787,30 +1235,58 @@ export function validateWorkflowContracts({
   assertNoCheckoutOverrides(releaseWorkflow, 'Release workflow')
   assertNoRegistryCredentials(releaseWorkflow)
   assertSerializedReleaseWorkflow(releaseWorkflow)
+  assertExactJobSet(
+    ciWorkflow,
+    REQUIRED_CI_JOBS,
+    'CI workflow',
+  )
+  assertCiExplicitJobCompatibility(compatibility)
   invariant(
-    count(ciWorkflow, '--probe-scope request-contracts') === 1,
-    'CI workflow must invoke the request-contracts scope exactly once.',
+    count(ciWorkflow, '--probe-scope request-contracts') === 6,
+    'CI workflow must invoke the request-contracts scope exactly once per exact-artifact job.',
   )
   invariant(
     count(ciWorkflow, '--probe-scope credential-topology') === 1,
     'CI workflow must invoke the credential-topology scope exactly once.',
   )
-  assertExactJobSet(
-    ciWorkflow,
-    [
-      'candidate',
-      'candidate-lane',
-      'check',
-      'dependency-review',
-      'exact-artifact-lane',
-      'packed-candidate-lane',
-      'packed-install',
-    ],
-    'CI workflow',
+  const ciJobNames = workflowJobs(ciWorkflow).map((job) => job.name)
+  assertRequiredCiGateJob(
+    jobBody(ciWorkflow, REQUIRED_CI_GATE_JOB),
+    ciJobNames.filter((name) => name !== REQUIRED_CI_GATE_JOB),
+  )
+  assertCiJobTopology(ciWorkflow)
+  const candidateJob = jobBody(ciWorkflow, 'candidate')
+  assertExplicitJobIdentity(
+    candidateJob,
+    { displayName: 'Build candidate artifact', runner: 'ubuntu-latest', node: '24' },
+    'CI candidate job',
+  )
+  invariant(
+    !/\bneeds\s*:/u.test(candidateJob),
+    'CI candidate job must not depend on another CI job.',
   )
   assertCandidateLaneJob(jobBody(ciWorkflow, 'candidate-lane'), 'CI')
+  assertExplicitJobIdentity(
+    jobBody(ciWorkflow, 'candidate-lane'),
+    { displayName: 'DSH rc.1 candidate lane', runner: 'ubuntu-latest', node: '24' },
+    'CI candidate-lane job',
+  )
   assertPackedCandidateLaneJob(jobBody(ciWorkflow, 'packed-candidate-lane'), 'CI')
-  assertExactArtifactLaneJob(jobBody(ciWorkflow, 'exact-artifact-lane'), expected, 'CI')
+  assertExplicitJobIdentity(
+    jobBody(ciWorkflow, 'packed-candidate-lane'),
+    { displayName: 'Fresh packed workflow artifact on DSH 0.1.1-rc.1', runner: 'ubuntu-latest', node: '24' },
+    'CI packed-candidate-lane job',
+  )
+  for (const spec of CI_EXPLICIT_JOB_SPECS) {
+    const job = jobBody(ciWorkflow, spec.name)
+    if (spec.kind === 'check') {
+      assertExplicitCheckJob(job, spec, `CI ${spec.name} job`)
+    } else if (spec.kind === 'exact-artifact') {
+      assertExplicitExactArtifactJob(job, spec, `CI ${spec.name} job`)
+    } else {
+      assertExplicitPackedInstallJob(job, spec, `CI ${spec.name} job`)
+    }
+  }
   const releaseJobs = [
     'candidate',
     'candidate-install',
@@ -826,10 +1302,9 @@ export function validateWorkflowContracts({
   }
   assertExactJobSet(releaseWorkflow, releaseJobs, 'Release workflow')
   assertReleaseGateChain(releaseWorkflow, releaseMode)
-  assertArtifactProducer(jobBody(ciWorkflow, 'candidate'), 'CI candidate job')
-  assertArtifactConsumer(jobBody(ciWorkflow, 'packed-install'), expected, 'CI')
+  assertArtifactProducer(candidateJob, 'CI candidate job')
   assertOnlyProducerMutatesArtifact(ciWorkflow, 'candidate', 'CI')
-  assertNonPublishingWorkflow(ciWorkflow, 'CI workflow')
+  assertNonPublishingWorkflow(ciWorkflow, 'CI workflow', { allowEmptyJob: REQUIRED_CI_GATE_JOB })
   assertReleaseRefGuard(jobBody(releaseWorkflow, 'release-ref'))
   const releaseCandidate = jobBody(releaseWorkflow, 'candidate')
   assertReleaseCandidateDependencies(releaseCandidate)

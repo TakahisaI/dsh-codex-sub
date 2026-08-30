@@ -85,6 +85,14 @@ manual dispatch waits for the in-progress release instead of cancelling it or ra
 candidate through staging. The workflow contract rejects a missing, renamed, duplicated, nested,
 flow-style, or cancellation-enabled concurrency declaration.
 
+Protected `main` should require the fixed CI `Required CI gate` check as the branch-protection
+boundary. That aggregate directly needs every explicit CI job and fails closed on failure,
+cancellation, skip, or an unsupported event; the workflow contract requires its direct `needs` set
+to match every other CI job. Explicit job IDs prevent a partial matrix rerun from replacing an
+unresolved sibling with an aggregate matrix result. The manually dispatched release workflow intentionally has no aggregate gate: its existing
+`release-ref`, source-check, matrix, `candidate-ready`, and staging dependency chain remains the
+release-specific boundary.
+
 The workflow-level permission remains `contents: read`. Only `stage-publish` receives
 `id-token: write`. npm trusts this repository and the exact `release.yml` filename, and grants that
 relationship only `createStagedPackage`. The job installs and verifies npm `11.15.0`, downloads and
