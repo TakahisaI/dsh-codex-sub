@@ -62,7 +62,7 @@ This decision is accepted from two completed, secret-free evidence lanes plus st
 - Natural refresh observation on a real account (#33) remains a maintainer-controlled follow-up;
   it is not an ownership prerequisite because refresh contracts are covered offline and the
   supported release line is unchanged.
-- Scheduled upstream drift detection (#36) continues as a non-blocking canary outside blocking CI.
+- Upstream drift detection ([Issue #36](https://github.com/TakahisaI/dsh-codex-sub/issues/36)) is planned as a non-blocking canary; it is not implemented and is not a current evidence lane.
 
 ### Candidate-owned image and auth boundary
 

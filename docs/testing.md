@@ -356,13 +356,23 @@ copied record's heading cannot satisfy another version.
 
 Windows is not a first-alpha target because the current vault cannot verify owner-only ACLs there.
 
-Non-blocking scheduled canaries:
+Planned non-blocking upstream compatibility canary (not yet implemented; tracked in [Issue #36](https://github.com/TakahisaI/dsh-codex-sub/issues/36)) targets:
 
-- DSH default branch;
-- latest pi-ai release;
-- pi-ai default branch when practical.
+- exact supported baseline from `compatibility.json` as a control;
+- latest public DSH release newer than the baseline, when one exists;
+- DSH public default branch or a documented checksummed source snapshot, reproducibly installable
+  without unreviewed scripts;
+- latest public `@earendil-works/pi-ai` release newer than the baseline, when one exists;
+- the next Node even-major line only after its official release is available on GitHub-hosted
+  runners.
 
-Canaries open an issue or dependency PR. They never publish.
+The initial canary is planned to provide only a workflow-failure notification and a bounded
+summary. It will not automatically write an issue, open a dependency PR, or publish a package.
+
+A separate planned scheduled or manually triggered published-Alpha integrity check (tracked in
+[Issue #38](https://github.com/TakahisaI/dsh-codex-sub/issues/38)) will cover registry, checksum,
+and clean-install integrity. It is non-publishing and separate from the upstream compatibility
+canary.
 
 ## 5. Release gates
 
