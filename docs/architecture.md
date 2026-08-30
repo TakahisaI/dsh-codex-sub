@@ -249,8 +249,21 @@ The executable then forces termination so a leaked upstream OAuth handle cannot 
 ADR 0016.
 
 `login` adapts pi-ai's published interaction events. It validates destinations as HTTPS URLs with
-no user information, prints them without opening a browser, and uses non-echoing reads for secret
-and manual-code prompts. SIGINT aborts the interaction and pending prompt resources.
+no user information, keeps a destination only for the next manual-code prompt, and asks for an
+explicit empty Enter before invoking the fixed shell-free macOS/Linux default-browser opener.
+The opener uses absolute `/usr/bin/open` or `/usr/bin/xdg-open` paths and a sanitized environment
+(`PATH=/usr/bin:/bin`, a canonical trusted OS-account home, and XDG roots where only unset or
+exactly empty values receive specification defaults; every non-empty single or list is validated,
+canonicalized, and checked for path/list bounds, directory type, owner, mode, and trusted ancestors
+before being passed only in canonical form, plus only validated local Linux desktop/session values;
+constructed DBus paths use normalized ASCII-safe runtime segments). Any invalid XDG value rejects the
+opener and uses the manual fallback. Unsupported,
+route-less, or failed launches fall back to manual opening without native error details. The
+native child is unrefed immediately; its five-second wait remains referenced until settlement and
+SIGTERM is the only termination attempt. The explicit Enter confirmation authorizes disclosure of
+the validated URL to the OS account's configured default `.desktop` handler; xdg-open is an
+eventual handoff rather than a browser-process guarantee. Secret and manual-code prompts use non-echoing reads,
+and SIGINT aborts the interaction and pending prompt resources.
 
 `status` is local and offline. `doctor` is deterministic and secret-free: it uses bounded vault
 inspection rather than a full credential read and performs no login, refresh, model request, or

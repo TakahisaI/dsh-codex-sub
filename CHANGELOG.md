@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Changed
+
+- Make a single explicitly marked selector default accept Enter without changing the existing
+  exact numeric/id/label selection rules.
+- Ask for an explicit Enter confirmation before opening a validated OAuth destination with the
+  fixed absolute macOS/Linux browser opener; unsupported, route-less, or failed launches retain a
+  safe manual fallback. Sanitize the native child environment, derive Linux HOME/XDG roots only
+  from a canonical trusted OS-account home, drain late process errors, and unref the child
+  immediately while retaining a bounded referenced open wait. Canonicalize runtime paths and
+  reject unsafe ancestors/components before constructing local DBus/Wayland routes. The explicit
+  confirmation authorizes disclosure to the OS account's configured default `.desktop` handler;
+  `xdg-open` is an eventual handoff rather than a browser-process guarantee. Prove parent exit in
+  a subprocess fixture.
+
 ## 0.1.0-alpha.2
 
 > Release candidate. This version has not been published, staged, or verified as public support.

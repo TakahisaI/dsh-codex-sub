@@ -40,11 +40,39 @@ and login cancellation uses four.
 Adapt pi-ai's published `AuthInteraction` structurally inside `src/piai/**` and implement terminal
 rendering in `src/cli/**`. Validate every displayed destination with the platform URL parser and
 allow only HTTPS URLs without username or password. Print validated authorization URLs and device
-codes only as ephemeral interactive output; never place them in reports or persistence. Do not open
-a browser automatically. Before login, reject an explicit `PI_OAUTH_CALLBACK_HOST` unless it is the
-loopback literal `127.0.0.1` or `::1`; the configured value never enters output. Read `secret` and
-`manual_code` prompts with a non-echoing input path, render `select` prompts as numbered choices,
-and propagate the combined interaction/prompt abort signal to every pending read.
+codes only as ephemeral interactive output; never place them in reports or persistence. An
+`auth_url` is held only as an ephemeral pending interaction value. The following `manual_code`
+prompt first reads hidden input that treats an empty Enter as explicit confirmation to invoke one
+fixed, shell-free macOS/Linux default-browser opener; a non-empty answer is passed through without
+launching. Unsupported or failed launches print one fixed manual-opening fallback and continue to
+the normal hidden code prompt. A second pending destination or any prompt other than the expected
+`manual_code` fails closed. Before login, reject an explicit `PI_OAUTH_CALLBACK_HOST` unless it is
+the loopback literal `127.0.0.1` or `::1`; the configured value never enters output. Read `secret`
+and `manual_code` prompts with a non-echoing input path, render `select` prompts as numbered
+choices, accept Enter only for one option whose sanitized label ends with the exact case-sensitive
+suffix ` (default)`, and propagate the combined interaction/prompt abort signal to every pending
+read. Native browser launch uses only absolute `/usr/bin/open` or `/usr/bin/xdg-open` paths with
+shell disabled. Its child receives a fixed `/usr/bin:/bin` path and only validated local Linux
+desktop-session values: a private current-user-owned runtime directory, local `DISPLAY`, a
+runtime-owned Wayland socket, a runtime-owned `bus` socket represented as `unix:path=...` only
+when the normalized absolute path has non-empty ASCII `[A-Za-z0-9_.-]+` segments, and strictly
+validated desktop/session names. No ambient browser, loader, shell-startup, or Node
+injection variable is inherited; without one validated GUI route the opener falls back to manual
+instructions. The detached child is unrefed immediately, while the bounded open timer remains
+referenced until settlement and only SIGTERM is attempted.
+
+On Linux, the environment also uses the canonical, trusted home directory reported by the OS
+account (`os.userInfo()`). XDG config/data roots use specification defaults only when their values
+are unset or exactly empty; every non-empty single or list is canonicalized and checked for path and
+list bounds, directory type, owner, mode, and trusted ancestors, and one invalid list entry rejects
+the entire opener. Only validated canonical roots are passed to the child; ambient `HOME` and
+unvalidated XDG roots are not trusted. Real and effective UIDs must match, runtime/home ancestors
+must not be group/world writable, and the runtime directory itself must be a current-user-owned
+`0700` directory. The
+validated authorization URL is intentionally disclosed to that OS account's configured default
+`.desktop` handler through the fixed opener. This is an explicit user-visible handoff; the opener
+only requests the eventual default-handler action and does not claim to monitor or guarantee a
+browser process after the native command returns.
 
 Never print caught objects, stacks, causes, or arbitrary provider data. Expected project failures
 print only their stable code and safe fixed message; unexpected failures use one fixed message.

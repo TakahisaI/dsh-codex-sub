@@ -113,9 +113,22 @@ dsh-codex-sub version
 ```
 
 `status` and `doctor` are local and offline. Login prints a validated HTTPS authorization
-destination but does not open a browser automatically. Secret and manual-code prompts do not echo
-input. JSON commands emit one versioned document and never include credential contents, account
-identifiers, token timestamps, authorization URLs, or local paths.
+destination and asks for an explicit Enter confirmation before opening it in the system default
+browser. Browser launch uses only the absolute `/usr/bin/open` (macOS) or `/usr/bin/xdg-open`
+(Linux) command with no shell interpolation. Linux receives only a fixed `/usr/bin:/bin` path and
+validated local desktop-session variables; ambient browser, loader, shell-startup, and Node
+injection variables are not inherited. Linux derives `HOME` from the canonical, trusted OS account
+home (`os.userInfo()`), and validates every XDG config/data root before passing it to the child:
+only an unset or exactly empty value receives the specification default; every non-empty single or
+list is canonicalized and checked for bounds, ownership, mode, directory type, and trusted
+ancestors, and one invalid list entry rejects the whole opener. Matching real/effective UIDs and
+non-writable runtime/home ancestors are required. If the opener is unavailable, has no validated
+local GUI route, or fails, the validated URL remains available for manual opening. The explicit Enter
+confirmation authorizes disclosure of that validated URL to the OS account's configured default
+`.desktop` handler; `/usr/bin/xdg-open` is an eventual handoff, not a guarantee that a browser
+process remains observable. Secret and manual-code
+prompts do not echo input. JSON commands emit one versioned document and never include credential
+contents, account identifiers, token timestamps, authorization URLs, or local paths.
 
 ## Upstream boundary
 

@@ -36,6 +36,34 @@ describe('pinned openai-codex provider public contract', () => {
     })
   })
 
+  it('pins the real provider login marker for the Enter-default selector contract', async () => {
+    const provider = openaiCodexProvider()
+    const oauth = provider.auth.oauth
+    if (oauth === undefined) {
+      throw new Error('Pinned provider unexpectedly has no OAuth auth.')
+    }
+    let promptCount = 0
+
+    await expect(oauth.login({
+      async prompt(prompt) {
+        promptCount += 1
+        expect(prompt.type).toBe('select')
+        if (prompt.type !== 'select') {
+          return 'invalid'
+        }
+        expect(prompt.options).toEqual([
+          { id: 'browser', label: 'Browser login (default)' },
+          { id: 'device_code', label: 'Device code login (headless)' },
+        ])
+        // The terminal interaction maps an empty answer to this exact marker;
+        // stop the real provider before it starts OAuth network work.
+        return 'contract-marker'
+      },
+      notify: vi.fn(),
+    })).rejects.toThrow('Unknown OpenAI Codex login method: contract-marker')
+    expect(promptCount).toBe(1)
+  })
+
   it('keeps every public own provider key across request wrappers', () => {
     const upstream = openaiCodexProvider()
     const explicit = withExplicitRequestToken(upstream)

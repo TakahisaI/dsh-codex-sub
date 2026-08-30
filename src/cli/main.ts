@@ -13,6 +13,7 @@ import {
 import { PiAiCodexAuthService } from '../piai/auth-service.js'
 import { codexCatalogModelCount } from '../piai/catalog.js'
 import { FileCredentialVault } from '../storage/file-credential-vault.js'
+import { createSafeBrowserOpener } from './browser-opener.js'
 import { createTerminalLoginInteraction } from './login-interaction.js'
 import { NodePromptReader } from './node-prompt-reader.js'
 import {
@@ -114,6 +115,9 @@ export async function runCli(
         const interaction = createTerminalLoginInteraction({
           io,
           reader: promptReader,
+          ...(environment.browserOpener === undefined
+            ? {}
+            : { browserOpener: environment.browserOpener }),
           ...(signal === undefined ? {} : { signal }),
         })
         try {
@@ -186,6 +190,7 @@ export function createProductionCliEnvironment(
   let vault: FileCredentialVault | undefined
   let authService: PiAiCodexAuthService | undefined
   let promptReader: NodePromptReader | undefined
+  let browserOpener: ReturnType<typeof createSafeBrowserOpener> | undefined
 
   const resolveVault = (): FileCredentialVault => {
     vault ??= new FileCredentialVault()
@@ -204,8 +209,12 @@ export function createProductionCliEnvironment(
     inspectRuntime: () => evaluateRuntimeCompatibility(inspectInstalledRuntime()),
     catalogModelCount: codexCatalogModelCount,
     get promptReader(): NodePromptReader {
-      promptReader ??= new NodePromptReader(input, output)
+      promptReader ??= new NodePromptReader(input, output, { requireInteractive: true })
       return promptReader
+    },
+    get browserOpener(): ReturnType<typeof createSafeBrowserOpener> {
+      browserOpener ??= createSafeBrowserOpener()
+      return browserOpener
     },
   })
 }
