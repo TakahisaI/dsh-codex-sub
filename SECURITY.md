@@ -1,10 +1,12 @@
 # Security policy
 
+> This project closed on 2026-09-20. No versions receive security fixes. For a sensitive
+> report about an existing installation, use the private reporting channel below and do not
+> include credentials. Users should log out and uninstall the plugin when they no longer need it.
+
 ## Supported versions
 
-No public package version has been released yet. Security fixes currently target the latest commit
-on `main`. After Alpha publication, only the newest Alpha line will receive fixes unless a release
-notice says otherwise.
+None. The previously published Alpha versions are unmaintained.
 
 ## Report a vulnerability privately
 
