@@ -1,5 +1,13 @@
 # dsh-codex-sub
 
+> **Project closed (2026-09-20).** This repository is archived and no longer maintained.
+> No further releases, compatibility updates, or support are planned. The published npm
+> versions `0.1.0-alpha.0` and `0.1.0-alpha.1` remain available as historical artifacts;
+> the `0.1.0-alpha.2` candidate was never published. New installations are not recommended.
+> Existing users can remove the plugin with the logout and uninstall commands below.
+> For sensitive reports about an existing installation, use GitHub's private vulnerability
+> reporting rather than posting credentials publicly.
+
 `dsh-codex-sub` is a DeepSeek Harness plugin that exposes the pi-ai `openai-codex`
 provider as a normal DSH model route using ChatGPT subscription authentication.
 
